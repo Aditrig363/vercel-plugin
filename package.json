@@ -1,0 +1,7 @@
+{
+  "name": "vercel-plugin",
+  "private": true,
+  "scripts": {
+    "test": "bun run scripts/validate.ts"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Before writing or editing code in a Vercel/Next.js project, verify these deprecation and misuse checks:\n\n(1) SUNSET PACKAGES: Are you using `@vercel/postgres` or `@vercel/kv`? These are sunset — use `@neondatabase/serverless` and `@upstash/redis` instead.\n\n(2) AI SDK TOOL SCHEMA: Are you using `parameters` or `result` in AI SDK tool definitions? These are deprecated in v6 — use `inputSchema`/`outputSchema` instead.\n\n(3) PROXY FILE RENAME: Are you creating or editing `middleware.ts` in Next.js 16? It has been renamed to `proxy.ts`.\n\n(4) TURBOPACK CONFIG: Are you putting turbopack config under `experimental.turbopack` in next.config? In Next.js 16, turbopack config is top-level (e.g., `turbopack: { rules: {} }`).\n\n(5) CACHE COMPONENTS: Are you using `'use cache'` at the top of a Client Component (a file with `'use client'`)? `'use cache'` only works in Server Components and Server Actions. Move the cached logic to a separate Server Component or use `cacheLife`/`cacheTag` in a Server Action.\n\n(6) ASYNC REQUEST APIS: In Next.js 16, `cookies()`, `headers()`, and `params` are async. Are you calling them synchronously (e.g., `const cookieStore = cookies()`)? You must `await` them: `const cookieStore = await cookies()`.\n\n(7) AI SDK AGENT CLASS: Are you manually implementing a tool-call while-loop with `generateText`? In AI SDK v6, use the `Agent` class instead, which handles the tool loop automatically with built-in `maxSteps` and error handling.\n\n(8) VERCEL WORKFLOW IMPORT: Are you importing from `@vercel/workflow` directly for AI agent patterns? Use `@vercel/workflow/ai` for `DurableAgent` and `World` imports.\n\n(9) IMAGE COMPONENT: Are you using `<img>` tags in a Next.js project? Use `next/image` (`import Image from 'next/image'`) for automatic optimization, lazy loading, and CLS prevention."
+          }
+        ]
+      }
+    ]
+  }
+}
