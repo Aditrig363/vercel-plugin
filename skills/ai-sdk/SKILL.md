@@ -320,12 +320,12 @@ Run `npx @ai-sdk/codemod v6` to auto-migrate. Key changes:
 
 ## Official Documentation
 
-- [AI SDK Documentation](https://sdk.vercel.ai/docs)
-- [AI SDK Core](https://sdk.vercel.ai/docs/ai-sdk-core)
-- [AI SDK UI](https://sdk.vercel.ai/docs/ai-sdk-ui)
-- [Generating Text](https://sdk.vercel.ai/docs/ai-sdk-core/generating-text)
-- [Structured Data](https://sdk.vercel.ai/docs/ai-sdk-core/generating-structured-data)
-- [Tools and Tool Calling](https://sdk.vercel.ai/docs/ai-sdk-core/tools-and-tool-calling)
-- [Agents](https://sdk.vercel.ai/docs/ai-sdk-core/agents)
-- [Providers and Models](https://sdk.vercel.ai/docs/foundations/providers-and-models)
-- [Provider Directory](https://sdk.vercel.ai/providers)
+- [AI SDK Documentation](https://ai-sdk.dev/docs)
+- [AI SDK Core](https://ai-sdk.dev/docs/ai-sdk-core)
+- [AI SDK UI](https://ai-sdk.dev/docs/ai-sdk-ui)
+- [Generating Text](https://ai-sdk.dev/docs/ai-sdk-core/generating-text)
+- [Structured Data](https://ai-sdk.dev/docs/ai-sdk-core/generating-structured-data)
+- [Tools and Tool Calling](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling)
+- [Agents](https://ai-sdk.dev/docs/ai-sdk-core/agents)
+- [Providers and Models](https://ai-sdk.dev/docs/foundations/providers-and-models)
+- [Provider Directory](https://ai-sdk.dev/providers)

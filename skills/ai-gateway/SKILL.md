@@ -412,5 +412,5 @@ const { image } = await generateImage({
 ## Official Documentation
 
 - [AI Gateway](https://vercel.com/docs/ai-gateway)
-- [Providers and Models](https://sdk.vercel.ai/docs/foundations/providers-and-models)
-- [AI SDK Core](https://sdk.vercel.ai/docs/ai-sdk-core)
+- [Providers and Models](https://ai-sdk.dev/docs/foundations/providers-and-models)
+- [AI SDK Core](https://ai-sdk.dev/docs/ai-sdk-core)
