@@ -325,3 +325,5 @@ export async function reportError(error: unknown, context: Record<string, unknow
 - [Monitoring](https://vercel.com/docs/query/monitoring)
 - [@vercel/analytics npm](https://www.npmjs.com/package/@vercel/analytics)
 - [@vercel/speed-insights npm](https://www.npmjs.com/package/@vercel/speed-insights)
+- [GitHub: @vercel/analytics](https://github.com/vercel/analytics)
+- [GitHub: @vercel/speed-insights](https://github.com/vercel/speed-insights)
