@@ -177,6 +177,6 @@ for (const d of domains) {
 ## Official Documentation
 
 - [Vercel MCP](https://vercel.com/docs/mcp)
-- [Vercel REST API](https://vercel.com/docs/rest-api)
+- [Vercel REST API](https://vercel.com/docs/rest-api/reference)
 - [@vercel/sdk](https://www.npmjs.com/package/@vercel/sdk)
 - [MCP Authorization Spec](https://spec.modelcontextprotocol.io)

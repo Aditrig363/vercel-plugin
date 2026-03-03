@@ -190,10 +190,10 @@ export default function Error({ error, reset }: {
 ## Official Documentation
 
 - [Next.js Documentation](https://nextjs.org/docs)
-- [App Router](https://nextjs.org/docs/app)
+- [App Router](https://nextjs.org/docs/app/getting-started)
 - [Routing](https://nextjs.org/docs/app/building-your-application/routing)
 - [Data Fetching](https://nextjs.org/docs/app/building-your-application/data-fetching)
 - [Rendering](https://nextjs.org/docs/app/building-your-application/rendering)
 - [Caching](https://nextjs.org/docs/app/building-your-application/caching)
-- [Deploying](https://nextjs.org/docs/app/building-your-application/deploying)
-- [Upgrading](https://nextjs.org/docs/app/building-your-application/upgrading)
+- [Deploying](https://nextjs.org/docs/app/getting-started/deploying)
+- [Upgrading](https://nextjs.org/docs/app/guides/upgrading)

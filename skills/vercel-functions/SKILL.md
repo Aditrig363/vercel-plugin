@@ -188,8 +188,8 @@ export async function GET(req: Request) {
 ## Official Documentation
 
 - [Vercel Functions](https://vercel.com/docs/functions)
-- [Serverless Functions](https://vercel.com/docs/functions/serverless-functions)
-- [Edge Functions](https://vercel.com/docs/functions/edge-functions)
-- [Fluid Compute](https://vercel.com/docs/functions/fluid-compute)
+- [Serverless Functions](https://vercel.com/docs/functions)
+- [Edge Functions](https://vercel.com/docs/functions)
+- [Fluid Compute](https://vercel.com/docs/fluid-compute)
 - [Streaming](https://vercel.com/docs/functions/streaming)
 - [Cron Jobs](https://vercel.com/docs/cron-jobs)

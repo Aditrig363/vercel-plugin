@@ -95,7 +95,7 @@ import { createClient } from 'v0-sdk'
 const v0 = createClient({ apiKey: process.env.CUSTOM_V0_KEY })
 ```
 
-Get your API key at: https://v0.dev/chat/settings/keys
+Get your API key at: https://v0.app/chat/settings/keys
 
 ### Create a Chat and Generate Code
 
@@ -467,4 +467,4 @@ v0 has native support for these services in its sandbox:
 - [v0 AI Tools](https://v0.app/docs/api/platform/packages/ai-tools)
 - [v0 MCP Server](https://v0.app/docs/api/platform/adapters/mcp-server)
 - [v0 GitHub Integration](https://v0.app/docs/github)
-- [API Keys](https://v0.dev/chat/settings/keys)
+- [API Keys](https://v0.app/chat/settings/keys)

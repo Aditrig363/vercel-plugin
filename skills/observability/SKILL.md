@@ -320,8 +320,8 @@ export async function reportError(error: unknown, context: Record<string, unknow
 
 - [Vercel Analytics](https://vercel.com/docs/analytics)
 - [Speed Insights](https://vercel.com/docs/speed-insights)
-- [Runtime Logs](https://vercel.com/docs/observability/runtime-logs)
-- [Log Drains](https://vercel.com/docs/observability/log-drains)
-- [Monitoring](https://vercel.com/docs/observability/monitoring)
+- [Runtime Logs](https://vercel.com/docs/logs/runtime)
+- [Log Drains](https://vercel.com/docs/drains)
+- [Monitoring](https://vercel.com/docs/query/monitoring)
 - [@vercel/analytics npm](https://www.npmjs.com/package/@vercel/analytics)
 - [@vercel/speed-insights npm](https://www.npmjs.com/package/@vercel/speed-insights)

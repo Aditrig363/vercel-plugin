@@ -271,5 +271,5 @@ vercel integration status
 - [Vercel Marketplace](https://vercel.com/marketplace)
 - [Building Integrations](https://vercel.com/docs/integrations)
 - [Integration CLI](https://vercel.com/docs/cli/integration)
-- [Integration Webhooks](https://vercel.com/docs/integrations/webhooks)
+- [Integration Webhooks](https://vercel.com/docs/integrations#webhooks)
 - [Environment Variables](https://vercel.com/docs/environment-variables)
