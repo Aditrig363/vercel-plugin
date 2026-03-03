@@ -201,3 +201,4 @@ vercel               # Creates preview deployment, returns URL
 - [Vercel CLI](https://vercel.com/docs/cli)
 - [Deployments](https://vercel.com/docs/deployments)
 - [REST API](https://vercel.com/docs/rest-api/reference)
+- [GitHub: Vercel CLI](https://github.com/vercel/vercel)

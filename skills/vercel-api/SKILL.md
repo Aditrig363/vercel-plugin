@@ -180,3 +180,4 @@ for (const d of domains) {
 - [Vercel REST API](https://vercel.com/docs/rest-api/reference)
 - [@vercel/sdk](https://www.npmjs.com/package/@vercel/sdk)
 - [MCP Authorization Spec](https://spec.modelcontextprotocol.io)
+- [GitHub: Vercel SDK](https://github.com/vercel/sdk)
