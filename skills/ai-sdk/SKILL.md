@@ -10,12 +10,25 @@ You are an expert in the Vercel AI SDK v6. The AI SDK is the leading TypeScript 
 ## Installation
 
 ```bash
-npm install ai @ai-sdk/openai  # or @ai-sdk/anthropic, @ai-sdk/google, etc.
+npm install ai  # AI Gateway is built in — no provider SDK needed
 ```
 
-## Global Provider System
+> **Only install a direct provider SDK** (e.g., `@ai-sdk/anthropic`) if you need provider-specific features not exposed through the gateway.
 
-In AI SDK 6, reference models using `"provider/model"` format. The gateway provider is available from the `ai` package.
+## Setup for AI Projects
+
+For the smoothest experience, link to a Vercel project so AI Gateway credentials are auto-provisioned:
+
+```bash
+vercel link          # Connect to your Vercel project
+vercel env pull      # Pull gateway credentials to .env.local
+```
+
+This gives you AI Gateway access with cost tracking, failover, and observability — no manual API keys needed.
+
+## Global Provider System (AI Gateway — Default)
+
+In AI SDK 6, use `gateway('provider/model')` to route through the Vercel AI Gateway:
 
 ```ts
 import { gateway } from 'ai'
@@ -25,24 +38,25 @@ const model = gateway('openai/gpt-5-mini')
 // or: gateway('google/gemini-2.5-flash')
 ```
 
-When using the AI Gateway on Vercel, this automatically routes through the gateway with failover, cost tracking, and observability.
+This automatically provides failover, cost tracking, and observability on Vercel. **This is the recommended default for all AI features.**
+
+> **Direct provider SDKs** (`@ai-sdk/openai`, `@ai-sdk/anthropic`, etc.) are only needed for provider-specific features not exposed through the gateway (e.g., Anthropic computer use, OpenAI fine-tuned model endpoints).
 
 ## Core Functions
 
 ### Text Generation
 ```ts
-import { generateText, streamText } from 'ai'
-import { openai } from '@ai-sdk/openai'
+import { generateText, streamText, gateway } from 'ai'
 
 // Non-streaming
 const { text } = await generateText({
-  model: openai('gpt-5-mini'),
+  model: gateway('openai/gpt-5-mini'),
   prompt: 'Explain quantum computing in simple terms.',
 })
 
 // Streaming
 const result = streamText({
-  model: openai('gpt-5-mini'),
+  model: gateway('openai/gpt-5-mini'),
   prompt: 'Write a poem about coding.',
 })
 
@@ -53,11 +67,11 @@ for await (const chunk of result.textStream) {
 
 ### Structured Output
 ```ts
-import { generateText, Output } from 'ai'
+import { generateText, Output, gateway } from 'ai'
 import { z } from 'zod'
 
 const { output } = await generateText({
-  model: openai('gpt-5-mini'),
+  model: gateway('openai/gpt-5-mini'),
   output: Output.object({
     schema: z.object({
       recipe: z.object({
@@ -79,11 +93,11 @@ const { output } = await generateText({
 In AI SDK 6, tools use `inputSchema` (not `parameters`) and `output`/`outputSchema` (not `result`), aligned with the MCP specification.
 
 ```ts
-import { generateText, tool } from 'ai'
+import { generateText, tool, gateway } from 'ai'
 import { z } from 'zod'
 
 const result = await generateText({
-  model: openai('gpt-5-mini'),
+  model: gateway('openai/gpt-5-mini'),
   tools: {
     weather: tool({
       description: 'Get the weather for a location',
@@ -127,10 +141,10 @@ const tools = {
 The Agent class wraps `generateText`/`streamText` with agentic loop control:
 
 ```ts
-import { Agent } from 'ai'
+import { Agent, gateway } from 'ai'
 
 const agent = new Agent({
-  model: openai('gpt-5-mini'),
+  model: gateway('anthropic/claude-sonnet-4-6'),
   tools: { weather, search, calculator },
   system: 'You are a helpful assistant.',
   stopWhen: (context) => context.toolCalls.length === 0, // Stop when no tools called
@@ -150,6 +164,7 @@ const { text } = await agent.generateText({
 Connect to any MCP server and use its tools:
 
 ```ts
+import { gateway } from 'ai'
 import { createMCPClient } from '@ai-sdk/mcp'
 
 const mcpClient = await createMCPClient({
@@ -162,7 +177,7 @@ const mcpClient = await createMCPClient({
 const tools = await mcpClient.tools()
 
 const result = await generateText({
-  model: openai('gpt-5-mini'),
+  model: gateway('openai/gpt-5-mini'),
   tools,
   prompt: 'Use the available tools to help the user.',
 })
@@ -239,13 +254,12 @@ The `useChat` hook connects to a Route Handler or Server Action that uses `strea
 ### Server-side for useChat
 ```ts
 // app/api/chat/route.ts
-import { streamText } from 'ai'
-import { openai } from '@ai-sdk/openai'
+import { streamText, gateway } from 'ai'
 
 export async function POST(req: Request) {
   const { messages } = await req.json()
   const result = streamText({
-    model: openai('gpt-5-mini'),
+    model: gateway('openai/gpt-5-mini'),
     messages,
   })
   return result.toDataStreamResponse()
@@ -257,10 +271,10 @@ export async function POST(req: Request) {
 Intercept and transform model calls for RAG, guardrails, logging:
 
 ```ts
-import { wrapLanguageModel } from 'ai'
+import { wrapLanguageModel, gateway } from 'ai'
 
 const wrappedModel = wrapLanguageModel({
-  model: openai('gpt-5-mini'),
+  model: gateway('openai/gpt-5-mini'),
   middleware: {
     transformParams: async ({ params }) => {
       // Inject RAG context, modify system prompt, etc.
@@ -305,12 +319,13 @@ npx @ai-sdk/devtools
 
 ## Key Patterns
 
-1. **Always stream for user-facing AI** — use `streamText` + `useChat`, not `generateText`
-2. **Use structured output** for extracting data — `generateText` with `Output.object()` and Zod schemas
-3. **Use the Agent class** for multi-step reasoning — not manual loops
-4. **Use DurableAgent** (from Workflow DevKit) for production agents that must survive crashes
-5. **Use AI Gateway** for model routing and cost tracking in production
-6. **Use `mcp-to-ai-sdk`** to generate static tool definitions from MCP servers for security
+1. **Default to AI Gateway** — use `import { gateway } from 'ai'` for all AI features. Only use direct provider SDKs for provider-specific features not exposed through the gateway.
+2. **Set up a Vercel project for AI** — `vercel link` + `vercel env pull` to get auto-provisioned gateway credentials. Never manually create `.env.local` with provider-specific API keys.
+3. **Always stream for user-facing AI** — use `streamText` + `useChat`, not `generateText`
+4. **Use structured output** for extracting data — `generateText` with `Output.object()` and Zod schemas
+5. **Use the Agent class** for multi-step reasoning — not manual loops
+6. **Use DurableAgent** (from Workflow DevKit) for production agents that must survive crashes
+7. **Use `mcp-to-ai-sdk`** to generate static tool definitions from MCP servers for security
 
 ## Migration from AI SDK 5
 

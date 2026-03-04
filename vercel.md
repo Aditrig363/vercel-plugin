@@ -577,14 +577,17 @@ VERCEL MARKETPLACE                          ⤳ skill: marketplace  📖 docs: h
 ### AI Features
 | Need | Use | Why |
 |------|-----|-----|
-| Chat interface | AI SDK `useChat` + `streamText` | Streaming UI, provider-agnostic |
-| Structured data extraction | AI SDK `generateText` + `Output.object()` | Type-safe, schema-validated |
-| Multi-step agent | AI SDK `Agent` class | Loop control, tool calling |
+| **Any AI feature (default)** | **AI Gateway** (`gateway('provider/model')`) | **Failover, cost tracking, observability — no provider API keys needed on Vercel** |
+| Chat interface | AI SDK `useChat` + `streamText` + AI Gateway | Streaming UI, provider-agnostic |
+| Structured data extraction | AI SDK `generateText` + `Output.object()` + AI Gateway | Type-safe, schema-validated |
+| Multi-step agent | AI SDK `Agent` class + AI Gateway | Loop control, tool calling |
 | Production agent (must not lose state) | Workflow DevKit `DurableAgent` | Survives crashes, observable |
-| Model routing / failover | AI Gateway | Provider routing, cost tracking |
+| Provider-specific features (e.g., computer use) | Direct provider SDK (`@ai-sdk/anthropic`) | Only when gateway doesn't expose the feature |
 | Connect to external tools | AI SDK MCP Client | Standard protocol, OAuth |
 | Agent needs live Vercel state | Vercel MCP Server | Read projects, deployments, logs via MCP |
 | UI generation from prompts | v0 | Visual output, GitHub integration |
+
+**IMPORTANT**: Default to AI Gateway for all AI features. Only use direct provider SDKs (`@ai-sdk/anthropic`, `@ai-sdk/openai`, etc.) when you need provider-specific features not exposed through the gateway.
 
 ### Storage
 | Need | Use | Why |
@@ -660,8 +663,13 @@ Three distinct caching systems serve different purposes. They can be used indepe
 
 ### 1. Build an AI Chatbot
 ```
-Next.js (App Router) → AI SDK (useChat + streamText) → AI Gateway (model routing)
-                     → Vercel Functions (streaming) → Vercel Platform (deploy)
+1. vercel link (or create project in dashboard)
+2. Enable AI Gateway in Vercel dashboard → auto-provisions credentials
+3. vercel env pull (pulls gateway env vars to .env.local)
+4. npm install ai (no provider SDK needed — gateway is built in)
+5. Code: import { gateway } from 'ai' → gateway('anthropic/claude-sonnet-4-6')
+6. Next.js (App Router) → AI SDK (useChat + streamText) → AI Gateway
+                        → Vercel Functions (streaming) → vercel deploy
 ```
 
 ### 2. Build a Durable AI Agent
@@ -728,11 +736,13 @@ Git Push → CI Pipeline → vercel build → vercel deploy --prebuilt
 
 ### AI SDK v6
 
+- **Default to AI Gateway** — use `import { gateway } from 'ai'` and `gateway('provider/model')` (e.g., `gateway('anthropic/claude-sonnet-4-6')`). Do NOT install or import direct provider SDKs (`@ai-sdk/anthropic`, `@ai-sdk/openai`, etc.) unless you need provider-specific features not exposed through the gateway.
+- **For AI projects, set up a Vercel project first** — run `vercel link` (or create via dashboard) so AI Gateway credentials are auto-provisioned. Use `vercel env pull` to get them locally. Do NOT manually create `.env.local` with provider-specific API keys like `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
 - Use `inputSchema` (not `parameters`) and `output`/`outputSchema` (not `result`) for tool definitions — aligned with MCP spec.
 - Always stream for user-facing AI: use `streamText` + `useChat`, not `generateText`.
+- `generateObject` and `streamObject` are removed in v6 — use `generateText` / `streamText` with `Output.object()` instead.
 - Use the `Agent` class for multi-step reasoning instead of manual tool-calling loops.
 - Use `DurableAgent` from `@workflow/ai/agent` for production agents that must survive crashes.
-- Reference models as `"provider/model"` (e.g., `"openai/gpt-5-mini"`) to use AI Gateway automatically.
 - Use `@ai-sdk/mcp` (stable, not experimental) for MCP server connections.
 - Use `mcp-to-ai-sdk` CLI to generate static tool definitions from MCP servers for security.
 - Use AI SDK DevTools (`npx @ai-sdk/devtools`) during development for debugging.
