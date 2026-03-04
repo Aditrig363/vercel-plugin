@@ -19,39 +19,5 @@
     "edge-functions",
     "serverless",
     "ai-gateway"
-  ],
-  "skills": [
-    "ai-gateway",
-    "ai-sdk",
-    "marketplace",
-    "nextjs",
-    "observability",
-    "routing-middleware",
-    "runtime-cache",
-    "sign-in-with-vercel",
-    "turbopack",
-    "turborepo",
-    "v0-dev",
-    "vercel-agent",
-    "vercel-api",
-    "vercel-cli",
-    "vercel-flags",
-    "vercel-firewall",
-    "vercel-functions",
-    "vercel-queues",
-    "vercel-sandbox",
-    "vercel-storage",
-    "workflow"
-  ],
-  "agents": [
-    "ai-architect.md",
-    "deployment-expert.md",
-    "performance-optimizer.md"
-  ],
-  "commands": [
-    "deploy.md",
-    "env.md",
-    "marketplace.md",
-    "status.md"
   ]
 }
