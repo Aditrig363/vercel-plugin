@@ -120,47 +120,58 @@
 
 ## Structural Integrity Checks
 
-Run these commands to verify the plugin's internal consistency:
+**Source of truth**: `bun run scripts/validate.ts --format json`
+
+The validator checks all cross-references, orphan skills, frontmatter, manifest completeness,
+hooks validity, and coverage baseline. Do not embed hardcoded counts in this document — run
+the validator for live results.
 
 ```bash
-# Count skill references in the graph (should be 17 as of 2026-03-03)
-grep -c '⤳ skill:' assets/vercel-ecosystem-graph.md
+# Full validation (JSON report)
+bun run scripts/validate.ts --format json
 
-# Count skill files (should be 12 as of 2026-03-03)
-ls skills/*/SKILL.md | wc -l
+# Human-readable output
+bun run scripts/validate.ts
 
-# List unique skill names referenced in graph
+# Quick manual spot-checks (use validator for authoritative results)
 grep -o '⤳ skill: [a-z0-9-]*' assets/vercel-ecosystem-graph.md | sort -u
-
-# List skill directory names
 ls skills/
-
-# Orphan check: every skill dir should appear in a ⤳ skill: reference
-for skill in skills/*/; do
-  name=$(basename "$skill")
-  if ! grep -q "⤳ skill: $name" assets/vercel-ecosystem-graph.md; then
-    echo "ORPHAN: $name has no graph reference"
-  fi
-done
-
-# Broken link check: every ⤳ skill: reference should have a matching directory
-grep -o '⤳ skill: [a-z0-9-]*' assets/vercel-ecosystem-graph.md | \
-  sed 's/⤳ skill: //' | sort -u | while read name; do
-  if [ ! -f "skills/$name/SKILL.md" ]; then
-    echo "BROKEN: ⤳ skill: $name has no SKILL.md"
-  fi
-done
 ```
 
 ---
 
-## Cross-Reference Audit Results (2026-03-03)
+## Middleware Disambiguation Note
 
-| Check | Result |
-|-------|--------|
-| Total `⤳ skill:` references in graph | 17 |
-| Unique skill names referenced | 12 |
-| Total `skills/*/SKILL.md` files | 12 |
-| Broken references (graph → missing skill) | **0** |
-| Orphaned skills (skill → no graph reference) | **0** |
-| Graph sections without skill links | 2 (Observability §7, Marketplace §9 — noted gaps, not errors) |
+Claim #2 (`middleware.ts` renamed to `proxy.ts` in Next.js 16) is **Next.js-specific**.
+The `routing-middleware` skill covers **Vercel platform-level** Routing Middleware, which
+remains `middleware.ts` at project root and works with any framework. The skill includes
+a disambiguation table covering all three "middleware" concepts:
+
+| Concept | File | Scope |
+|---------|------|-------|
+| Vercel Routing Middleware | `middleware.ts` | Any framework, platform-level |
+| Next.js 16 Proxy | `proxy.ts` | Next.js 16+ only |
+| Edge Functions | Any function file | General-purpose edge compute |
+
+See `skills/routing-middleware/SKILL.md` for full details.
+
+---
+
+## Graph-Only Nodes (no `⤳ skill:` link)
+
+These graph nodes intentionally lack dedicated skills — they are managed through
+existing skills (CLI, API) or are UI-only features with no code patterns.
+
+| Graph Node | Section | Status | Rationale |
+|------------|---------|--------|-----------|
+| Domains & DNS | 1. Core Platform | **Intentional** | Configuration-only; managed via `vercel-cli` skill (`vercel domains`, `vercel dns`) and `vercel-api` skill (REST endpoints) |
+| Environment Variables | 1. Core Platform | **Intentional** | Managed via `vercel-cli` skill (`vercel env`) and `vercel-api` skill; no standalone SDK |
+| Secure Compute | 1. Core Platform | **Intentional** | Enterprise opt-in feature; project-level toggle in Dashboard/API, no SDK or distinct code patterns |
+| OIDC Federation | 1. Core Platform | **Intentional** | CI/CD configuration feature; covered by CI provider docs + `vercel-cli` token setup |
+| Preview Comments | 1. Core Platform | **Intentional** | UI-only collaboration feature; no SDK or code integration required |
+| Vercel Toolbar | 1. Core Platform | **Intentional** | Automatically injected on preview deployments; no code integration beyond `@vercel/toolbar` package (covered in `observability` and `vercel-flags` context) |
+| Vercel Templates | 1. Core Platform | **Intentional** | Curated starter repos; one-click deploy, no SDK or code patterns to teach |
+| Teams & Access Control | 1. Core Platform | **Intentional** | Dashboard/API feature; covered by `vercel-api` skill (team endpoints) |
+| OG Image Generation | 2. Frameworks | **Future candidate** | `@vercel/og` package + `opengraph-image.tsx` file convention could be documented in `nextjs` skill (metadata file conventions section) |
+| Other Supported Frameworks | 2. Frameworks | **Intentional** | Thin Vercel adapter layer for each; each framework has its own extensive docs — not practical as a single skill |
+| Microfrontends | 4. Build Tools | **Future candidate** | Multi-app composition patterns could be cross-referenced from `turborepo` skill (monorepo multi-app section) |

@@ -33,12 +33,17 @@ VERCEL PLATFORM                            📖 docs: https://vercel.com/docs
 │   ⊃ Edge Functions (V8 isolates, Web Standard APIs)
 │   ⊃ Serverless Functions (Node.js, Python, Go, Ruby)
 │   ⊃ Fluid Compute (unified execution model)
-│   ⊃ Cron Jobs (scheduled function invocation)
+│   ⊃ Routing Middleware (request interception before cache, any framework)
+│   ⊃ Runtime Cache (per-region key-value, tag-based invalidation)
+│   ⊃ Cron Jobs (scheduled function invocation → see § Functions decision matrix)
 │   ⤳ skill: vercel-functions
+│   ⤳ skill: routing-middleware
+│   ⤳ skill: runtime-cache
 │
 ├── Domains & DNS
 │   → Deployment Engine
 │   ↔ Vercel Firewall
+│   ⤳ skill: vercel-cli  (vercel domains, vercel dns, vercel certs)
 │
 ├── Environment Variables
 │   → Deployment Engine
@@ -70,6 +75,21 @@ VERCEL PLATFORM                            📖 docs: https://vercel.com/docs
 │   → Deployment Engine (one-click deploy)
 │   ↔ Vercel Marketplace (pre-configured integrations)
 │   ↔ Next.js, AI SDK, v0 (framework starters)
+│
+├── Vercel Queues (durable event streaming)
+│   ⊃ Topics, consumer groups, delayed delivery
+│   ⊃ At-least-once delivery, 3-AZ durability
+│   → Vercel Functions (consumers run as functions)
+│   ↔ Workflow DevKit (Queues powers WDK under the hood)
+│   ⤳ skill: vercel-queues
+│
+├── Vercel Flags (feature flags platform)
+│   ⊃ Unified dashboard, Flags Explorer
+│   ⊃ Gradual rollouts, A/B testing
+│   ⊃ Provider adapters (LaunchDarkly, Statsig, Hypertune)
+│   ↔ Edge Config (flag storage at the edge)
+│   ↔ Vercel Toolbar (flag toggles in preview)
+│   ⤳ skill: vercel-flags
 │
 └── Teams & Access Control
     ↔ Vercel REST API
@@ -106,8 +126,8 @@ NEXT.JS (v16+)                           ⤳ skill: nextjs  📖 docs: https://n
 │
 ├── Key Integrations
 │   ↔ Vercel AI SDK (chat UIs, streaming, tool calling)
-│   ↔ Vercel Analytics / Speed Insights
-│   ↔ Vercel Image Optimization (next/image)
+│   ↔ Vercel Analytics / Speed Insights           ⤳ skill: observability
+│   ↔ Vercel Image Optimization (next/image)      ⤳ skill: nextjs
 │   ↔ Vercel Font Optimization (next/font)
 │   ↔ Vercel Functions (automatic from route handlers / server actions)
 │
@@ -250,6 +270,18 @@ v0 (AI Development Agent)                  ⤳ skill: v0-dev  📖 docs: https:/
     → Vercel Platform (deployment target)
     ↔ AI SDK (AI features in generated apps)
     ↔ Vercel Marketplace (integrations in generated apps)
+
+VERCEL AGENT                               ⤳ skill: vercel-agent  📖 docs: https://vercel.com/docs/workflow/agent
+├── Capabilities
+│   ⊃ Automated code review (PR analysis, security, logic errors)
+│   ⊃ Incident investigation (anomaly debugging)
+│   ⊃ SDK installation assistance
+│   ⊃ Vercel Sandbox (secure patch validation)   ⤳ skill: vercel-sandbox
+│
+└── Integrations
+    ↔ GitHub (PR triggers, @vercel mentions)
+    ↔ Vercel Sandbox (isolated code execution)
+    ↔ AI SDK (underlying AI capabilities)
 ```
 
 ---
@@ -274,6 +306,7 @@ TURBOREPO                                  ⤳ skill: turborepo  📖 docs: http
 │   ⊃ Automated rule enforcement (ESLint, TypeScript, import boundaries)
 │   ↔ Turborepo (runs as part of task pipeline)
 │   ↔ Vercel Platform (enforced on deploy)
+│   ⤳ skill: turborepo  (Conformance is configured within Turborepo)
 │
 └── Integrations
     ↔ Next.js (monorepo with multiple Next.js apps)
@@ -362,6 +395,17 @@ VERCEL FIREWALL                            ⤳ skill: vercel-firewall  📖 docs
     ↔ Edge Network (embedded in request lifecycle)
     ↔ Vercel Observability (linked logs)
     ↔ Vercel REST API (Firewall API)
+
+SIGN IN WITH VERCEL                        ⤳ skill: sign-in-with-vercel  📖 docs: https://vercel.com/docs/security/sign-in-with-vercel
+├── OAuth 2.0 / OIDC Identity Provider
+│   ⊃ Authorization Code flow
+│   ⊃ ID tokens with user profile claims
+│   ⊃ Access tokens for Vercel API calls
+│
+└── Integrations
+    ↔ Teams & Access Control (team-scoped auth)
+    ↔ Vercel REST API (token exchange)
+    ↔ Next.js (auth route handlers)
 ```
 
 ---
@@ -576,6 +620,38 @@ VERCEL MARKETPLACE                          ⤳ skill: marketplace  📖 docs: h
 | Long-running with I/O waits | Fluid Compute | Shared instances, waitUntil |
 | AI streaming responses | Streaming Functions | SSE, zero config |
 | Scheduled execution | Cron Jobs | vercel.json schedule config |
+
+### Disambiguation: Interception Compute
+
+These three mechanisms all intercept or handle requests before your application logic runs.
+Choose based on **where** the interception happens and **what** you need to do.
+
+| Mechanism | Layer | Runtime | Use When | Avoid When |
+|-----------|-------|---------|----------|------------|
+| **Routing Middleware** (`middleware.ts` / platform-level) | Edge Network, before cache | V8 isolates (Web Standard APIs) | Auth checks, geo-redirects, A/B routing, header rewriting — any framework | You need Node.js APIs, heavy computation, or database access |
+| **`proxy.ts`** (Next.js 16+) | Application layer, replaces `middleware.ts` | Node.js | Same use cases as Routing Middleware but you need `node:*` modules, ORM calls, or full Node.js compat | You're not on Next.js 16+; prefer Routing Middleware for non-Next.js frameworks |
+| **Edge Functions** | Edge Network, handles the full request | V8 isolates (Web Standard APIs) | Ultra-low-latency API endpoints, simple compute at the edge, streaming responses | You need Node.js runtime, long execution times, or large dependencies |
+
+> **Key distinction**: Routing Middleware and `proxy.ts` are *interceptors* — they rewrite, redirect, or annotate requests before the handler runs. Edge Functions *are* the handler — they produce the response. If you previously used Next.js `middleware.ts` and are upgrading to Next.js 16, rename to `proxy.ts` (see § Migration Awareness).
+
+⤳ skill: routing-middleware — Platform-level request interception
+⤳ skill: vercel-functions — Edge Functions and Serverless Functions
+⤳ skill: nextjs — `proxy.ts` in Next.js 16
+
+### Disambiguation: Caching Layers
+
+Three distinct caching systems serve different purposes. They can be used independently or layered together.
+
+| Mechanism | Scope | Invalidation | Use When | Avoid When |
+|-----------|-------|-------------|----------|------------|
+| **Next.js Cache** (`'use cache'`, `revalidate`, `revalidatePath/Tag`) | Per-route or per-component, framework-managed | Time-based (`revalidate: N`), on-demand (`revalidateTag()`, `revalidatePath()`) | Caching rendered pages, component trees, or data fetches within a Next.js app | You need caching outside Next.js, or need to cache arbitrary key-value data |
+| **Runtime Cache** (Vercel platform, per-region KV) | Per-region key-value store, any framework | Tag-based (`purgeByTag()`), key-based (`delete()`) | Caching expensive computations, API responses, or shared data across functions — works with any framework on Vercel | You only need page-level caching (use Next.js Cache instead); you need global consistency (Runtime Cache is per-region) |
+| **CDN Cache + Purge-by-Tag** (Edge Network, `Cache-Control` + `Cache-Tag` headers) | Global CDN edge, HTTP-level | `Cache-Control` TTL, on-demand purge via Vercel API (`POST /v1/edge-config/purge`) | Static assets, ISR pages, any HTTP response you want cached globally at the edge | Dynamic per-user content, responses that must never be stale |
+
+> **Layering pattern**: A typical Next.js app uses all three — Next.js Cache for component/route-level freshness, Runtime Cache for shared cross-request data (e.g., product catalog), and CDN Cache for static assets and ISR pages. Each layer has its own invalidation strategy; tag-based invalidation can cascade across layers when configured.
+
+⤳ skill: runtime-cache — Per-region key-value caching with tag-based invalidation
+⤳ skill: nextjs — `'use cache'`, `revalidatePath`, `revalidateTag`
 
 ---
 
