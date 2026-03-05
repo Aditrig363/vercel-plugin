@@ -1,13 +1,13 @@
 # Skill-Map Maintainer Guide
 
 This document covers everything needed to add, modify, or debug skill mappings
-in `hooks/skill-map.json` without reading the hook source code.
+using SKILL.md frontmatter without reading the hook source code.
 
 ## How the Hook Works (30-second overview)
 
 When Claude uses a Read/Edit/Write/Bash tool, the PreToolUse hook:
 
-1. Loads `hooks/skill-map.json`
+1. Parses SKILL.md frontmatter from each `skills/<name>/SKILL.md`
 2. Matches the tool target (file path or bash command) against every skill's patterns
 3. Sorts matches by **priority DESC**, then **skill name ASC** (deterministic)
 4. Caps at **3 skills** per invocation
@@ -16,33 +16,28 @@ When Claude uses a Read/Edit/Write/Bash tool, the PreToolUse hook:
 
 ---
 
-## Skill Entry Schema
+## Skill Frontmatter Schema
 
-Each key under `"skills"` maps a skill name to a config object:
+Each `skills/<name>/SKILL.md` contains YAML frontmatter with metadata:
 
-```jsonc
-{
-  "skills": {
-    "my-skill": {
-      "priority": 6,            // number, required in practice (defaults to 0)
-      "pathPatterns": [          // string[], globs matched against file paths
-        "lib/my-feature/**"
-      ],
-      "bashPatterns": [          // string[], regexes matched against bash commands
-        "\\bmy-tool\\s+run\\b"
-      ]
-    }
-  }
-}
+```yaml
+---
+metadata:
+  filePattern:
+    - "lib/my-feature/**"
+  bashPattern:
+    - "\\bmy-tool\\s+run\\b"
+  priority: 6
+---
 ```
 
 | Field          | Type       | Default | Description                                              |
 |----------------|------------|---------|----------------------------------------------------------|
-| `priority`     | `number`   | `0`     | Higher = injected first when multiple skills match        |
-| `pathPatterns` | `string[]` | `[]`    | Glob patterns matched against Read/Edit/Write file paths  |
-| `bashPatterns` | `string[]` | `[]`    | Regex patterns matched against Bash tool commands         |
+| `priority`     | `number`   | `5`     | Higher = injected first when multiple skills match        |
+| `filePattern`  | `string[]` | `[]`    | Glob patterns matched against Read/Edit/Write file paths  |
+| `bashPattern`  | `string[]` | `[]`    | Regex patterns matched against Bash tool commands         |
 
-No other keys are recognized. Unknown keys produce a validation warning.
+---
 
 ### Metadata Version
 
@@ -85,7 +80,7 @@ Priority determines which skills get injected when more than 3 match.
 
 ---
 
-## Glob Syntax for `pathPatterns`
+## Glob Syntax for `filePattern`
 
 Patterns use a simplified glob syntax (not full minimatch):
 
@@ -109,45 +104,46 @@ and `app/**/route.*` will match `/Users/me/project/app/api/route.ts` via suffix.
 
 ### Examples
 
-```jsonc
-// Match all files in app/ and nested subdirectories
-"app/**"
+```yaml
+# Match all files in app/ and nested subdirectories
+filePattern:
+  - "app/**"
 
-// Match route handlers at any depth under app/
-"app/**/route.*"
+# Match route handlers at any depth under app/
+  - "app/**/route.*"
 
-// Match Next.js config regardless of extension
-"next.config.*"
+# Match Next.js config regardless of extension
+  - "next.config.*"
 
-// Match monorepo apps
-"apps/*/vercel.json"
-"apps/*/src/app/**"
+# Match monorepo apps
+  - "apps/*/vercel.json"
+  - "apps/*/src/app/**"
 ```
 
 ---
 
-## Regex Syntax for `bashPatterns`
+## Regex Syntax for `bashPattern`
 
 Patterns are standard JavaScript `RegExp` strings (no delimiters, no flags).
 They are tested against the full bash command string.
 
 ### Examples
 
-```jsonc
-// Match "next dev", "next build", "next start", "next lint"
-"\\bnext\\s+(dev|build|start|lint)\\b"
+```yaml
+# Match "next dev", "next build", "next start", "next lint"
+bashPattern:
+  - "\\bnext\\s+(dev|build|start|lint)\\b"
 
-// Match package install commands for a specific package
-"\\bnpm\\s+(install|i|add)\\s+[^\\n]*@vercel/blob\\b"
+# Match package install commands for a specific package
+  - "\\bnpm\\s+(install|i|add)\\s+[^\\n]*@vercel/blob\\b"
 
-// Match the vercel CLI as a standalone command
-"^\\s*vercel(?:\\s|$)"
+# Match the vercel CLI as a standalone command
+  - "^\\s*vercel(?:\\s|$)"
 ```
 
 **Tips:**
 - Use `\\b` for word boundaries to avoid false positives
 - Use `\\s+` instead of literal spaces for robustness
-- Remember to double-escape backslashes in JSON strings (`\\b` not `\b`)
 - Invalid regex patterns are silently skipped with an `issue` event in debug mode
 
 ---
@@ -155,13 +151,16 @@ They are tested against the full bash command string.
 ## Adding a New Skill (Step-by-Step)
 
 1. **Create the skill content:** `skills/<name>/SKILL.md`
-2. **Add the mapping** to `hooks/skill-map.json` under `"skills"`:
-   ```jsonc
-   "my-new-skill": {
-     "priority": 6,
-     "pathPatterns": ["lib/my-feature/**"],
-     "bashPatterns": ["\\bmy-tool\\s+run\\b"]
-   }
+2. **Add frontmatter** at the top of the SKILL.md:
+   ```yaml
+   ---
+   metadata:
+     filePattern:
+       - "lib/my-feature/**"
+     bashPattern:
+       - "\\bmy-tool\\s+run\\b"
+     priority: 6
+   ---
    ```
 3. **Pick a priority** using the table above.
 4. **Run the tests:** `bun test`
@@ -185,7 +184,7 @@ VERCEL_PLUGIN_HOOK_DEBUG=1
 |---------------------|---------------------------------------------|-------------------------------------|
 | `input-parsed`      | After reading stdin                         | `toolName`, `sessionId`             |
 | `tool-target`       | After parsing tool target (redacted)        | `toolName`, `target`                |
-| `skillmap-loaded`   | After loading skill-map.json                | `skillCount`                        |
+| `skillmap-loaded`   | After building skill map from frontmatter   | `skillCount`                        |
 | `matches-found`     | After pattern matching                      | `matched[]`, `reasons{}`            |
 | `dedup-filtered`    | After filtering already-injected skills     | `newSkills[]`, `previouslyInjected[]` |
 | `cap-applied`       | When matches exceed MAX_SKILLS (3)          | `selected[]`, `dropped[]`           |
@@ -197,14 +196,16 @@ VERCEL_PLUGIN_HOOK_DEBUG=1
 
 | Code                  | Meaning                                   |
 |-----------------------|-------------------------------------------|
-| `STDIN_EMPTY`         | No data on stdin                          |
-| `STDIN_PARSE_FAIL`    | stdin is not valid JSON                   |
-| `SKILLMAP_LOAD_FAIL`  | skill-map.json missing or invalid         |
-| `SKILLMAP_EMPTY`      | skill-map has no skills                   |
-| `DEDUP_READ_FAIL`     | Could not read session dedup state        |
-| `DEDUP_WRITE_FAIL`    | Could not persist session dedup state     |
-| `SKILL_FILE_MISSING`  | `skills/<name>/SKILL.md` not found        |
-| `BASH_REGEX_INVALID`  | A bashPatterns entry is not valid regex   |
+| `STDIN_EMPTY`           | No data on stdin                          |
+| `STDIN_PARSE_FAIL`     | stdin is not valid JSON                   |
+| `SKILLMAP_LOAD_FAIL`   | SKILL.md frontmatter scan failed          |
+| `SKILLMAP_VALIDATE_FAIL` | Skill map validation failed after build |
+| `SKILLMAP_EMPTY`       | No skills found with frontmatter          |
+| `DEDUP_READ_FAIL`      | Could not read session dedup state        |
+| `DEDUP_RESET_FAIL`     | Could not reset dedup file                |
+| `DEDUP_WRITE_FAIL`     | Could not persist session dedup state     |
+| `SKILL_FILE_MISSING`   | `skills/<name>/SKILL.md` not found        |
+| `BASH_REGEX_INVALID`   | A bashPattern entry is not valid regex    |
 
 ### Redaction behavior
 

@@ -1,6 +1,21 @@
 ---
 name: vercel-cli
 description: Vercel CLI expert guidance. Use when deploying, managing environment variables, linking projects, viewing logs, managing domains, or interacting with the Vercel platform from the command line.
+metadata:
+  priority: 4
+  filePattern:
+    - 'vercel.json'
+    - 'vercel.ts'
+    - '.vercel/**'
+    - '.vercelignore'
+    - 'now.json'
+  bashPattern:
+    - '^\s*vercel(?:\s|$)'
+    - '^\s*vc(?:\s|$)'
+    - '\bnpx\s+vercel\b'
+    - '\bpnpm\s+dlx\s+vercel\b'
+    - '\bbunx\s+vercel\b'
+    - '\byarn\s+dlx\s+vercel\b'
 ---
 
 # Vercel CLI

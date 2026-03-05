@@ -1,6 +1,19 @@
 ---
 name: workflow
 description: Vercel Workflow DevKit (WDK) expert guidance. Use when building durable workflows, long-running tasks, AI agents that must survive crashes, or any async process that needs pause/resume, retries, and observability.
+metadata:
+  priority: 6
+  filePattern:
+    - 'lib/workflow/**'
+    - 'src/lib/workflow/**'
+    - 'workflows/**'
+    - 'lib/workflow.*'
+    - 'workflow.*'
+  bashPattern:
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/workflow\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/workflow\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/workflow\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/workflow\b'
 ---
 
 # Vercel Workflow DevKit (WDK)

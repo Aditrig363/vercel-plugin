@@ -1,6 +1,18 @@
 ---
 name: json-render
 description: AI chat response rendering guidance — handling UIMessage parts, tool call displays, streaming states, and structured data presentation. Use when building custom chat UIs, rendering tool results, or troubleshooting AI response display issues.
+metadata:
+  priority: 4
+  filePattern:
+    - 'components/chat/**'
+    - 'components/chat-*.tsx'
+    - 'components/chat-*.ts'
+    - 'src/components/chat/**'
+    - 'src/components/chat-*.tsx'
+    - 'src/components/chat-*.ts'
+    - 'components/message*.tsx'
+    - 'src/components/message*.tsx'
+  bashPattern: []
 ---
 
 # AI Chat Response Rendering

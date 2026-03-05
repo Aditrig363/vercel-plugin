@@ -1,6 +1,31 @@
 ---
 name: nextjs
 description: Next.js App Router expert guidance. Use when building, debugging, or architecting Next.js applications — routing, Server Components, Server Actions, Cache Components, layouts, middleware/proxy, data fetching, rendering strategies, and deployment on Vercel.
+metadata:
+  priority: 5
+  filePattern:
+    - 'next.config.*'
+    - 'next-env.d.ts'
+    - 'app/**'
+    - 'pages/**'
+    - 'src/app/**'
+    - 'src/pages/**'
+    - 'tailwind.config.*'
+    - 'postcss.config.*'
+    - 'tsconfig.json'
+    - 'tsconfig.*.json'
+    - 'apps/*/app/**'
+    - 'apps/*/pages/**'
+    - 'apps/*/src/app/**'
+    - 'apps/*/src/pages/**'
+    - 'apps/*/next.config.*'
+  bashPattern:
+    - '\bnext\s+(dev|build|start|lint)\b'
+    - '\bnpx\s+create-next-app\b'
+    - '\bbunx\s+create-next-app\b'
+    - '\bnpm\s+run\s+(dev|build|start)\b'
+    - '\bpnpm\s+(dev|build)\b'
+    - '\bbun\s+run\s+(dev|build)\b'
 ---
 
 # Next.js (v16+) — App Router

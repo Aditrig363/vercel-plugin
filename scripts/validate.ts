@@ -15,6 +15,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { checkCoverage, type CoverageResult } from "./coverage-baseline";
+import { extractFrontmatter, parseSkillFrontmatter } from "../hooks/skill-map-frontmatter.mjs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -114,17 +115,17 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-function parseFrontmatter(content: string): Record<string, string> | null {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match) return null;
-  const pairs: Record<string, string> = {};
-  for (const line of match[1].split("\n")) {
-    const idx = line.indexOf(":");
-    if (idx > 0) {
-      pairs[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-    }
-  }
-  return pairs;
+/**
+ * Parse YAML frontmatter from markdown content using js-yaml via skill-map-frontmatter.mjs.
+ * Returns the parsed object (with nested metadata) or null if no frontmatter found.
+ * Throws on malformed YAML so callers can report actionable errors.
+ */
+function parseFrontmatter(content: string): Record<string, any> | null {
+  const { yaml: yamlStr } = extractFrontmatter(content);
+  if (!yamlStr) return null;
+  // parseSkillFrontmatter uses js-yaml; let YAML parse errors propagate
+  const parsed = parseSkillFrontmatter(yamlStr);
+  return { name: parsed.name, description: parsed.description, ...parsed.metadata, metadata: parsed.metadata };
 }
 
 function lineOf(content: string, needle: string): number | undefined {
@@ -236,7 +237,18 @@ async function validateSkillFrontmatter(): Promise<void> {
     if (!(await exists(skillPath))) continue;
 
     const content = await readFile(skillPath, "utf-8");
-    const fm = parseFrontmatter(content);
+
+    let fm: Record<string, any> | null;
+    try {
+      fm = parseFrontmatter(content);
+    } catch (err: any) {
+      fail("FM_INVALID_YAML", `skills/${dir}/SKILL.md — invalid YAML frontmatter: ${err.message}`, {
+        file: `skills/${dir}/SKILL.md`,
+        line: 1,
+        hint: "Fix the YAML syntax in the frontmatter block",
+      });
+      continue;
+    }
 
     if (!fm) {
       fail("FM_MISSING", `skills/${dir}/SKILL.md — missing YAML frontmatter`, {
@@ -259,6 +271,31 @@ async function validateSkillFrontmatter(): Promise<void> {
         hint: "Add 'description: <brief summary>' to the YAML frontmatter block",
       });
     }
+
+    // Type-check metadata fields
+    const meta = fm.metadata ?? {};
+    if (meta.filePattern !== undefined && !Array.isArray(meta.filePattern)) {
+      fail("FM_FILEPATTERN_TYPE", `skills/${dir}/SKILL.md — metadata.filePattern must be an array, got ${typeof meta.filePattern}`, {
+        file: `skills/${dir}/SKILL.md`,
+        line: 1,
+        hint: "Change metadata.filePattern to a YAML list (e.g., filePattern:\\n  - 'src/**')",
+      });
+    }
+    if (meta.bashPattern !== undefined && !Array.isArray(meta.bashPattern)) {
+      fail("FM_BASHPATTERN_TYPE", `skills/${dir}/SKILL.md — metadata.bashPattern must be an array, got ${typeof meta.bashPattern}`, {
+        file: `skills/${dir}/SKILL.md`,
+        line: 1,
+        hint: "Change metadata.bashPattern to a YAML list (e.g., bashPattern:\\n  - '\\\\bvercel\\\\b')",
+      });
+    }
+    if (meta.priority !== undefined && typeof meta.priority !== "number") {
+      fail("FM_PRIORITY_TYPE", `skills/${dir}/SKILL.md — metadata.priority must be a number, got ${typeof meta.priority}`, {
+        file: `skills/${dir}/SKILL.md`,
+        line: 1,
+        hint: "Set metadata.priority to a numeric value (e.g., priority: 5)",
+      });
+    }
+
     if (fm.name && fm.description) {
       pass(`skills/${dir}/SKILL.md — name: "${fm.name}", description present`);
     }
@@ -558,7 +595,7 @@ async function validateCliBannedPatterns() {
 // ---------------------------------------------------------------------------
 
 async function validatePreToolUseHook() {
-  section("[8] PreToolUse hook and skill-map coverage");
+  section("[8] PreToolUse hook and skill frontmatter coverage");
 
   // 8a. Check PreToolUse hook exists in hooks.json
   const hooksPath = join(ROOT, "hooks", "hooks.json");
@@ -621,81 +658,50 @@ async function validatePreToolUseHook() {
     }
   }
 
-  // 8c. Validate skill-map.json
-  const skillMapPath = join(ROOT, "hooks", "skill-map.json");
-  if (!(await exists(skillMapPath))) {
-    fail("SKILLMAP_MISSING", "hooks/skill-map.json not found", {
-      file: "hooks/skill-map.json",
-      hint: "Create hooks/skill-map.json mapping skills to file/bash patterns",
-    });
-    return;
-  }
-
-  let skillMap: any;
-  try {
-    skillMap = JSON.parse(await readFile(skillMapPath, "utf-8"));
-  } catch (e) {
-    fail("SKILLMAP_INVALID", `hooks/skill-map.json is not valid JSON: ${e}`, {
-      file: "hooks/skill-map.json",
-      hint: "Fix JSON syntax errors in hooks/skill-map.json",
-    });
-    return;
-  }
-
-  const mapSkills = Object.keys(skillMap.skills || {});
-
-  // 8d. Every skill in skill-map.json must have a corresponding skills/*/SKILL.md
-  const missingSkillFiles: string[] = [];
-  for (const skill of mapSkills) {
-    const skillPath = join(ROOT, "skills", skill, "SKILL.md");
-    if (await exists(skillPath)) {
-      pass(`skill-map "${skill}" → skills/${skill}/SKILL.md`);
-    } else {
-      missingSkillFiles.push(skill);
-      fail("SKILLMAP_REF_BROKEN", `skill-map references "${skill}" but skills/${skill}/SKILL.md not found`, {
-        file: "hooks/skill-map.json",
-        hint: `Create skills/${skill}/SKILL.md or remove "${skill}" from skill-map.json`,
-      });
-    }
-  }
-
-  // 8e. Every skill in skill-map must have at least one trigger
-  const noTriggers: string[] = [];
-  for (const [skill, config] of Object.entries(skillMap.skills || {}) as [string, any][]) {
-    const pathCount = (config.pathPatterns || []).length;
-    const bashCount = (config.bashPatterns || []).length;
-    if (pathCount === 0 && bashCount === 0) {
-      noTriggers.push(skill);
-      fail("SKILLMAP_NO_TRIGGERS", `skill-map "${skill}" has no path or bash trigger patterns`, {
-        file: "hooks/skill-map.json",
-        hint: `Add pathPatterns or bashPatterns for "${skill}" in skill-map.json`,
-      });
-    }
-  }
-  if (noTriggers.length === 0 && mapSkills.length > 0) {
-    pass("All skill-map entries have at least one trigger pattern");
-  }
-
-  // 8f. Every skills/*/SKILL.md should have at least one trigger in skill-map
+  // 8c. Validate skill frontmatter triggers
+  // Every skills/*/SKILL.md should have metadata.filePattern or metadata.bashPattern
   const skillsDir = join(ROOT, "skills");
-  if (await exists(skillsDir)) {
-    const dirs = await readdir(skillsDir);
-    const mapSkillSet = new Set(mapSkills);
-    const uncovered: string[] = [];
-    for (const dir of dirs.sort()) {
-      const skillPath = join(skillsDir, dir, "SKILL.md");
-      if (!(await exists(skillPath))) continue;
-      if (!mapSkillSet.has(dir)) {
-        uncovered.push(dir);
-        fail("SKILLMAP_UNCOVERED", `skills/${dir}/SKILL.md has no entry in skill-map.json`, {
-          file: `skills/${dir}/SKILL.md`,
-          hint: `Add "${dir}" with pathPatterns/bashPatterns to hooks/skill-map.json`,
-        });
-      }
+  if (!(await exists(skillsDir))) {
+    fail("SKILLS_DIR_MISSING", "skills/ directory not found", {
+      file: "skills/",
+      hint: "Create a skills/ directory with skill subdirectories containing SKILL.md",
+    });
+    return;
+  }
+
+  const dirs = await readdir(skillsDir);
+  const noTriggers: string[] = [];
+  let skillCount = 0;
+
+  for (const dir of dirs.sort()) {
+    const skillPath = join(skillsDir, dir, "SKILL.md");
+    if (!(await exists(skillPath))) continue;
+    skillCount++;
+
+    const content = await readFile(skillPath, "utf-8");
+    let fm: Record<string, any> | null;
+    try {
+      fm = parseFrontmatter(content);
+    } catch {
+      continue; // YAML errors already reported in section [2]
     }
-    if (uncovered.length === 0) {
-      pass("All skills have triggers in skill-map.json");
+    if (!fm) continue; // frontmatter presence already checked in section [2]
+
+    const meta = fm.metadata ?? {};
+    const hasFilePattern = Array.isArray(meta.filePattern) && meta.filePattern.length > 0;
+    const hasBashPattern = Array.isArray(meta.bashPattern) && meta.bashPattern.length > 0;
+
+    if (!hasFilePattern && !hasBashPattern) {
+      noTriggers.push(dir);
+      fail("SKILL_NO_TRIGGERS", `skills/${dir}/SKILL.md has no filePattern or bashPattern in frontmatter metadata`, {
+        file: `skills/${dir}/SKILL.md`,
+        hint: `Add metadata.filePattern or metadata.bashPattern to the YAML frontmatter`,
+      });
     }
+  }
+
+  if (noTriggers.length === 0 && skillCount > 0) {
+    pass("All skills have trigger patterns in frontmatter");
   }
 }
 

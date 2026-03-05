@@ -1,6 +1,32 @@
 ---
 name: observability
 description: Vercel Observability expert guidance — Drains (logs, traces, speed insights, web analytics), Web Analytics, Speed Insights, runtime logs, custom events, OpenTelemetry integration, and monitoring dashboards. Use when instrumenting, debugging, or optimizing application performance and user experience on Vercel.
+metadata:
+  priority: 6
+  filePattern: 
+    - 'instrumentation.ts'
+    - 'instrumentation.js'
+    - 'src/instrumentation.ts'
+    - 'src/instrumentation.js'
+    - 'app/layout.*'
+    - 'src/app/layout.*'
+    - 'pages/_app.*'
+    - 'src/pages/_app.*'
+    - 'apps/*/instrumentation.ts'
+    - 'apps/*/instrumentation.js'
+    - 'apps/*/app/layout.*'
+    - 'apps/*/src/app/layout.*'
+    - 'apps/*/pages/_app.*'
+    - 'apps/*/src/pages/_app.*'
+  bashPattern: 
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/analytics\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/analytics\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/analytics\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/analytics\b'
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/speed-insights\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/speed-insights\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/speed-insights\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/speed-insights\b'
 ---
 
 # Vercel Observability

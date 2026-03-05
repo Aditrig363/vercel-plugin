@@ -1,6 +1,15 @@
 ---
 name: turborepo
 description: Turborepo expert guidance. Use when setting up or optimizing monorepo builds, configuring task caching, remote caching, parallel execution, or the --affected flag for incremental CI.
+metadata:
+  priority: 5
+  filePattern: 
+    - 'turbo.json'
+    - 'turbo/**'
+  bashPattern: 
+    - '\bturbo\s+(run|build|test|lint|dev)\b'
+    - '\bnpx\s+turbo\b'
+    - '\bbunx\s+turbo\b'
 ---
 
 # Turborepo

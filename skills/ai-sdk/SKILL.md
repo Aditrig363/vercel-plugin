@@ -1,6 +1,44 @@
 ---
 name: ai-sdk
 description: Vercel AI SDK expert guidance. Use when building AI-powered features — chat interfaces, text generation, structured output, tool calling, agents, MCP integration, streaming, embeddings, reranking, image generation, or working with any LLM provider.
+metadata:
+  priority: 8
+  filePattern:
+    - 'app/api/chat/**'
+    - 'app/api/completion/**'
+    - 'src/app/api/chat/**'
+    - 'src/app/api/completion/**'
+    - 'pages/api/chat.*'
+    - 'pages/api/chat/**'
+    - 'pages/api/completion.*'
+    - 'pages/api/completion/**'
+    - 'src/pages/api/chat.*'
+    - 'src/pages/api/chat/**'
+    - 'src/pages/api/completion.*'
+    - 'src/pages/api/completion/**'
+    - 'lib/ai/**'
+    - 'src/lib/ai/**'
+    - 'lib/ai.*'
+    - 'src/lib/ai.*'
+    - 'ai/**'
+    - 'apps/*/app/api/chat/**'
+    - 'apps/*/app/api/completion/**'
+    - 'apps/*/src/app/api/chat/**'
+    - 'apps/*/src/app/api/completion/**'
+    - 'apps/*/lib/ai/**'
+    - 'apps/*/src/lib/ai/**'
+  bashPattern:
+    - '\bnpm\s+(install|i|add)\s+[^\n]*\bai\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*\bai\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*\bai\b'
+    - '\byarn\s+add\s+[^\n]*\bai\b'
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@ai-sdk/'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@ai-sdk/'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@ai-sdk/'
+    - '\byarn\s+add\s+[^\n]*@ai-sdk/'
+    - '\bnpx\s+@ai-sdk/devtools\b'
+    - '\bnpx\s+@ai-sdk/codemod\b'
+    - '\bnpx\s+mcp-to-ai-sdk\b'
 ---
 
 # Vercel AI SDK (v6)

@@ -840,7 +840,7 @@ On every session event (`startup`, `resume`, `clear`, `compact`), the `inject-cl
 
 ### PreToolUse — Skill-map matching
 
-Whenever Claude invokes `Read`, `Edit`, `Write`, or `Bash`, the `pretooluse-skill-inject.mjs` hook fires. It matches the tool's target (file path or bash command) against patterns in `hooks/skill-map.json` and injects the corresponding `skills/<name>/SKILL.md` files as `additionalContext`.
+Whenever Claude invokes `Read`, `Edit`, `Write`, or `Bash`, the `pretooluse-skill-inject.mjs` hook fires. It matches the tool's target (file path or bash command) against patterns parsed from each skill's SKILL.md frontmatter (`metadata.filePattern` / `metadata.bashPattern`) and injects the corresponding `skills/<name>/SKILL.md` files as `additionalContext`.
 
 **Matching logic:**
 - **File tools** (`Read|Edit|Write`): the `file_path` is tested against each skill's `pathPatterns` (glob syntax: `*`, `**`, `?`). Matching tries the full path first, then the basename, then progressively longer suffixes.

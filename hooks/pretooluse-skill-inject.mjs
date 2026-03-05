@@ -17,6 +17,7 @@ import { join, dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
+import { buildSkillMap } from "./skill-map-frontmatter.mjs";
 
 const MAX_SKILLS = 3;
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -46,7 +47,8 @@ function dbg(event, data) {
 /**
  * Emit a structured issue event in debug mode.
  * Issue codes: STDIN_EMPTY, STDIN_PARSE_FAIL, SKILLMAP_LOAD_FAIL,
- *   SKILLMAP_EMPTY, DEDUP_READ_FAIL, SKILL_FILE_MISSING, DEDUP_WRITE_FAIL,
+ *   SKILLMAP_VALIDATE_FAIL, SKILLMAP_EMPTY, DEDUP_READ_FAIL,
+ *   DEDUP_RESET_FAIL, DEDUP_WRITE_FAIL, SKILL_FILE_MISSING,
  *   BASH_REGEX_INVALID
  */
 function emitIssue(code, message, hint, context) {
@@ -190,21 +192,40 @@ function run() {
     dbg("tool-target", { toolName, target: redactCommand(toolTarget) });
   }
 
-  // ---- Load skill map ----
+  // ---- Load skill map (from SKILL.md frontmatter) ----
   let tSkillmap = DEBUG ? safeNow() : 0;
   let skillMap;
   try {
-    const mapPath = join(PLUGIN_ROOT, "hooks", "skill-map.json");
-    const parsed = JSON.parse(readFileSync(mapPath, "utf-8"));
-    skillMap = parsed.skills || {};
+    const skillsDir = join(PLUGIN_ROOT, "skills");
+    const built = buildSkillMap(skillsDir);
+
+    // Emit debug warnings for type coercion in buildSkillMap
+    if (built.warnings && built.warnings.length > 0) {
+      for (const w of built.warnings) {
+        dbg("skillmap-coercion-warning", { warning: w });
+      }
+    }
+
+    // Validate and normalize the skill map to prevent .map() crashes on bad types
+    const validation = validateSkillMap(built);
+    if (!validation.ok) {
+      emitIssue("SKILLMAP_VALIDATE_FAIL", "Skill map validation failed after build", "Check SKILL.md frontmatter types: filePattern and bashPattern must be arrays", { errors: validation.errors });
+      return "{}";
+    }
+    if (validation.warnings && validation.warnings.length > 0) {
+      for (const w of validation.warnings) {
+        dbg("skillmap-validation-warning", { warning: w });
+      }
+    }
+    skillMap = validation.normalizedSkillMap.skills;
   } catch (err) {
-    emitIssue("SKILLMAP_LOAD_FAIL", "Failed to load or parse skill-map.json", "Check that hooks/skill-map.json exists and contains valid JSON with a .skills key", { error: String(err) });
+    emitIssue("SKILLMAP_LOAD_FAIL", "Failed to build skill map from SKILL.md frontmatter", "Check that skills/*/SKILL.md files exist and contain valid YAML frontmatter with metadata.filePattern", { error: String(err) });
     return "{}";
   }
   if (DEBUG) timing.skillmap_load = Math.round(safeNow() - tSkillmap);
 
   if (typeof skillMap !== "object" || Object.keys(skillMap).length === 0) {
-    emitIssue("SKILLMAP_EMPTY", "Skill map is empty or has no skills", "Ensure hooks/skill-map.json has a non-empty .skills object", { type: typeof skillMap });
+    emitIssue("SKILLMAP_EMPTY", "Skill map is empty or has no skills", "Ensure skills/*/SKILL.md files have YAML frontmatter with metadata.filePattern or metadata.bashPattern", { type: typeof skillMap });
     return "{}";
   }
 
@@ -220,7 +241,7 @@ function run() {
     bashPatterns: config.bashPatterns || [],
     bashRegexes: (config.bashPatterns || []).map((p) => {
       try { return new RegExp(p); } catch (err) {
-        emitIssue("BASH_REGEX_INVALID", `Invalid bash regex pattern in skill "${skill}": ${p}`, `Fix or remove the invalid pattern from skill-map.json bashPatterns for "${skill}"`, { skill, pattern: p, error: String(err) });
+        emitIssue("BASH_REGEX_INVALID", `Invalid bash regex pattern in skill "${skill}": ${p}`, `Fix or remove the invalid bashPattern in skills/${skill}/SKILL.md frontmatter`, { skill, pattern: p, error: String(err) });
         return null;
       }
     }).filter(Boolean),
@@ -354,7 +375,7 @@ function run() {
       );
       injectedSkills.add(skill);
     } catch (err) {
-      emitIssue("SKILL_FILE_MISSING", `SKILL.md not found for skill "${skill}"`, `Create skills/${skill}/SKILL.md or remove "${skill}" from skill-map.json`, { skillPath, error: String(err) });
+      emitIssue("SKILL_FILE_MISSING", `SKILL.md not found for skill "${skill}"`, `Create skills/${skill}/SKILL.md with valid frontmatter`, { skillPath, error: String(err) });
     }
   }
 

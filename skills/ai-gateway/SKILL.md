@@ -1,6 +1,15 @@
 ---
 name: ai-gateway
 description: Vercel AI Gateway expert guidance. Use when configuring model routing, provider failover, cost tracking, or managing multiple AI providers through a unified API.
+metadata:
+  priority: 7
+  filePattern: []
+  bashPattern:
+    - '\bvercel\s+env\s+pull\b'
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@ai-sdk/gateway\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@ai-sdk/gateway\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@ai-sdk/gateway\b'
+    - '\byarn\s+add\s+[^\n]*@ai-sdk/gateway\b'
 ---
 
 # Vercel AI Gateway

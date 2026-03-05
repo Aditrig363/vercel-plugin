@@ -1,6 +1,44 @@
 ---
 name: vercel-storage
 description: Vercel storage expert guidance — Blob, Edge Config, and Marketplace storage (Neon Postgres, Upstash Redis). Use when choosing, configuring, or using data storage with Vercel applications.
+metadata:
+  priority: 7
+  filePattern:
+    - 'lib/blob/**'
+    - 'lib/storage/**'
+    - 'src/lib/blob/**'
+    - 'src/lib/storage/**'
+    - 'lib/blob.*'
+    - 'lib/storage.*'
+    - 'lib/edge-config.*'
+    - 'src/lib/blob.*'
+    - 'src/lib/storage.*'
+    - 'src/lib/edge-config.*'
+  bashPattern:
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/blob\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/blob\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/blob\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/blob\b'
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/edge-config\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/edge-config\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/edge-config\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/edge-config\b'
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@neondatabase/serverless\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@neondatabase/serverless\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@neondatabase/serverless\b'
+    - '\byarn\s+add\s+[^\n]*@neondatabase/serverless\b'
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@upstash/redis\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@upstash/redis\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@upstash/redis\b'
+    - '\byarn\s+add\s+[^\n]*@upstash/redis\b'
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/kv\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/kv\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/kv\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/kv\b'
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/postgres\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/postgres\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/postgres\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/postgres\b'
 ---
 
 # Vercel Storage

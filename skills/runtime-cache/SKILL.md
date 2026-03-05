@@ -1,6 +1,18 @@
 ---
 name: runtime-cache
 description: Vercel Runtime Cache API guidance — ephemeral per-region key-value cache with tag-based invalidation. Shared across Functions, Routing Middleware, and Builds. Use when implementing caching strategies beyond framework-level caching.
+metadata:
+  priority: 6
+  filePattern: 
+    - 'lib/cache/**'
+    - 'src/lib/cache/**'
+    - 'lib/cache.*'
+    - 'src/lib/cache.*'
+  bashPattern: 
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/functions\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/functions\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/functions\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/functions\b'
 ---
 
 # Vercel Runtime Cache API

@@ -1,6 +1,18 @@
 ---
 name: vercel-api
 description: Vercel MCP and REST API expert guidance. Use when the agent needs live access to Vercel projects, deployments, environment variables, domains, logs, or documentation through the MCP server or REST API.
+metadata:
+  priority: 7
+  filePattern:
+    - '.mcp.json'
+    - '.vercel/project.json'
+  bashPattern:
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/sdk\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/sdk\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/sdk\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/sdk\b'
+    - '\bclaude\s+mcp\s+add\b[^\n]*\bvercel\b'
+    - '\bmcp\.vercel\.com\b'
 ---
 
 # Vercel API — MCP Server & REST API

@@ -1,6 +1,23 @@
 ---
 name: vercel-functions
 description: Vercel Functions expert guidance — Serverless Functions, Edge Functions, Fluid Compute, streaming, Cron Jobs, and runtime configuration. Use when configuring, debugging, or optimizing server-side code running on Vercel.
+metadata:
+  priority: 8
+  filePattern:
+    - 'api/**/*.*'
+    - 'pages/api/**'
+    - 'src/pages/api/**'
+    - 'app/**/route.*'
+    - 'src/app/**/route.*'
+    - 'apps/*/api/**/*.*'
+    - 'apps/*/app/**/route.*'
+    - 'apps/*/src/app/**/route.*'
+    - 'apps/*/pages/api/**'
+    - 'vercel.json'
+    - 'apps/*/vercel.json'
+  bashPattern:
+    - '\bvercel\s+dev\b'
+    - '\bvercel\s+logs\b'
 ---
 
 # Vercel Functions

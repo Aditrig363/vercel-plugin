@@ -1,6 +1,22 @@
 ---
 name: vercel-flags
 description: Vercel Flags guidance — feature flags platform with unified dashboard, Flags Explorer, gradual rollouts, A/B testing, and provider adapters. Use when implementing feature flags, experimentation, or staged rollouts.
+metadata:
+  priority: 6
+  filePattern:
+    - 'flags.ts'
+    - 'flags.js'
+    - 'src/flags.ts'
+    - 'src/flags.js'
+    - 'lib/flags/**'
+    - 'src/lib/flags/**'
+    - 'lib/flags.*'
+    - 'src/lib/flags.*'
+  bashPattern:
+    - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/flags\b'
+    - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/flags\b'
+    - '\bbun\s+(install|i|add)\s+[^\n]*@vercel/flags\b'
+    - '\byarn\s+add\s+[^\n]*@vercel/flags\b'
 ---
 
 # Vercel Flags

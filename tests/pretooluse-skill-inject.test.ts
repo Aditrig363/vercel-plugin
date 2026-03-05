@@ -1,12 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const HOOK_SCRIPT = join(ROOT, "hooks", "pretooluse-skill-inject.mjs");
-const SKILL_MAP_PATH = join(ROOT, "hooks", "skill-map.json");
+const SKILLS_DIR = join(ROOT, "skills");
 const DEDUP_DIR = join(tmpdir(), "vercel-plugin-hooks");
 
 // Unique session ID per test run to avoid cross-test dedup conflicts
@@ -306,19 +306,24 @@ describe("pretooluse-skill-inject.mjs", () => {
     expect(openTags.length).toBeLessThanOrEqual(3);
   });
 
-  test("returns {} when skill-map.json has valid JSON but missing .skills key", async () => {
-    // Create a temporary plugin-like directory with a skill-map.json missing .skills
-    const tempRoot = join(tmpdir(), `vp-test-malformed-${Date.now()}`);
+  test("returns {} when skills directory is empty (no SKILL.md files)", async () => {
+    // Create a temporary plugin-like directory with an empty skills/ dir
+    const tempRoot = join(tmpdir(), `vp-test-empty-skills-${Date.now()}`);
     const tempHooksDir = join(tempRoot, "hooks");
+    const tempSkillsDir = join(tempRoot, "skills");
     mkdirSync(tempHooksDir, { recursive: true });
+    mkdirSync(tempSkillsDir, { recursive: true });
 
-    // Copy the hook script
+    // Copy the hook script and the frontmatter parser
     const hookSource = readFileSync(HOOK_SCRIPT, "utf-8");
     const tempHookPath = join(tempHooksDir, "pretooluse-skill-inject.mjs");
     writeFileSync(tempHookPath, hookSource);
-
-    // Write a skill-map.json with valid JSON but no .skills key
-    writeFileSync(join(tempHooksDir, "skill-map.json"), JSON.stringify({ version: 1, foo: "bar" }));
+    writeFileSync(
+      join(tempHooksDir, "skill-map-frontmatter.mjs"),
+      readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"),
+    );
+    // Symlink node_modules so js-yaml is resolvable
+    symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
 
     // Run the hook from the temp location
     const payload = JSON.stringify({
@@ -429,23 +434,17 @@ describe("pretooluse-skill-inject.mjs", () => {
   });
 });
 
-describe("skill-map.json", () => {
-  test("is valid JSON", () => {
-    expect(() => JSON.parse(readFileSync(SKILL_MAP_PATH, "utf-8"))).not.toThrow();
+describe("skill-map from frontmatter", () => {
+  test("buildSkillMap produces a valid skill map from SKILL.md files", async () => {
+    const { buildSkillMap } = await import("../hooks/skill-map-frontmatter.mjs");
+    const map = buildSkillMap(SKILLS_DIR);
+    expect(typeof map.skills).toBe("object");
+    expect(Object.keys(map.skills).length).toBeGreaterThanOrEqual(27);
   });
 
-  test("references only existing skills", () => {
-    const map = JSON.parse(readFileSync(SKILL_MAP_PATH, "utf-8"));
-    const missing: string[] = [];
-    for (const skill of Object.keys(map.skills)) {
-      const skillPath = join(ROOT, "skills", skill, "SKILL.md");
-      if (!existsSync(skillPath)) missing.push(skill);
-    }
-    expect(missing).toEqual([]);
-  });
-
-  test("every skill has at least one trigger pattern", () => {
-    const map = JSON.parse(readFileSync(SKILL_MAP_PATH, "utf-8"));
+  test("every skill has at least one trigger pattern", async () => {
+    const { buildSkillMap } = await import("../hooks/skill-map-frontmatter.mjs");
+    const map = buildSkillMap(SKILLS_DIR);
     const noTriggers: string[] = [];
     for (const [skill, config] of Object.entries(map.skills) as [string, any][]) {
       const pathCount = (config.pathPatterns || []).length;
@@ -455,12 +454,13 @@ describe("skill-map.json", () => {
     expect(noTriggers).toEqual([]);
   });
 
-  test("covers all 21 skills directories", async () => {
-    const map = JSON.parse(readFileSync(SKILL_MAP_PATH, "utf-8"));
+  test("covers all skills directories with SKILL.md", async () => {
+    const { buildSkillMap } = await import("../hooks/skill-map-frontmatter.mjs");
+    const map = buildSkillMap(SKILLS_DIR);
     const mapSkills = new Set(Object.keys(map.skills));
 
-    const skillDirs = (await readdir(join(ROOT, "skills"))).filter((d) =>
-      existsSync(join(ROOT, "skills", d, "SKILL.md")),
+    const skillDirs = (await readdir(SKILLS_DIR)).filter((d) =>
+      existsSync(join(SKILLS_DIR, d, "SKILL.md")),
     );
 
     const uncovered: string[] = [];
@@ -632,51 +632,20 @@ describe("issue events in debug mode", () => {
     expect(typeof issue.context.error).toBe("string");
   });
 
-  test("SKILLMAP_LOAD_FAIL issue emitted when skill-map.json is missing", async () => {
-    const tempRoot = join(tmpdir(), `vp-test-nomap-${Date.now()}`);
+  test("SKILLMAP_EMPTY issue emitted when skills directory has no SKILL.md files", async () => {
+    const tempRoot = join(tmpdir(), `vp-test-noskills-${Date.now()}`);
     const tempHooksDir = join(tempRoot, "hooks");
+    const tempSkillsDir = join(tempRoot, "skills");
     mkdirSync(tempHooksDir, { recursive: true });
+    mkdirSync(tempSkillsDir, { recursive: true });
     const hookSource = readFileSync(HOOK_SCRIPT, "utf-8");
     const tempHookPath = join(tempHooksDir, "pretooluse-skill-inject.mjs");
     writeFileSync(tempHookPath, hookSource);
-    // No skill-map.json written
-
-    const payload = JSON.stringify({
-      tool_name: "Read",
-      tool_input: { file_path: "/project/next.config.ts" },
-      session_id: testSession,
-    });
-    const proc = Bun.spawn(["node", tempHookPath], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, VERCEL_PLUGIN_HOOK_DEBUG: "1" },
-    });
-    proc.stdin.write(payload);
-    proc.stdin.end();
-    const code = await proc.exited;
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-
-    expect(code).toBe(0);
-    expect(JSON.parse(stdout)).toEqual({});
-
-    const lines = stderr.trim().split("\n").map((l: string) => JSON.parse(l));
-    const issue = lines.find((l: any) => l.event === "issue");
-    expect(issue).toBeDefined();
-    expect(issue.code).toBe("SKILLMAP_LOAD_FAIL");
-
-    rmSync(tempRoot, { recursive: true, force: true });
-  });
-
-  test("SKILLMAP_EMPTY issue emitted when skills object is empty", async () => {
-    const tempRoot = join(tmpdir(), `vp-test-empty-${Date.now()}`);
-    const tempHooksDir = join(tempRoot, "hooks");
-    mkdirSync(tempHooksDir, { recursive: true });
-    const hookSource = readFileSync(HOOK_SCRIPT, "utf-8");
-    const tempHookPath = join(tempHooksDir, "pretooluse-skill-inject.mjs");
-    writeFileSync(tempHookPath, hookSource);
-    writeFileSync(join(tempHooksDir, "skill-map.json"), JSON.stringify({ skills: {} }));
+    writeFileSync(
+      join(tempHooksDir, "skill-map-frontmatter.mjs"),
+      readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"),
+    );
+    symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
 
     const payload = JSON.stringify({
       tool_name: "Read",
@@ -1477,95 +1446,105 @@ describe("per-phase timing_ms (debug mode)", () => {
 });
 
 describe("invalid bash regex handling", () => {
-  let originalMap: string;
+  // Helper: create a temp plugin dir with a single skill containing an invalid bash regex
+  function createTempSkillWithRegex(bashPatterns: string[]): { hookPath: string; root: string } {
+    const tempRoot = join(tmpdir(), `vp-test-regex-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const tempHooksDir = join(tempRoot, "hooks");
+    const tempSkillDir = join(tempRoot, "skills", "test-skill");
+    mkdirSync(tempHooksDir, { recursive: true });
+    mkdirSync(tempSkillDir, { recursive: true });
 
-  beforeEach(() => {
-    originalMap = readFileSync(SKILL_MAP_PATH, "utf-8");
-  });
+    // Copy hook + frontmatter parser
+    writeFileSync(join(tempHooksDir, "pretooluse-skill-inject.mjs"), readFileSync(HOOK_SCRIPT, "utf-8"));
+    writeFileSync(
+      join(tempHooksDir, "skill-map-frontmatter.mjs"),
+      readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"),
+    );
 
-  afterEach(() => {
-    writeFileSync(SKILL_MAP_PATH, originalMap);
-  });
+    // Symlink node_modules so js-yaml is resolvable
+    symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
+
+    // Write a SKILL.md with the given bashPatterns
+    const bashYaml = bashPatterns.map(p => `    - '${p.replace(/'/g, "''")}'`).join("\n");
+    writeFileSync(
+      join(tempSkillDir, "SKILL.md"),
+      `---\nname: test-skill\ndescription: Test skill\nmetadata:\n  priority: 10\n  filePattern: []\n  bashPattern:\n${bashYaml}\n---\n# Test Skill\nContent here.`,
+    );
+
+    return { hookPath: join(tempHooksDir, "pretooluse-skill-inject.mjs"), root: tempRoot };
+  }
 
   test("emits BASH_REGEX_INVALID for broken regex, still exits 0 with valid JSON, and valid patterns still match", async () => {
-    // Write a skill-map with one invalid and one valid bash regex
-    const testMap = {
-      skills: {
-        "test-skill": {
-          priority: 10,
-          pathPatterns: [],
-          bashPatterns: [
-            "(unclosed-group",
-            "\\bvalid-command\\b"
-          ]
-        }
-      }
-    };
-    writeFileSync(SKILL_MAP_PATH, JSON.stringify(testMap));
+    const { hookPath, root } = createTempSkillWithRegex(["(unclosed-group", "\\bvalid-command\\b"]);
 
-    // Run with debug to capture BASH_REGEX_INVALID issue
-    const payload = JSON.stringify({
-      tool_name: "Bash",
-      tool_input: { command: "valid-command --flag" },
-      session_id: `invalid-regex-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    });
-    const proc = Bun.spawn(["node", HOOK_SCRIPT], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, VERCEL_PLUGIN_HOOK_DEBUG: "1" },
-    });
-    proc.stdin.write(payload);
-    proc.stdin.end();
-    const code = await proc.exited;
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
+    try {
+      const payload = JSON.stringify({
+        tool_name: "Bash",
+        tool_input: { command: "valid-command --flag" },
+        session_id: `invalid-regex-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      });
+      const proc = Bun.spawn(["node", hookPath], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, VERCEL_PLUGIN_HOOK_DEBUG: "1" },
+      });
+      proc.stdin.write(payload);
+      proc.stdin.end();
+      const code = await proc.exited;
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
 
-    // Hook exits 0
-    expect(code).toBe(0);
+      // Hook exits 0
+      expect(code).toBe(0);
 
-    // stdout is valid JSON
-    expect(() => JSON.parse(stdout)).not.toThrow();
+      // stdout is valid JSON
+      expect(() => JSON.parse(stdout)).not.toThrow();
 
-    // stderr contains BASH_REGEX_INVALID issue
-    expect(stderr).toContain("BASH_REGEX_INVALID");
-    const issueLines = stderr.split("\n").filter(l => l.includes("BASH_REGEX_INVALID"));
-    expect(issueLines.length).toBeGreaterThanOrEqual(1);
-    const issueEvent = JSON.parse(issueLines[0]);
-    expect(issueEvent.event).toBe("issue");
-    expect(issueEvent.code).toBe("BASH_REGEX_INVALID");
-    expect(issueEvent.context.pattern).toBe("(unclosed-group");
+      // stderr contains BASH_REGEX_INVALID issue
+      expect(stderr).toContain("BASH_REGEX_INVALID");
+      const issueLines = stderr.split("\n").filter(l => l.includes("BASH_REGEX_INVALID"));
+      expect(issueLines.length).toBeGreaterThanOrEqual(1);
+      const issueEvent = JSON.parse(issueLines[0]);
+      expect(issueEvent.event).toBe("issue");
+      expect(issueEvent.code).toBe("BASH_REGEX_INVALID");
+      expect(issueEvent.context.pattern).toBe("(unclosed-group");
 
-    // Valid pattern still matched — skill was injected
-    const result = JSON.parse(stdout);
-    // The skill may or may not have a SKILL.md file, but the hook should have attempted injection
-    // Check that the match was found in debug output
-    expect(stderr).toContain("matches-found");
-    const matchLine = stderr.split("\n").find(l => l.includes("matches-found"));
-    const matchEvent = JSON.parse(matchLine!);
-    expect(matchEvent.matched).toContain("test-skill");
+      // Valid pattern still matched — skill was found in debug output
+      expect(stderr).toContain("matches-found");
+      const matchLine = stderr.split("\n").find(l => l.includes("matches-found"));
+      const matchEvent = JSON.parse(matchLine!);
+      expect(matchEvent.matched).toContain("test-skill");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("does not emit BASH_REGEX_INVALID when debug is off", async () => {
-    const testMap = {
-      skills: {
-        "test-skill": {
-          priority: 10,
-          pathPatterns: [],
-          bashPatterns: ["(unclosed-group"]
-        }
-      }
-    };
-    writeFileSync(SKILL_MAP_PATH, JSON.stringify(testMap));
+    const { hookPath, root } = createTempSkillWithRegex(["(unclosed-group"]);
 
-    const { code, stderr } = await runHook({
-      tool_name: "Bash",
-      tool_input: { command: "some-command" },
-    });
+    try {
+      const payload = JSON.stringify({
+        tool_name: "Bash",
+        tool_input: { command: "some-command" },
+        session_id: `no-debug-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      });
+      const proc = Bun.spawn(["node", hookPath], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write(payload);
+      proc.stdin.end();
+      const code = await proc.exited;
+      const stderr = await new Response(proc.stderr).text();
 
-    expect(code).toBe(0);
-    // No stderr when debug is off
-    expect(stderr).toBe("");
+      expect(code).toBe(0);
+      // No stderr when debug is off
+      expect(stderr).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -2075,8 +2054,9 @@ describe("vercel-firewall priority ranks above vercel-cli", () => {
     expect(firewallIdx).toBeLessThan(cliIdx);
   });
 
-  test("vercel-firewall priority is higher than vercel-cli priority in skill-map", () => {
-    const map = JSON.parse(readFileSync(SKILL_MAP_PATH, "utf-8"));
+  test("vercel-firewall priority is higher than vercel-cli priority in skill-map", async () => {
+    const { buildSkillMap } = await import("../hooks/skill-map-frontmatter.mjs");
+    const map = buildSkillMap(SKILLS_DIR);
     expect(map.skills["vercel-firewall"].priority).toBeGreaterThan(
       map.skills["vercel-cli"].priority,
     );
@@ -2257,8 +2237,9 @@ describe("validateSkillMap", () => {
     expect(result.warnings.some((w: string) => w.includes('unknown key "foo"'))).toBe(true);
   });
 
-  test("validates the real skill-map.json successfully", () => {
-    const raw = JSON.parse(readFileSync(SKILL_MAP_PATH, "utf-8"));
+  test("validates the frontmatter-built skill map successfully", async () => {
+    const { buildSkillMap } = await import("../hooks/skill-map-frontmatter.mjs");
+    const raw = buildSkillMap(SKILLS_DIR);
     const result = validateSkillMap(raw);
     expect(result.ok).toBe(true);
     expect(result.warnings).toEqual([]);
@@ -2271,6 +2252,33 @@ describe("validateSkillMap", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.errors[0]).toContain('skill "bad-skill"');
+  });
+
+  test("validates buildSkillMap output with coerced bare-string filePattern", async () => {
+    const { buildSkillMap } = await import("../hooks/skill-map-frontmatter.mjs");
+    const { mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const tmp = join(tmpdir(), `validate-coerce-${Date.now()}`);
+    const skillDir = join(tmp, "coerce-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---\nname: coerce-skill\ndescription: Test\nmetadata:\n  priority: 3\n  filePattern: 'src/**'\n  bashPattern: '\\bnpm\\b'\n---\n# Test`,
+    );
+
+    const built = buildSkillMap(tmp);
+    // buildSkillMap should have coerced bare strings to arrays
+    expect(built.warnings.length).toBeGreaterThanOrEqual(2);
+
+    // validateSkillMap should pass on the coerced output
+    const result = validateSkillMap(built);
+    expect(result.ok).toBe(true);
+    expect(result.normalizedSkillMap.skills["coerce-skill"].pathPatterns).toEqual(["src/**"]);
+    expect(result.normalizedSkillMap.skills["coerce-skill"].bashPatterns).toEqual(["\\bnpm\\b"]);
+
+    rmSync(tmp, { recursive: true, force: true });
   });
 });
 
