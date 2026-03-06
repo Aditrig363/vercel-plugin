@@ -15,6 +15,10 @@ A comprehensive [Open Plugin](https://github.com/vercel-labs/open-plugin) that t
 
 This plugin pre-loads AI agents with a **relational knowledge graph** of the entire Vercel ecosystem — every product, library, CLI, API, and service — showing how they relate, when to use each, and providing deep guidance through bundled skills.
 
+## How Do I Use This?
+
+After installing, there's nothing to learn — all Vercel guidance happens automatically. The plugin detects what you're working on from your tool calls, file paths, and project config, then injects the right expertise at the right time. Just use Claude Code as you normally would and the plugin handles the rest.
+
 ## Components
 
 ### Ecosystem Graph (`vercel.md`)
