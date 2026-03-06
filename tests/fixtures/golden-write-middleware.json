@@ -1,13 +1,13 @@
 {
-  "description": "Golden snapshot: Edit middleware.ts triggers routing-middleware",
+  "description": "Golden snapshot: Write middleware.ts triggers routing-middleware",
   "input": {
-    "tool_name": "Edit",
+    "tool_name": "Write",
     "tool_input": { "file_path": "/Users/me/project/middleware.ts" }
   },
   "expected": {
     "skillInjection": {
       "version": 1,
-      "toolName": "Edit",
+      "toolName": "Write",
       "toolTarget": "/Users/me/project/middleware.ts",
       "matchedSkills": ["routing-middleware"],
       "injectedSkills": ["routing-middleware"],

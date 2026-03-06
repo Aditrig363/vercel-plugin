@@ -95,17 +95,17 @@ describe("fuzz: extractFrontmatter", () => {
 describe("fuzz: parseSkillFrontmatter empty inputs", () => {
   test("empty string", () => {
     const result = parseSkillFrontmatter("");
-    expect(result).toEqual({ name: "", description: "", metadata: {} });
+    expect(result).toEqual({ name: "", description: "", summary: "", metadata: {} });
   });
 
   test("whitespace only", () => {
     const result = parseSkillFrontmatter("   \n  \n  ");
-    expect(result).toEqual({ name: "", description: "", metadata: {} });
+    expect(result).toEqual({ name: "", description: "", summary: "", metadata: {} });
   });
 
   test("null/undefined don't crash", () => {
-    expect(parseSkillFrontmatter(null as any)).toEqual({ name: "", description: "", metadata: {} });
-    expect(parseSkillFrontmatter(undefined as any)).toEqual({ name: "", description: "", metadata: {} });
+    expect(parseSkillFrontmatter(null as any)).toEqual({ name: "", description: "", summary: "", metadata: {} });
+    expect(parseSkillFrontmatter(undefined as any)).toEqual({ name: "", description: "", summary: "", metadata: {} });
   });
 });
 
@@ -315,7 +315,7 @@ describe("fuzz: block arrays", () => {
 describe("fuzz: comments", () => {
   test("comment-only document is empty", () => {
     const result = safeParse("# just a comment\n# another one");
-    expect(result).toEqual({ name: "", description: "", metadata: {} });
+    expect(result).toEqual({ name: "", description: "", summary: "", metadata: {} });
   });
 
   test("inline comments are NOT stripped (becomes part of value)", () => {

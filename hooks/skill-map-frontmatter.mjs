@@ -297,7 +297,7 @@ function parseSimpleYaml(yamlStr) {
  */
 export function parseSkillFrontmatter(yamlStr) {
   if (!yamlStr || !yamlStr.trim()) {
-    return { name: "", description: "", metadata: {} };
+    return { name: "", description: "", summary: "", metadata: {} };
   }
   const doc = parseSimpleYaml(yamlStr);
   return {

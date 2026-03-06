@@ -13,6 +13,7 @@
     "vercel-cli",
     "vercel-functions"
   ],
+  "summaryOnly": [],
   "droppedByCap": [
     "deployments-cicd",
     "routing-middleware"

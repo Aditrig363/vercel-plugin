@@ -85,7 +85,7 @@ describe("session-start-profiler", () => {
     expect(result.code).toBe(0);
   });
 
-  test("writes nothing for an empty project", async () => {
+  test("detects empty project as greenfield (no LIKELY_SKILLS)", async () => {
     const projectDir = join(tempDir, "empty-project");
     mkdirSync(projectDir);
 
@@ -97,6 +97,7 @@ describe("session-start-profiler", () => {
     expect(result.code).toBe(0);
     const content = readFileSync(envFile, "utf-8");
     expect(content).not.toContain("VERCEL_PLUGIN_LIKELY_SKILLS");
+    expect(content).toContain('VERCEL_PLUGIN_GREENFIELD="true"');
   });
 
   test("detects Next.js project via next.config.ts", async () => {
@@ -401,6 +402,81 @@ describe("session-start-profiler", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Greenfield detection (integration)
+// ---------------------------------------------------------------------------
+
+describe("greenfield detection", () => {
+  test("detects greenfield project (only dot-dirs)", async () => {
+    const projectDir = join(tempDir, "greenfield");
+    mkdirSync(projectDir);
+    mkdirSync(join(projectDir, ".git"));
+    mkdirSync(join(projectDir, ".claude"));
+
+    const result = await runProfiler({
+      CLAUDE_ENV_FILE: envFile,
+      CLAUDE_PROJECT_ROOT: projectDir,
+    });
+
+    expect(result.code).toBe(0);
+    const envContent = readFileSync(envFile, "utf-8");
+    expect(envContent).toContain('VERCEL_PLUGIN_GREENFIELD="true"');
+    expect(envContent).not.toContain("VERCEL_PLUGIN_LIKELY_SKILLS");
+    expect(result.stdout).toContain("greenfield project");
+    expect(result.stdout).toContain(".git/");
+    expect(result.stdout).toContain(".claude/");
+    expect(result.stdout).toContain("Skip codebase exploration");
+  });
+
+  test("completely empty dir is greenfield", async () => {
+    const projectDir = join(tempDir, "greenfield-empty");
+    mkdirSync(projectDir);
+
+    const result = await runProfiler({
+      CLAUDE_ENV_FILE: envFile,
+      CLAUDE_PROJECT_ROOT: projectDir,
+    });
+
+    expect(result.code).toBe(0);
+    const envContent = readFileSync(envFile, "utf-8");
+    expect(envContent).toContain('VERCEL_PLUGIN_GREENFIELD="true"');
+    expect(result.stdout).toContain("greenfield project");
+  });
+
+  test("not greenfield when non-dot files exist", async () => {
+    const projectDir = join(tempDir, "not-greenfield");
+    mkdirSync(projectDir);
+    mkdirSync(join(projectDir, ".git"));
+    writeFileSync(join(projectDir, "package.json"), "{}");
+
+    const result = await runProfiler({
+      CLAUDE_ENV_FILE: envFile,
+      CLAUDE_PROJECT_ROOT: projectDir,
+    });
+
+    expect(result.code).toBe(0);
+    const envContent = readFileSync(envFile, "utf-8");
+    expect(envContent).not.toContain("VERCEL_PLUGIN_GREENFIELD");
+    expect(result.stdout).not.toContain("greenfield");
+  });
+
+  test("not greenfield when non-dot directory exists", async () => {
+    const projectDir = join(tempDir, "has-src");
+    mkdirSync(projectDir);
+    mkdirSync(join(projectDir, ".git"));
+    mkdirSync(join(projectDir, "src"));
+
+    const result = await runProfiler({
+      CLAUDE_ENV_FILE: envFile,
+      CLAUDE_PROJECT_ROOT: projectDir,
+    });
+
+    expect(result.code).toBe(0);
+    const envContent = readFileSync(envFile, "utf-8");
+    expect(envContent).not.toContain("VERCEL_PLUGIN_GREENFIELD");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // profileProject unit tests (imported directly)
 // ---------------------------------------------------------------------------
 
@@ -427,5 +503,50 @@ describe("profileProject (unit)", () => {
     expect(result).toContain("turbopack");
     expect(result).toContain("turborepo");
     expect(result).toEqual([...result].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkGreenfield unit tests
+// ---------------------------------------------------------------------------
+
+describe("checkGreenfield (unit)", () => {
+  test("returns entries for dot-only directory", async () => {
+    const { checkGreenfield } = await import("../hooks/session-start-profiler.mjs");
+    const projectDir = join(tempDir, "unit-gf-dots");
+    mkdirSync(projectDir);
+    mkdirSync(join(projectDir, ".git"));
+    mkdirSync(join(projectDir, ".claude"));
+
+    const result = checkGreenfield(projectDir);
+    expect(result).not.toBeNull();
+    expect(result!.entries).toEqual([".claude", ".git"]);
+  });
+
+  test("returns entries for empty directory", async () => {
+    const { checkGreenfield } = await import("../hooks/session-start-profiler.mjs");
+    const projectDir = join(tempDir, "unit-gf-empty");
+    mkdirSync(projectDir);
+
+    const result = checkGreenfield(projectDir);
+    expect(result).not.toBeNull();
+    expect(result!.entries).toEqual([]);
+  });
+
+  test("returns null when non-dot content exists", async () => {
+    const { checkGreenfield } = await import("../hooks/session-start-profiler.mjs");
+    const projectDir = join(tempDir, "unit-gf-real");
+    mkdirSync(projectDir);
+    mkdirSync(join(projectDir, ".git"));
+    writeFileSync(join(projectDir, "README.md"), "# Hello");
+
+    const result = checkGreenfield(projectDir);
+    expect(result).toBeNull();
+  });
+
+  test("returns null for non-existent directory", async () => {
+    const { checkGreenfield } = await import("../hooks/session-start-profiler.mjs");
+    const result = checkGreenfield(join(tempDir, "does-not-exist"));
+    expect(result).toBeNull();
   });
 });

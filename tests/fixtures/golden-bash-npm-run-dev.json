@@ -1,0 +1,18 @@
+{
+  "description": "Golden snapshot: Bash 'npm run dev' triggers nextjs and agent-browser",
+  "input": {
+    "tool_name": "Bash",
+    "tool_input": { "command": "npm run dev" }
+  },
+  "expected": {
+    "skillInjection": {
+      "version": 1,
+      "toolName": "Bash",
+      "toolTarget": "npm run dev",
+      "matchedSkills": ["agent-browser", "nextjs"],
+      "injectedSkills": ["nextjs", "agent-browser"],
+      "droppedByCap": [],
+      "droppedByBudget": []
+    }
+  }
+}

@@ -21,7 +21,7 @@ import { readFileSync, realpathSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSkillMap, validateSkillMap } from "./skill-map-frontmatter.mjs";
-import { globToRegex, parseSeenSkills, appendSeenSkill, compileSkillPatterns, matchPathWithReason, matchBashWithReason, matchImportWithReason, rankEntries } from "./patterns.mjs";
+import { globToRegex, parseSeenSkills, appendSeenSkill, parseLikelySkills, compileSkillPatterns, matchPathWithReason, matchBashWithReason, matchImportWithReason, rankEntries } from "./patterns.mjs";
 import { resolveVercelJsonSkills, isVercelJsonPath, VERCEL_JSON_SKILLS } from "./vercel-config.mjs";
 import { createLogger } from "./logger.mjs";
 
@@ -261,7 +261,7 @@ export function matchSkills(toolName, toolInput, compiledSkills, logger) {
 // ---------------------------------------------------------------------------
 
 /**
- * Filter already-seen skills, apply vercel.json key-aware routing, rank, and cap.
+ * Filter already-seen skills, apply vercel.json key-aware routing and profiler boost, rank, and cap.
  * @param {object} params
  * @param {Array} params.matchedEntries - Raw matched entries from matchSkills
  * @param {Set} params.matched - Set of all matched skill names
@@ -270,12 +270,14 @@ export function matchSkills(toolName, toolInput, compiledSkills, logger) {
  * @param {Set} params.injectedSkills - Already-injected skill names
  * @param {boolean} params.dedupOff - Whether dedup is disabled
  * @param {number} [params.maxSkills] - Hard ceiling (defaults to MAX_SKILLS)
+ * @param {Set} [params.likelySkills] - Skills identified by session-start profiler
  * @param {object} [logger] - Logger instance
- * @returns {{ newEntries: Array, rankedSkills: string[], vercelJsonRouting: object|null }}
+ * @returns {{ newEntries: Array, rankedSkills: string[], vercelJsonRouting: object|null, profilerBoosted: string[] }}
  */
-export function deduplicateSkills({ matchedEntries, matched, toolName, toolInput, injectedSkills, dedupOff, maxSkills }, logger) {
+export function deduplicateSkills({ matchedEntries, matched, toolName, toolInput, injectedSkills, dedupOff, maxSkills, likelySkills }, logger) {
   const l = logger || log;
   const cap = maxSkills ?? MAX_SKILLS;
+  const likely = likelySkills || new Set();
 
   // Filter out already-injected skills
   let newEntries = dedupOff
@@ -307,6 +309,24 @@ export function deduplicateSkills({ matchedEntries, matched, toolName, toolInput
     }
   }
 
+  // Profiler boost: skills identified by session-start profiler get +5 priority
+  const profilerBoosted = [];
+  if (likely.size > 0) {
+    for (const entry of newEntries) {
+      if (likely.has(entry.skill)) {
+        const base = typeof entry.effectivePriority === "number" ? entry.effectivePriority : entry.priority;
+        entry.effectivePriority = base + 5;
+        profilerBoosted.push(entry.skill);
+      }
+    }
+    if (profilerBoosted.length > 0) {
+      l.debug("profiler-boosted", {
+        likelySkills: [...likely],
+        boostedSkills: profilerBoosted,
+      });
+    }
+  }
+
   // Sort by effectivePriority (if set) or priority DESC, then skill name ASC
   newEntries = rankEntries(newEntries);
 
@@ -317,7 +337,7 @@ export function deduplicateSkills({ matchedEntries, matched, toolName, toolInput
     previouslyInjected: [...injectedSkills],
   });
 
-  return { newEntries, rankedSkills, vercelJsonRouting };
+  return { newEntries, rankedSkills, vercelJsonRouting, profilerBoosted };
 }
 
 // ---------------------------------------------------------------------------
@@ -496,7 +516,14 @@ function run() {
   const hasEnvDedup = !dedupOff && typeof process.env.VERCEL_PLUGIN_SEEN_SKILLS === "string";
   const dedupStrategy = dedupOff ? "disabled" : hasEnvDedup ? "env-var" : "memory-only";
 
+  // Profiler likely-skills (set by session-start-profiler.mjs)
+  const likelySkillsEnv = process.env.VERCEL_PLUGIN_LIKELY_SKILLS || "";
+  const likelySkills = parseLikelySkills(likelySkillsEnv);
+
   log.debug("dedup-strategy", { strategy: dedupStrategy, sessionId, seenEnv });
+  if (likelySkills.size > 0) {
+    log.debug("likely-skills", { skills: [...likelySkills] });
+  }
 
   let injectedSkills = hasEnvDedup ? parseSeenSkills(seenEnv) : new Set();
 
@@ -516,6 +543,7 @@ function run() {
     toolInput,
     injectedSkills,
     dedupOff,
+    likelySkills,
   }, log);
 
   const { newEntries, rankedSkills } = dedupResult;

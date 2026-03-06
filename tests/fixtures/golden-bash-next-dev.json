@@ -1,5 +1,5 @@
 {
-  "description": "Golden snapshot: Bash 'npx next dev --turbopack' triggers nextjs and turbopack, nothing dropped",
+  "description": "Golden snapshot: Bash 'npx next dev --turbopack' triggers nextjs, turbopack, and agent-browser",
   "input": {
     "tool_name": "Bash",
     "tool_input": { "command": "npx next dev --turbopack" }
@@ -9,8 +9,8 @@
       "version": 1,
       "toolName": "Bash",
       "toolTarget": "npx next dev --turbopack",
-      "matchedSkills": ["turbopack", "nextjs"],
-      "injectedSkills": ["nextjs", "turbopack"],
+      "matchedSkills": ["agent-browser", "nextjs", "turbopack"],
+      "injectedSkills": ["nextjs", "turbopack", "agent-browser"],
       "droppedByCap": [],
       "droppedByBudget": []
     }

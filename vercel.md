@@ -416,6 +416,13 @@ TURBOPACK                                  ⤳ skill: turbopack  📖 docs: http
     ⊃ Lives in the Next.js monorepo
 ```
 
+AGENT BROWSER                              ⤳ skill: agent-browser
+├── Purpose: Browser automation for dev-server testing
+│   ⊃ Snapshot-driven interaction with localhost
+│   ⊃ Works with next dev, vite, nuxt dev, vercel dev
+│
+└── Use When: Verifying UI behavior, form testing, e2e workflows
+
 ---
 
 ## 5. Storage & Data

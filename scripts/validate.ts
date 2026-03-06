@@ -847,8 +847,18 @@ async function validatePatternCompilation() {
         continue;
       }
       try {
-        globToRegex(pat);
+        const compiledRegex = globToRegex(pat);
         compiled++;
+
+        // Check the compiled regex for catastrophic backtracking risk
+        const redosRisk = detectReDoS(compiledRegex.source);
+        if (redosRisk) {
+          redosWarnings++;
+          fail("PATTERN_PATH_REDOS", `skills/${dir}/SKILL.md — pathPatterns "${pat}" compiles to regex with catastrophic backtracking risk: ${redosRisk}`, {
+            file: `skills/${dir}/SKILL.md`,
+            hint: "Rewrite the glob pattern to avoid nested quantifiers in the compiled regex.",
+          });
+        }
       } catch (err: any) {
         failures++;
         fail("PATTERN_PATH_COMPILE", `skills/${dir}/SKILL.md — pathPatterns "${pat}" failed to compile: ${err.message}`, {
@@ -998,6 +1008,76 @@ async function validateCatalogStaleness() {
 }
 
 // ---------------------------------------------------------------------------
+// 11. Validate profiler skill slugs map to real skills
+// ---------------------------------------------------------------------------
+
+async function validateProfilerSkillSlugs() {
+  section("[11] Session-start profiler → skill slug cross-references");
+
+  const profilerPath = join(ROOT, "hooks", "session-start-profiler.mjs");
+  if (!(await exists(profilerPath))) {
+    warn("PROFILER_MISSING", "hooks/session-start-profiler.mjs not found", {
+      file: "hooks/session-start-profiler.mjs",
+      hint: "Create the session-start profiler hook",
+    });
+    return;
+  }
+
+  const profilerSrc = await readFile(profilerPath, "utf-8");
+
+  // Extract all skill slug strings referenced in FILE_MARKERS and PACKAGE_MARKERS
+  // Match patterns like: skills: ["nextjs", "turbopack"] and ["ai-sdk"]
+  const slugRefs = new Set<string>();
+  for (const m of profilerSrc.matchAll(/skills?:\s*\["([^\]]+)"\]/g)) {
+    // Handle the array content like: "nextjs", "turbopack"
+    for (const s of m[1].matchAll(/"([a-z][a-z0-9-]*)"/g)) {
+      slugRefs.add(s[1]);
+    }
+  }
+  // Also match individual string entries in arrays
+  for (const m of profilerSrc.matchAll(/\["([a-z][a-z0-9-]*)(?:",\s*"([a-z][a-z0-9-]*))*"\]/g)) {
+    // Parse the full match more carefully
+    const inner = m[0].slice(1, -1); // strip [ ]
+    for (const s of inner.matchAll(/"([a-z][a-z0-9-]*)"/g)) {
+      slugRefs.add(s[1]);
+    }
+  }
+  // Also match: skills.add("cron-jobs") patterns
+  for (const m of profilerSrc.matchAll(/skills\.add\("([a-z][a-z0-9-]*)"\)/g)) {
+    slugRefs.add(m[1]);
+  }
+
+  if (slugRefs.size === 0) {
+    warn("PROFILER_NO_SLUGS", "No skill slugs found in profiler source", {
+      file: "hooks/session-start-profiler.mjs",
+      hint: "Profiler should reference skill slugs in FILE_MARKERS or PACKAGE_MARKERS",
+    });
+    return;
+  }
+
+  const skillsDir = join(ROOT, "skills");
+  const built = buildSkillMap(skillsDir);
+  const validSlugs = new Set(Object.keys(built.skills));
+  const invalid: string[] = [];
+
+  for (const slug of [...slugRefs].sort()) {
+    if (validSlugs.has(slug)) {
+      pass(`profiler slug "${slug}" → skills/${slug}/SKILL.md`);
+    } else {
+      invalid.push(slug);
+      fail("PROFILER_SLUG_INVALID", `Profiler references skill "${slug}" but skills/${slug}/SKILL.md does not exist`, {
+        file: "hooks/session-start-profiler.mjs",
+        hint: `Create skills/${slug}/SKILL.md or remove "${slug}" from the profiler`,
+      });
+    }
+  }
+
+  if (invalid.length === 0) {
+    pass(`All ${slugRefs.size} profiler skill slugs are valid`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -1013,6 +1093,7 @@ const CHECK_LABELS: Record<string, string> = {
   preToolUseHook: "PreToolUse hook and skill coverage",
   patternCompilation: "Pattern compilation",
   catalogStaleness: "Skill catalog staleness",
+  profilerSkillSlugs: "Profiler skill slug cross-references",
 };
 
 async function timed<T>(name: string, fn: () => Promise<T>): Promise<T> {
@@ -1051,6 +1132,7 @@ async function main() {
   await timed("preToolUseHook", () => validatePreToolUseHook());
   await timed("patternCompilation", () => validatePatternCompilation());
   await timed("catalogStaleness", () => validateCatalogStaleness());
+  await timed("profilerSkillSlugs", () => validateProfilerSkillSlugs());
 
   const errorCount = issues.filter((i) => i.severity === "error").length;
   const warnCount = issues.filter((i) => i.severity === "warning").length;

@@ -13,6 +13,7 @@
     "vercel-cli",
     "cron-jobs"
   ],
+  "summaryOnly": [],
   "droppedByCap": [
     "deployments-cicd",
     "routing-middleware"

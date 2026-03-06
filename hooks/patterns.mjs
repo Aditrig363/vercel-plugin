@@ -222,6 +222,14 @@ export function matchBashWithReason(command, regexes, patterns) {
 }
 
 /**
+ * Parse comma-delimited likely-skill slugs from env var into a Set.
+ * Same format as seen-skills: "nextjs,ai-sdk,turbopack"
+ */
+export function parseLikelySkills(envValue) {
+  return parseSeenSkills(envValue);
+}
+
+/**
  * Sort compiled skill entries by effectivePriority (if set) or priority DESC,
  * then skill name ASC.
  */

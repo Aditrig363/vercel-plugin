@@ -10,7 +10,7 @@
  * cannot be determined.
  */
 
-import { existsSync, readFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -107,6 +107,35 @@ export function profileProject(projectRoot) {
 }
 
 /**
+ * Check if a project root is "greenfield" — only dot-directories and no real
+ * source files.  Returns the list of top-level entries if greenfield, or null.
+ *
+ * @param {string} projectRoot
+ * @returns {{ entries: string[] } | null}
+ */
+export function checkGreenfield(projectRoot) {
+  /** @type {import("node:fs").Dirent[]} */
+  let dirents;
+  try {
+    dirents = readdirSync(projectRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  // Greenfield if every entry is a dot-directory (e.g. .git, .claude) and
+  // there are no files at all (dot-files like .mcp.json or .env.local
+  // indicate real project config).
+  const hasNonDotDir = dirents.some((d) => !d.name.startsWith("."));
+  const hasDotFile = dirents.some((d) => d.name.startsWith(".") && d.isFile());
+
+  if (!hasNonDotDir && !hasDotFile) {
+    return { entries: dirents.map((d) => d.name).sort() };
+  }
+
+  return null;
+}
+
+/**
  * Main entry point — profile the project and write env vars.
  */
 function main() {
@@ -117,6 +146,22 @@ function main() {
 
   // Use CLAUDE_PROJECT_ROOT if available, otherwise cwd
   const projectRoot = process.env.CLAUDE_PROJECT_ROOT || process.cwd();
+
+  // Greenfield check — if the project only has dot-directories, skip profiling
+  // and inject a short context hint instead.
+  const greenfield = checkGreenfield(projectRoot);
+  if (greenfield) {
+    try {
+      appendFileSync(envFile, `export VERCEL_PLUGIN_GREENFIELD="true"\n`);
+    } catch {
+      // ignore
+    }
+    const dirs = greenfield.entries.map((e) => `  ${e}/`).join("\n");
+    process.stdout.write(
+      `This is a greenfield project with only these directories:\n${dirs}\nSkip codebase exploration — there is no existing code to discover.\n`,
+    );
+    process.exit(0);
+  }
 
   const likelySkills = profileProject(projectRoot);
 
