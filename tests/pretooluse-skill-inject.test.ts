@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, symlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, symlinkSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { readdir } from "node:fs/promises";
@@ -7,21 +7,41 @@ import { readdir } from "node:fs/promises";
 const ROOT = resolve(import.meta.dirname, "..");
 const HOOK_SCRIPT = join(ROOT, "hooks", "pretooluse-skill-inject.mjs");
 const SKILLS_DIR = join(ROOT, "skills");
-const DEDUP_DIR = join(tmpdir(), "vercel-plugin-hooks");
+
+/** Derive expected skill count from disk so tests don't break on skill add/remove */
+function countSkillDirs(): number {
+  return readdirSync(SKILLS_DIR).filter((d) => {
+    try {
+      return existsSync(join(SKILLS_DIR, d, "SKILL.md"));
+    } catch {
+      return false;
+    }
+  }).length;
+}
 
 // Unique session ID per test run to avoid cross-test dedup conflicts
 let testSession: string;
+let tempSeenSkillsFiles: string[] = [];
+
+function createSeenSkillsFile(seed?: string): string {
+  const filePath = join(
+    tmpdir(),
+    `vp-seen-skills-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
+  );
+  writeFileSync(filePath, seed ?? "", "utf-8");
+  tempSeenSkillsFiles.push(filePath);
+  return filePath;
+}
 
 beforeEach(() => {
   testSession = `test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 });
 
 afterEach(() => {
-  // Clean up dedup file
-  const dedupFile = join(DEDUP_DIR, `session-${testSession}.json`);
-  try {
-    rmSync(dedupFile, { force: true });
-  } catch {}
+  for (const filePath of tempSeenSkillsFiles) {
+    rmSync(filePath, { force: true });
+  }
+  tempSeenSkillsFiles = [];
 });
 
 async function runHook(input: object): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -233,20 +253,21 @@ describe("pretooluse-skill-inject.mjs", () => {
     expect(result.hookSpecificOutput.additionalContext).toContain("skill:marketplace");
   });
 
-  test("deduplicates skills within same session", async () => {
-    // First call — should inject
-    const { stdout: first } = await runHook({
-      tool_name: "Read",
-      tool_input: { file_path: "/Users/me/project/next.config.ts" },
-    });
+  test("deduplicates across invocations when VERCEL_PLUGIN_SEEN_SKILLS is set", async () => {
+    const seenSkillsFile = createSeenSkillsFile();
+    const env = { VERCEL_PLUGIN_SEEN_SKILLS: seenSkillsFile };
+
+    const { stdout: first } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/app/page.tsx" } },
+      env,
+    );
     const r1 = JSON.parse(first);
     expect(r1.hookSpecificOutput.additionalContext).toContain("skill:nextjs");
 
-    // Second call — same session, should be deduped
-    const { stdout: second } = await runHook({
-      tool_name: "Read",
-      tool_input: { file_path: "/Users/me/project/next.config.mjs" },
-    });
+    const { stdout: second } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/app/page.tsx" } },
+      env,
+    );
     const r2 = JSON.parse(second);
     expect(r2).toEqual({});
   });
@@ -321,6 +342,10 @@ describe("pretooluse-skill-inject.mjs", () => {
     writeFileSync(
       join(tempHooksDir, "skill-map-frontmatter.mjs"),
       readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"),
+    );
+    writeFileSync(
+      join(tempHooksDir, "patterns.mjs"),
+      readFileSync(join(ROOT, "hooks", "patterns.mjs"), "utf-8"),
     );
     // Symlink node_modules so js-yaml is resolvable
     symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
@@ -439,7 +464,7 @@ describe("skill-map from frontmatter", () => {
     const { buildSkillMap } = await import("../hooks/skill-map-frontmatter.mjs");
     const map = buildSkillMap(SKILLS_DIR);
     expect(typeof map.skills).toBe("object");
-    expect(Object.keys(map.skills).length).toBeGreaterThanOrEqual(27);
+    expect(Object.keys(map.skills).length).toBe(countSkillDirs());
   });
 
   test("every skill has at least one trigger pattern", async () => {
@@ -645,6 +670,10 @@ describe("issue events in debug mode", () => {
       join(tempHooksDir, "skill-map-frontmatter.mjs"),
       readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"),
     );
+    writeFileSync(
+      join(tempHooksDir, "patterns.mjs"),
+      readFileSync(join(ROOT, "hooks", "patterns.mjs"), "utf-8"),
+    );
     symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
 
     const payload = JSON.stringify({
@@ -712,6 +741,132 @@ describe("issue events in debug mode", () => {
       expect(typeof issue.timestamp).toBe("string");
     }
   });
+
+  test("SKILLMD_PARSE_FAIL issue emitted for malformed YAML frontmatter", async () => {
+    // Set up a temp plugin root with one valid skill and one malformed SKILL.md
+    const tempRoot = join(tmpdir(), `vp-test-malformed-${Date.now()}`);
+    const tempHooksDir = join(tempRoot, "hooks");
+    const tempSkillsDir = join(tempRoot, "skills");
+
+    // Create a valid skill so the skill map isn't empty
+    const validSkillDir = join(tempSkillsDir, "valid-skill");
+    mkdirSync(validSkillDir, { recursive: true });
+    writeFileSync(
+      join(validSkillDir, "SKILL.md"),
+      `---\nname: valid-skill\nmetadata:\n  filePattern:\n    - '**/*.valid'\n---\n# Valid Skill\n`,
+    );
+
+    // Create a malformed skill with invalid YAML frontmatter
+    const badSkillDir = join(tempSkillsDir, "bad-skill");
+    mkdirSync(badSkillDir, { recursive: true });
+    writeFileSync(
+      join(badSkillDir, "SKILL.md"),
+      `---\nname: bad-skill\nmetadata: [invalid: yaml: :\n---\n# Bad Skill\n`,
+    );
+
+    // Copy hook files and symlink node_modules
+    mkdirSync(tempHooksDir, { recursive: true });
+    writeFileSync(
+      join(tempHooksDir, "pretooluse-skill-inject.mjs"),
+      readFileSync(HOOK_SCRIPT, "utf-8"),
+    );
+    writeFileSync(
+      join(tempHooksDir, "skill-map-frontmatter.mjs"),
+      readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"),
+    );
+    writeFileSync(
+      join(tempHooksDir, "patterns.mjs"),
+      readFileSync(join(ROOT, "hooks", "patterns.mjs"), "utf-8"),
+    );
+    symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
+
+    const payload = JSON.stringify({
+      tool_name: "Read",
+      tool_input: { file_path: "/project/foo.valid" },
+      session_id: testSession,
+    });
+    const proc = Bun.spawn(["node", join(tempHooksDir, "pretooluse-skill-inject.mjs")], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, VERCEL_PLUGIN_DEBUG: "1" },
+    });
+    proc.stdin.write(payload);
+    proc.stdin.end();
+    const code = await proc.exited;
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+
+    expect(code).toBe(0);
+    // Hook should still produce output (valid skill matches)
+    expect(stdout.length).toBeGreaterThan(0);
+
+    // Parse stderr debug lines and find SKILLMD_PARSE_FAIL issues
+    const lines = stderr.trim().split("\n").map((l: string) => JSON.parse(l));
+    const parseFailIssues = lines.filter(
+      (l: any) => l.event === "issue" && l.code === "SKILLMD_PARSE_FAIL",
+    );
+    expect(parseFailIssues.length).toBeGreaterThanOrEqual(1);
+
+    const issue = parseFailIssues[0];
+    expect(issue.message).toContain("Failed to parse SKILL.md");
+    expect(typeof issue.hint).toBe("string");
+    expect(issue.hint).toContain("bad-skill");
+    expect(issue.context.file).toContain("bad-skill");
+    expect(typeof issue.context.error).toBe("string");
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  test("SKILLMD_PARSE_FAIL not emitted when debug is off", async () => {
+    // Same malformed setup but without debug mode
+    const tempRoot = join(tmpdir(), `vp-test-malformed-nodebug-${Date.now()}`);
+    const tempHooksDir = join(tempRoot, "hooks");
+    const tempSkillsDir = join(tempRoot, "skills");
+
+    const badSkillDir = join(tempSkillsDir, "bad-skill");
+    mkdirSync(badSkillDir, { recursive: true });
+    writeFileSync(
+      join(badSkillDir, "SKILL.md"),
+      `---\nname: bad-skill\nmetadata: [invalid: yaml: :\n---\n# Bad Skill\n`,
+    );
+
+    mkdirSync(tempHooksDir, { recursive: true });
+    writeFileSync(
+      join(tempHooksDir, "pretooluse-skill-inject.mjs"),
+      readFileSync(HOOK_SCRIPT, "utf-8"),
+    );
+    writeFileSync(
+      join(tempHooksDir, "skill-map-frontmatter.mjs"),
+      readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"),
+    );
+    writeFileSync(
+      join(tempHooksDir, "patterns.mjs"),
+      readFileSync(join(ROOT, "hooks", "patterns.mjs"), "utf-8"),
+    );
+    symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
+
+    const payload = JSON.stringify({
+      tool_name: "Read",
+      tool_input: { file_path: "/project/foo.txt" },
+      session_id: `nodebug-${Date.now()}`,
+    });
+    const proc = Bun.spawn(["node", join(tempHooksDir, "pretooluse-skill-inject.mjs")], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      // No debug env var
+    });
+    proc.stdin.write(payload);
+    proc.stdin.end();
+    await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+
+    // No stderr output when debug is off
+    expect(stderr).toBe("");
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
 });
 
 // Helper to run hook with custom env vars and optional session_id override
@@ -737,180 +892,132 @@ async function runHookEnv(
   return { code, stdout, stderr };
 }
 
-describe("session_id fallback and dedup controls", () => {
-  test("missing session_id with no SESSION_ID env uses memory-only dedup (no persistence)", async () => {
-    // First call without session_id — should inject
+describe("seen-skills env file and dedup controls", () => {
+  const nextjsOnlyPath = "/project/app/page.tsx";
+
+  test("no VERCEL_PLUGIN_SEEN_SKILLS env var uses memory-only dedup across invocations", async () => {
     const { stdout: first } = await runHookEnv(
-      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
       {},
-      { omitSessionId: true },
     );
     const r1 = JSON.parse(first);
     expect(r1.hookSpecificOutput.additionalContext).toContain("skill:nextjs");
 
-    // Second call without session_id — memory-only means no cross-invocation dedup,
-    // so it should inject again
     const { stdout: second } = await runHookEnv(
-      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
       {},
-      { omitSessionId: true },
     );
     const r2 = JSON.parse(second);
     expect(r2.hookSpecificOutput.additionalContext).toContain("skill:nextjs");
   });
 
-  test("SESSION_ID env var is used as fallback when session_id missing from input", async () => {
-    const envSession = `env-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const dedupFile = join(DEDUP_DIR, `session-${envSession}.json`);
+  test("empty VERCEL_PLUGIN_SEEN_SKILLS file dedups across invocations", async () => {
+    const seenSkillsFile = createSeenSkillsFile();
+    const env = { VERCEL_PLUGIN_SEEN_SKILLS: seenSkillsFile };
 
-    try {
-      // First call — should inject and persist to env session file
-      const { stdout: first } = await runHookEnv(
-        { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
-        { SESSION_ID: envSession },
-        { omitSessionId: true },
-      );
-      const r1 = JSON.parse(first);
-      expect(r1.hookSpecificOutput.additionalContext).toContain("skill:nextjs");
-
-      // Dedup file should exist
-      expect(existsSync(dedupFile)).toBe(true);
-
-      // Second call — same env session, should be deduped
-      const { stdout: second } = await runHookEnv(
-        { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
-        { SESSION_ID: envSession },
-        { omitSessionId: true },
-      );
-      const r2 = JSON.parse(second);
-      expect(r2).toEqual({});
-    } finally {
-      rmSync(dedupFile, { force: true });
-    }
-  });
-
-  test("VERCEL_PLUGIN_HOOK_DEDUP=off disables all dedup", async () => {
-    // First call — should inject
     const { stdout: first } = await runHookEnv(
-      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
-      { VERCEL_PLUGIN_HOOK_DEDUP: "off" },
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
+      env,
     );
     const r1 = JSON.parse(first);
     expect(r1.hookSpecificOutput.additionalContext).toContain("skill:nextjs");
 
-    // Second call with same session — dedup is off, should inject again
     const { stdout: second } = await runHookEnv(
-      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
-      { VERCEL_PLUGIN_HOOK_DEDUP: "off" },
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
+      env,
+    );
+    const r2 = JSON.parse(second);
+    expect(r2).toEqual({});
+  });
+
+  test("pre-seeded seen-skills file skips first matching injection", async () => {
+    const seenSkillsFile = createSeenSkillsFile("nextjs\n");
+
+    const { stdout } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
+      { VERCEL_PLUGIN_SEEN_SKILLS: seenSkillsFile },
+    );
+
+    expect(JSON.parse(stdout)).toEqual({});
+  });
+
+  test("VERCEL_PLUGIN_HOOK_DEDUP=off injects every call even with pre-seeded seen-skills file", async () => {
+    const seenSkillsFile = createSeenSkillsFile("nextjs\n");
+    const env = {
+      VERCEL_PLUGIN_SEEN_SKILLS: seenSkillsFile,
+      VERCEL_PLUGIN_HOOK_DEDUP: "off",
+    };
+
+    const { stdout: first } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
+      env,
+    );
+    const r1 = JSON.parse(first);
+    expect(r1.hookSpecificOutput.additionalContext).toContain("skill:nextjs");
+
+    const { stdout: second } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
+      env,
     );
     const r2 = JSON.parse(second);
     expect(r2.hookSpecificOutput.additionalContext).toContain("skill:nextjs");
   });
 
-  test("RESET_DEDUP=1 clears the dedup file before matching", async () => {
-    // First call — inject and persist
-    const { stdout: first } = await runHook({
-      tool_name: "Read",
-      tool_input: { file_path: "/project/next.config.ts" },
-    });
-    expect(JSON.parse(first).hookSpecificOutput.additionalContext).toContain("skill:nextjs");
+  test("RESET_DEDUP=1 clears a pre-seeded seen-skills file before matching", async () => {
+    const seenSkillsFile = createSeenSkillsFile("nextjs\n");
 
-    // Verify dedup blocks re-injection
-    const { stdout: deduped } = await runHook({
-      tool_name: "Read",
-      tool_input: { file_path: "/project/next.config.ts" },
-    });
-    expect(JSON.parse(deduped)).toEqual({});
-
-    // With RESET_DEDUP=1, should inject again
-    const { stdout: reset } = await runHookEnv(
-      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
-      { RESET_DEDUP: "1" },
+    const { stdout } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
+      { VERCEL_PLUGIN_SEEN_SKILLS: seenSkillsFile, RESET_DEDUP: "1" },
     );
-    expect(JSON.parse(reset).hookSpecificOutput.additionalContext).toContain("skill:nextjs");
+
+    expect(JSON.parse(stdout).hookSpecificOutput.additionalContext).toContain("skill:nextjs");
   });
 
-  test("debug mode logs dedup strategy as persistent when session_id provided", async () => {
-    const { stderr } = await runHookEnv(
-      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+  test("debug mode logs dedup strategy for env-file, memory-only, and disabled", async () => {
+    const seenSkillsFile = createSeenSkillsFile();
+
+    const { stderr: envFileStderr } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
+      { VERCEL_PLUGIN_HOOK_DEBUG: "1", VERCEL_PLUGIN_SEEN_SKILLS: seenSkillsFile },
+    );
+    const envFileLines = envFileStderr.trim().split("\n").map((l: string) => JSON.parse(l));
+    const envFileStrategy = envFileLines.find((l: any) => l.event === "dedup-strategy");
+    expect(envFileStrategy).toBeDefined();
+    expect(envFileStrategy.strategy).toBe("env-file");
+
+    const { stderr: memoryOnlyStderr } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
       { VERCEL_PLUGIN_HOOK_DEBUG: "1" },
     );
-    const lines = stderr.trim().split("\n").map((l: string) => JSON.parse(l));
-    const strategyEvent = lines.find((l: any) => l.event === "dedup-strategy");
-    expect(strategyEvent).toBeDefined();
-    expect(strategyEvent.strategy).toBe("persistent");
-  });
+    const memoryOnlyLines = memoryOnlyStderr.trim().split("\n").map((l: string) => JSON.parse(l));
+    const memoryOnlyStrategy = memoryOnlyLines.find((l: any) => l.event === "dedup-strategy");
+    expect(memoryOnlyStrategy).toBeDefined();
+    expect(memoryOnlyStrategy.strategy).toBe("memory-only");
 
-  test("debug mode logs dedup strategy as memory-only when session_id missing", async () => {
-    const { stderr } = await runHookEnv(
-      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
-      { VERCEL_PLUGIN_HOOK_DEBUG: "1" },
-      { omitSessionId: true },
-    );
-    const lines = stderr.trim().split("\n").map((l: string) => JSON.parse(l));
-    const strategyEvent = lines.find((l: any) => l.event === "dedup-strategy");
-    expect(strategyEvent).toBeDefined();
-    expect(strategyEvent.strategy).toBe("memory-only");
-  });
-
-  test("debug mode logs dedup strategy as disabled when VERCEL_PLUGIN_HOOK_DEDUP=off", async () => {
-    const { stderr } = await runHookEnv(
-      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+    const { stderr: disabledStderr } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
       { VERCEL_PLUGIN_HOOK_DEBUG: "1", VERCEL_PLUGIN_HOOK_DEDUP: "off" },
     );
-    const lines = stderr.trim().split("\n").map((l: string) => JSON.parse(l));
-    const strategyEvent = lines.find((l: any) => l.event === "dedup-strategy");
-    expect(strategyEvent).toBeDefined();
-    expect(strategyEvent.strategy).toBe("disabled");
+    const disabledLines = disabledStderr.trim().split("\n").map((l: string) => JSON.parse(l));
+    const disabledStrategy = disabledLines.find((l: any) => l.event === "dedup-strategy");
+    expect(disabledStrategy).toBeDefined();
+    expect(disabledStrategy.strategy).toBe("disabled");
   });
 
-  test("unusually long session ID produces a hashed dedup filename that works", async () => {
-    // Create a session ID that exceeds 64 chars to trigger hashing
-    const longSession = "a".repeat(200);
-    const { createHash } = await import("node:crypto");
-    const expectedHash = createHash("sha256").update(longSession).digest("hex").slice(0, 16);
-    const expectedDedupFile = join(DEDUP_DIR, `session-${expectedHash}.json`);
+  test("seen-skills file is newline-delimited text, not JSON", async () => {
+    const seenSkillsFile = createSeenSkillsFile();
 
-    try {
-      // First call — should inject
-      const payload1 = JSON.stringify({
-        tool_name: "Read",
-        tool_input: { file_path: "/project/next.config.ts" },
-        session_id: longSession,
-      });
-      const proc1 = Bun.spawn(["node", HOOK_SCRIPT], {
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      proc1.stdin.write(payload1);
-      proc1.stdin.end();
-      await proc1.exited;
-      const r1 = JSON.parse(await new Response(proc1.stdout).text());
-      expect(r1.hookSpecificOutput.additionalContext).toContain("skill:nextjs");
+    const { stdout } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: nextjsOnlyPath } },
+      { VERCEL_PLUGIN_SEEN_SKILLS: seenSkillsFile },
+    );
+    expect(JSON.parse(stdout).hookSpecificOutput.additionalContext).toContain("skill:nextjs");
 
-      // Dedup file should exist with the hashed name
-      expect(existsSync(expectedDedupFile)).toBe(true);
-
-      // Second call — should be deduped
-      const payload2 = JSON.stringify({
-        tool_name: "Read",
-        tool_input: { file_path: "/project/next.config.ts" },
-        session_id: longSession,
-      });
-      const proc2 = Bun.spawn(["node", HOOK_SCRIPT], {
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      proc2.stdin.write(payload2);
-      proc2.stdin.end();
-      await proc2.exited;
-      const r2 = JSON.parse(await new Response(proc2.stdout).text());
-      expect(r2).toEqual({});
-    } finally {
-      rmSync(expectedDedupFile, { force: true });
-    }
+    const seenText = readFileSync(seenSkillsFile, "utf-8");
+    expect(seenText.split("\n")).toContain("nextjs");
+    expect(seenText.trim().startsWith("[")).toBe(false);
+    expect(() => JSON.parse(seenText)).toThrow();
   });
 });
 
@@ -1460,6 +1567,10 @@ describe("invalid bash regex handling", () => {
       join(tempHooksDir, "skill-map-frontmatter.mjs"),
       readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"),
     );
+    writeFileSync(
+      join(tempHooksDir, "patterns.mjs"),
+      readFileSync(join(ROOT, "hooks", "patterns.mjs"), "utf-8"),
+    );
 
     // Symlink node_modules so js-yaml is resolvable
     symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
@@ -1541,6 +1652,161 @@ describe("invalid bash regex handling", () => {
 
       expect(code).toBe(0);
       // No stderr when debug is off
+      expect(stderr).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("invalid glob pattern handling", () => {
+  /**
+   * Helper: create a temp plugin dir with a patched patterns.mjs that throws
+   * on a sentinel pattern "__THROW__", simulating a broken glob at compile time.
+   * Also creates two skills: bad-glob-skill (with __THROW__ pattern) and good-skill.
+   */
+  function createTempSkillWithBadGlob(): { hookPath: string; root: string } {
+    const tempRoot = join(tmpdir(), `vp-test-glob-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const tempHooksDir = join(tempRoot, "hooks");
+    mkdirSync(tempHooksDir, { recursive: true });
+
+    // Copy hook + frontmatter parser
+    writeFileSync(join(tempHooksDir, "pretooluse-skill-inject.mjs"), readFileSync(HOOK_SCRIPT, "utf-8"));
+    writeFileSync(
+      join(tempHooksDir, "skill-map-frontmatter.mjs"),
+      readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"),
+    );
+
+    // Patched patterns.mjs: throws on "__THROW__" sentinel, delegates otherwise
+    const realPatterns = readFileSync(join(ROOT, "hooks", "patterns.mjs"), "utf-8");
+    const patchedPatterns = realPatterns.replace(
+      'export function globToRegex(pattern) {',
+      'export function globToRegex(pattern) {\n  if (pattern === "__THROW__") throw new Error("simulated glob compile failure");',
+    );
+    writeFileSync(join(tempHooksDir, "patterns.mjs"), patchedPatterns);
+
+    symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
+
+    // Skill with a __THROW__ filePattern that will trigger the patched globToRegex to throw
+    const badSkillDir = join(tempRoot, "skills", "bad-glob-skill");
+    mkdirSync(badSkillDir, { recursive: true });
+    writeFileSync(
+      join(badSkillDir, "SKILL.md"),
+      `---\nname: bad-glob-skill\ndescription: Skill with bad glob\nmetadata:\n  priority: 10\n  filePattern:\n    - '__THROW__'\n    - '**/*.validext'\n---\n# Bad Glob Skill\nContent here.`,
+    );
+
+    // Valid skill that should still match
+    const goodSkillDir = join(tempRoot, "skills", "good-skill");
+    mkdirSync(goodSkillDir, { recursive: true });
+    writeFileSync(
+      join(goodSkillDir, "SKILL.md"),
+      `---\nname: good-skill\ndescription: Valid skill\nmetadata:\n  priority: 5\n  filePattern:\n    - '**/*.validext'\n---\n# Good Skill\nGood content.`,
+    );
+
+    return { hookPath: join(tempHooksDir, "pretooluse-skill-inject.mjs"), root: tempRoot };
+  }
+
+  test("emits PATH_GLOB_INVALID for broken glob, still exits 0 and injects valid skills", async () => {
+    const { hookPath, root } = createTempSkillWithBadGlob();
+
+    try {
+      const payload = JSON.stringify({
+        tool_name: "Read",
+        tool_input: { file_path: "/project/src/app.validext" },
+        session_id: `invalid-glob-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      });
+      const proc = Bun.spawn(["node", hookPath], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, VERCEL_PLUGIN_DEBUG: "1" },
+      });
+      proc.stdin.write(payload);
+      proc.stdin.end();
+      const code = await proc.exited;
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+
+      // Hook exits 0
+      expect(code).toBe(0);
+
+      // stdout is valid JSON
+      expect(() => JSON.parse(stdout)).not.toThrow();
+
+      // stderr contains PATH_GLOB_INVALID issue
+      expect(stderr).toContain("PATH_GLOB_INVALID");
+      const issueLines = stderr.split("\n").filter(l => l.includes("PATH_GLOB_INVALID"));
+      expect(issueLines.length).toBeGreaterThanOrEqual(1);
+      const issueEvent = JSON.parse(issueLines[0]);
+      expect(issueEvent.event).toBe("issue");
+      expect(issueEvent.code).toBe("PATH_GLOB_INVALID");
+      expect(issueEvent.context.skill).toBe("bad-glob-skill");
+      expect(issueEvent.context.pattern).toBe("__THROW__");
+
+      // Valid skill (good-skill) still injected despite bad-glob-skill having a broken pattern
+      const result = JSON.parse(stdout);
+      expect(result.hookSpecificOutput).toBeDefined();
+      expect(result.hookSpecificOutput.additionalContext).toContain("skill:good-skill");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("bad-glob-skill with mixed valid/invalid patterns still matches via valid pattern", async () => {
+    const { hookPath, root } = createTempSkillWithBadGlob();
+
+    try {
+      const payload = JSON.stringify({
+        tool_name: "Read",
+        tool_input: { file_path: "/project/foo.validext" },
+        session_id: `mixed-glob-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      });
+      const proc = Bun.spawn(["node", hookPath], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, VERCEL_PLUGIN_DEBUG: "1" },
+      });
+      proc.stdin.write(payload);
+      proc.stdin.end();
+      const code = await proc.exited;
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+
+      expect(code).toBe(0);
+      // PATH_GLOB_INVALID emitted for the __THROW__ pattern
+      expect(stderr).toContain("PATH_GLOB_INVALID");
+
+      // bad-glob-skill still matched via its valid "**/*.validext" pattern
+      const result = JSON.parse(stdout);
+      expect(result.hookSpecificOutput).toBeDefined();
+      expect(result.hookSpecificOutput.additionalContext).toContain("skill:bad-glob-skill");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("does not emit PATH_GLOB_INVALID when debug is off", async () => {
+    const { hookPath, root } = createTempSkillWithBadGlob();
+
+    try {
+      const payload = JSON.stringify({
+        tool_name: "Read",
+        tool_input: { file_path: "/project/foo.txt" },
+        session_id: `no-debug-glob-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      });
+      const proc = Bun.spawn(["node", hookPath], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        // No debug env var
+      });
+      proc.stdin.write(payload);
+      proc.stdin.end();
+      const code = await proc.exited;
+      const stderr = await new Response(proc.stderr).text();
+
+      expect(code).toBe(0);
       expect(stderr).toBe("");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -2175,29 +2441,29 @@ describe("validateSkillMap", () => {
     expect(result.normalizedSkillMap.skills["test-skill"].bashPatterns).toEqual([]);
   });
 
-  test("normalizes missing priority to 0", () => {
+  test("normalizes missing priority to 5", () => {
     const result = validateSkillMap({
       skills: { "test-skill": { pathPatterns: [], bashPatterns: [] } },
     });
     expect(result.ok).toBe(true);
-    expect(result.normalizedSkillMap.skills["test-skill"].priority).toBe(0);
+    expect(result.normalizedSkillMap.skills["test-skill"].priority).toBe(5);
   });
 
-  test("warns and defaults NaN priority to 0", () => {
+  test("warns and defaults NaN priority to 5", () => {
     const result = validateSkillMap({
       skills: { "test-skill": { priority: NaN, pathPatterns: [], bashPatterns: [] } },
     });
     expect(result.ok).toBe(true);
-    expect(result.normalizedSkillMap.skills["test-skill"].priority).toBe(0);
+    expect(result.normalizedSkillMap.skills["test-skill"].priority).toBe(5);
     expect(result.warnings.some((w: string) => w.includes("priority") && w.includes("not a valid number"))).toBe(true);
   });
 
-  test("warns and defaults non-number priority to 0", () => {
+  test("warns and defaults non-number priority to 5", () => {
     const result = validateSkillMap({
       skills: { "test-skill": { priority: "high", pathPatterns: [], bashPatterns: [] } },
     });
     expect(result.ok).toBe(true);
-    expect(result.normalizedSkillMap.skills["test-skill"].priority).toBe(0);
+    expect(result.normalizedSkillMap.skills["test-skill"].priority).toBe(5);
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
@@ -2441,7 +2707,7 @@ describe("hookSpecificOutput.skillInjection metadata", () => {
     expect(si.injectedSkills).toContain("nextjs");
   });
 
-  test("Bash tool populates toolTarget with the command", async () => {
+  test("Bash tool populates toolTarget with the redacted command", async () => {
     const { code, stdout } = await runHook({
       tool_name: "Bash",
       tool_input: { command: "npx next build" },
@@ -2451,7 +2717,39 @@ describe("hookSpecificOutput.skillInjection metadata", () => {
     const si = result.hookSpecificOutput?.skillInjection;
     expect(si).toBeDefined();
     expect(si.toolName).toBe("Bash");
+    // No secrets → command passes through unchanged
     expect(si.toolTarget).toBe("npx next build");
+  });
+
+  test("Bash toolTarget redacts secrets in skillInjection output", async () => {
+    const { code, stdout } = await runHookEnv(
+      {
+        tool_name: "Bash",
+        tool_input: { command: "vercel --token sk_super_secret deploy" },
+      },
+      { VERCEL_PLUGIN_HOOK_DEDUP: "off" },
+    );
+    expect(code).toBe(0);
+    const result = JSON.parse(stdout);
+    const si = result.hookSpecificOutput?.skillInjection;
+    expect(si).toBeDefined();
+    expect(si.toolName).toBe("Bash");
+    // Token must be redacted
+    expect(si.toolTarget).not.toContain("sk_super_secret");
+    expect(si.toolTarget).toContain("--token [REDACTED]");
+    expect(si.toolTarget).toContain("deploy");
+  });
+
+  test("Read/Edit/Write tools have unredacted file_path in toolTarget", async () => {
+    const { code, stdout } = await runHook({
+      tool_name: "Read",
+      tool_input: { file_path: "/project/next.config.ts" },
+    });
+    expect(code).toBe(0);
+    const result = JSON.parse(stdout);
+    const si = result.hookSpecificOutput?.skillInjection;
+    expect(si).toBeDefined();
+    expect(si.toolTarget).toBe("/project/next.config.ts");
   });
 
   test("droppedByCap lists skills beyond MAX_SKILLS", async () => {
@@ -2590,5 +2888,281 @@ describe("debug mode tool-target redaction", () => {
     );
     // stderr should be empty (no debug output)
     expect(stderr.trim()).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Import-safety: importing the module must NOT read stdin or write stdout
+// ---------------------------------------------------------------------------
+
+describe("import safety", () => {
+  test("importing the module does not produce stdout output", async () => {
+    // Spawn a Node process that imports the module and then exits cleanly.
+    // If the main-module guard is missing, it would hang on stdin or write to stdout.
+    const proc = Bun.spawn(
+      [
+        "node",
+        "--input-type=module",
+        "-e",
+        `import "${HOOK_SCRIPT}";\nprocess.exit(0);`,
+      ],
+      {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    // Close stdin immediately — should not hang waiting for input
+    proc.stdin.end();
+
+    // Give it a generous timeout but fail if it hangs
+    const timeout = setTimeout(() => proc.kill(), 5000);
+    const code = await proc.exited;
+    clearTimeout(timeout);
+
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+
+    expect(code).toBe(0);
+    expect(stdout).toBe(""); // No output leaked to stdout
+  });
+
+  test("exported functions are importable without side effects", async () => {
+    // Verify that validateSkillMap and redactCommand can be imported
+    const proc = Bun.spawn(
+      [
+        "node",
+        "--input-type=module",
+        "-e",
+        `import { validateSkillMap, redactCommand, run } from "${HOOK_SCRIPT}";\n` +
+          `const checks = [\n` +
+          `  typeof validateSkillMap === "function",\n` +
+          `  typeof redactCommand === "function",\n` +
+          `  typeof run === "function",\n` +
+          `];\n` +
+          `process.stdout.write(JSON.stringify(checks));\n` +
+          `process.exit(0);`,
+      ],
+      {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    proc.stdin.end();
+
+    const timeout = setTimeout(() => proc.kill(), 5000);
+    const code = await proc.exited;
+    clearTimeout(timeout);
+
+    const stdout = await new Response(proc.stdout).text();
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout)).toEqual([true, true, true]);
+  });
+
+  test("running directly via node still works as before", async () => {
+    // This is essentially the same as runHook but confirms the guard lets
+    // direct execution through.
+    const { code, stdout } = await runHook({
+      tool_name: "Read",
+      tool_input: { file_path: "/some/random/file.txt" },
+    });
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Decision logging: reason codes in the complete event
+// ---------------------------------------------------------------------------
+
+/** Parse debug stderr into JSON objects and find the 'complete' event */
+function parseComplete(stderr: string): any {
+  const lines = stderr.trim().split("\n").filter(Boolean).map((l: string) => JSON.parse(l));
+  return lines.find((l: any) => l.event === "complete");
+}
+
+describe("decision logging — reason codes", () => {
+  test("reason=stdin_empty when stdin is empty", async () => {
+    const proc = Bun.spawn(["node", HOOK_SCRIPT], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, VERCEL_PLUGIN_HOOK_DEBUG: "1" },
+    });
+    proc.stdin.end();
+    await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    const complete = parseComplete(stderr);
+    expect(complete).toBeDefined();
+    expect(complete.reason).toBe("stdin_empty");
+    expect(complete.matchedCount).toBe(0);
+    expect(complete.injectedCount).toBe(0);
+    expect(complete.dedupedCount).toBe(0);
+    expect(complete.cappedCount).toBe(0);
+  });
+
+  test("reason=stdin_parse_fail when stdin is invalid JSON", async () => {
+    const proc = Bun.spawn(["node", HOOK_SCRIPT], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, VERCEL_PLUGIN_HOOK_DEBUG: "1" },
+    });
+    proc.stdin.write("not-json");
+    proc.stdin.end();
+    await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    const complete = parseComplete(stderr);
+    expect(complete).toBeDefined();
+    expect(complete.reason).toBe("stdin_parse_fail");
+    expect(complete.matchedCount).toBe(0);
+  });
+
+  test("reason=tool_unsupported for unsupported tool name", async () => {
+    const { stderr } = await runHookEnv(
+      { tool_name: "Glob", tool_input: { pattern: "**/*.ts" } },
+      { VERCEL_PLUGIN_HOOK_DEBUG: "1" },
+    );
+    const complete = parseComplete(stderr);
+    expect(complete).toBeDefined();
+    expect(complete.reason).toBe("tool_unsupported");
+    expect(complete.matchedCount).toBe(0);
+  });
+
+  test("reason=no_matches when tool is supported but nothing matches", async () => {
+    const { stderr } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/totally/unknown/file.xyz" } },
+      { VERCEL_PLUGIN_HOOK_DEBUG: "1" },
+    );
+    const complete = parseComplete(stderr);
+    expect(complete).toBeDefined();
+    expect(complete.reason).toBe("no_matches");
+    expect(complete.matchedCount).toBe(0);
+    expect(complete.injectedCount).toBe(0);
+  });
+
+  test("reason=all_deduped when matches exist but all were previously injected", async () => {
+    const seenSkillsFile = createSeenSkillsFile();
+    const baseEnv = { VERCEL_PLUGIN_SEEN_SKILLS: seenSkillsFile };
+
+    const { stdout: first } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+      baseEnv,
+    );
+    expect(JSON.parse(first).hookSpecificOutput.additionalContext).toContain("skill:nextjs");
+
+    const { stderr } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+      { ...baseEnv, VERCEL_PLUGIN_HOOK_DEBUG: "1" },
+    );
+
+    const complete = parseComplete(stderr);
+    expect(complete).toBeDefined();
+    expect(complete.reason).toBe("all_deduped");
+    expect(complete.matchedCount).toBeGreaterThan(0);
+    expect(complete.dedupedCount).toBeGreaterThan(0);
+    expect(complete.injectedCount).toBe(0);
+  });
+
+  test("reason=injected when skills are successfully injected", async () => {
+    const { stderr } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+      { VERCEL_PLUGIN_HOOK_DEBUG: "1", VERCEL_PLUGIN_HOOK_DEDUP: "off" },
+    );
+    const complete = parseComplete(stderr);
+    expect(complete).toBeDefined();
+    expect(complete.reason).toBe("injected");
+    expect(complete.matchedCount).toBeGreaterThan(0);
+    expect(complete.injectedCount).toBeGreaterThan(0);
+  });
+
+  test("reason=skillmap_fail when skills directory is empty", async () => {
+    const tempRoot = join(tmpdir(), `vp-reason-empty-${Date.now()}`);
+    const tempHooksDir = join(tempRoot, "hooks");
+    const tempSkillsDir = join(tempRoot, "skills");
+    mkdirSync(tempHooksDir, { recursive: true });
+    mkdirSync(tempSkillsDir, { recursive: true });
+
+    writeFileSync(join(tempHooksDir, "pretooluse-skill-inject.mjs"), readFileSync(HOOK_SCRIPT, "utf-8"));
+    writeFileSync(join(tempHooksDir, "skill-map-frontmatter.mjs"), readFileSync(join(ROOT, "hooks", "skill-map-frontmatter.mjs"), "utf-8"));
+    writeFileSync(join(tempHooksDir, "patterns.mjs"), readFileSync(join(ROOT, "hooks", "patterns.mjs"), "utf-8"));
+    symlinkSync(join(ROOT, "node_modules"), join(tempRoot, "node_modules"));
+
+    const payload = JSON.stringify({
+      tool_name: "Read",
+      tool_input: { file_path: "/project/next.config.ts" },
+      session_id: testSession,
+    });
+    const proc = Bun.spawn(["node", join(tempHooksDir, "pretooluse-skill-inject.mjs")], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, VERCEL_PLUGIN_HOOK_DEBUG: "1" },
+    });
+    proc.stdin.write(payload);
+    proc.stdin.end();
+    await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+
+    const complete = parseComplete(stderr);
+    expect(complete).toBeDefined();
+    expect(complete.reason).toBe("skillmap_fail");
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  test("complete event has all aggregate count fields", async () => {
+    const { stderr } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+      { VERCEL_PLUGIN_HOOK_DEBUG: "1", VERCEL_PLUGIN_HOOK_DEDUP: "off" },
+    );
+    const complete = parseComplete(stderr);
+    expect(complete).toBeDefined();
+    for (const key of ["matchedCount", "injectedCount", "dedupedCount", "cappedCount"]) {
+      expect(typeof complete[key]).toBe("number");
+    }
+    expect(typeof complete.elapsed_ms).toBe("number");
+    expect(typeof complete.reason).toBe("string");
+  });
+
+  test("cappedCount > 0 when more than MAX_SKILLS match", async () => {
+    const { stderr } = await runHookEnv(
+      {
+        tool_name: "Bash",
+        tool_input: {
+          command: "vercel deploy && turbo run build && npx v0 generate && npm install ai && vercel integration add neon",
+        },
+      },
+      { VERCEL_PLUGIN_HOOK_DEBUG: "1", VERCEL_PLUGIN_HOOK_DEDUP: "off" },
+    );
+    const complete = parseComplete(stderr);
+    expect(complete).toBeDefined();
+    expect(complete.reason).toBe("injected");
+    expect(complete.cappedCount).toBeGreaterThan(0);
+    expect(complete.injectedCount).toBe(3);
+    expect(complete.matchedCount).toBeGreaterThan(3);
+  });
+
+  test("exactly one complete event per invocation", async () => {
+    const { stderr } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+      { VERCEL_PLUGIN_HOOK_DEBUG: "1", VERCEL_PLUGIN_HOOK_DEDUP: "off" },
+    );
+    const lines = stderr.trim().split("\n").filter(Boolean).map((l: string) => JSON.parse(l));
+    const completeEvents = lines.filter((l: any) => l.event === "complete");
+    expect(completeEvents.length).toBe(1);
+  });
+
+  test("stdout contract unchanged — hookSpecificOutput shape", async () => {
+    const { stdout } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/next.config.ts" } },
+      { VERCEL_PLUGIN_HOOK_DEBUG: "1", VERCEL_PLUGIN_HOOK_DEDUP: "off" },
+    );
+    const result = JSON.parse(stdout);
+    expect(result).toHaveProperty("hookSpecificOutput");
+    expect(result.hookSpecificOutput).toHaveProperty("additionalContext");
+    expect(result.hookSpecificOutput).toHaveProperty("skillInjection");
+    expect(Object.keys(result)).toEqual(["hookSpecificOutput"]);
   });
 });
