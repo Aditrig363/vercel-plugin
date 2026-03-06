@@ -8,10 +8,11 @@ Discover, install, and apply Vercel Marketplace integrations with guided setup a
 
 ## Preflight
 
-1. **CLI available?** — Confirm `vercel` is on PATH.
-   - If missing: `npm i -g vercel` (or `pnpm add -g vercel` / `bun add -g vercel`).
-2. **Project linked?** — Check for `.vercel/project.json` in the current directory or nearest parent.
+1. **Project linked?** — Check for `.vercel/project.json` in the current directory or nearest parent.
    - If not found: run `vercel link` interactively, then re-run `/marketplace`.
+   - Do not attempt provisioning until the project is linked.
+2. **CLI available?** — Confirm `vercel` is on PATH.
+   - If missing: `npm i -g vercel` (or `pnpm add -g vercel` / `bun add -g vercel`).
 3. **Repo state** — Note uncommitted changes so the user can diff integration-related code changes later.
 4. **Scope** — Detect monorepo (`turbo.json` or `pnpm-workspace.yaml`). If detected, confirm which package is targeted.
 
@@ -21,9 +22,9 @@ The marketplace command follows an **apply-guide loop**:
 
 1. **Discover** — Search the Marketplace catalog via `vercel integration discover`.
 2. **Select** — User picks an integration (or specifies one in "$ARGUMENTS").
-3. **Guide** — Fetch the agent-friendly setup guide via `vercel integration guide <name>`.
-4. **Install** — Run `vercel integration add <name>` to install and auto-provision env vars.
-5. **Confirm env vars provisioned** — Verify required environment variables are set on Vercel.
+3. **Guide** — Fetch the agent-friendly setup guide via `vercel integration guide <name> --framework <fw>`.
+4. **Install** — Run `vercel integration add <name>` for the automated happy path.
+5. **Confirm env vars provisioned** — Explicitly verify required environment variables are set after provisioning.
 6. **Apply code changes** — Install SDK packages and scaffold configuration code.
 7. **Verify drain** — For observability integrations, confirm drain was auto-created and data is flowing.
 8. **Run local health check** — Verify the integration works locally before deploying.
@@ -53,16 +54,17 @@ vercel integration list
 
 Present integrations organized by category:
 
-| Category  | Examples                          |
-|-----------|-----------------------------------|
-| Database  | Neon, PlanetScale, Supabase       |
-| Cache     | Upstash Redis, Upstash KV         |
-| Auth      | Clerk, Auth0                      |
-| CMS       | Sanity, Contentful, Prismic       |
-| Payments  | Stripe, LemonSqueezy              |
+| Category   | Examples                          |
+| ---------- | --------------------------------- |
+| Database   | Neon, PlanetScale, Supabase       |
+| Cache      | Upstash Redis, Upstash KV         |
+| Auth       | Clerk, Auth0                      |
+| CMS        | Sanity, Contentful, Prismic       |
+| Payments   | Stripe, LemonSqueezy              |
 | Monitoring | Datadog, Sentry, Axiom, Honeycomb |
 
 Common replacements for sunset packages:
+
 - **Neon** — Serverless Postgres (replaces `@vercel/postgres`)
 - **Upstash** — Serverless Redis (replaces `@vercel/kv`)
 
@@ -74,8 +76,10 @@ If the user hasn't specified one in "$ARGUMENTS", ask which integration to set u
 
 ```bash
 # Get agent-friendly setup guide
-vercel integration guide <name>
+vercel integration guide <name> --framework <fw>
 ```
+
+Use framework-specific guides by default when framework is known. If unknown, infer from the repo and confirm with the user.
 
 The guide returns structured setup steps: required env vars, SDK packages, code snippets, and framework-specific notes. Present these to the user.
 
@@ -85,13 +89,15 @@ The guide returns structured setup steps: required env vars, SDK packages, code 
 vercel integration add <name>
 ```
 
-**AI agent limitation**: `vercel integration add` requires accepting terms of service interactively. The Vercel CLI blocks this when it detects an AI agent (`Error: Term acceptance cannot be performed by an AI agent`). When this happens:
-1. Tell the user to run `vercel integration add <name>` directly in their terminal
-2. Wait for them to confirm completion
-3. Verify env vars were provisioned with `vercel env ls`
-4. Pull env vars locally with `vercel env pull`
+`vercel integration add` is the primary scripted/AI flow. It installs against the linked project, auto-connects the integration, and auto-runs local env sync unless disabled.
 
-Some integrations (like Clerk, Neon) also require completing setup in the Vercel Dashboard web UI after the CLI step. The CLI will prompt to open the dashboard automatically.
+If the CLI bounces to the dashboard for provider-specific completion, treat it as fallback and open the integration page directly:
+
+```bash
+vercel integration open <name>
+```
+
+Complete the web step, then continue with env verification.
 
 After installation, the integration auto-provisions environment variables. For observability vendors (Datadog, Sentry, Axiom), this also auto-creates **log and trace drains**.
 
@@ -105,6 +111,12 @@ vercel env ls
 
 Check that each variable name listed in the guide appears in the output. **Never echo variable values — check names only.**
 
+- If local env sync was disabled or `.env.local` is stale, run:
+
+```bash
+vercel env pull .env.local --yes
+```
+
 - **All present** → Proceed to code changes.
 - **Missing vars** → Tell the user which variables are missing. The integration install via `vercel integration add <name>` typically provisions these automatically. Guide the user to provision them before continuing.
 
@@ -117,6 +129,7 @@ npm install <sdk-package>   # or pnpm add / bun add
 ```
 
 Then apply the code scaffolding from the guide:
+
 - Create or update configuration files (e.g., `db.ts`, `redis.ts`, `auth.ts`)
 - Add initialization code following the guide's patterns
 - Respect the project's existing conventions (TypeScript vs JavaScript, import style, directory structure)
@@ -141,6 +154,7 @@ vercel integration balance <vendor-name>
 ```
 
 **Data-type split to communicate to the user:**
+
 - **Logs + Traces** → Auto-configured by Marketplace install (native drain)
 - **Speed Insights + Web Analytics** → Require manual drain creation via REST API or Dashboard
 
@@ -159,6 +173,7 @@ vercel dev
 ```
 
 Or run the project's dev server and test the integration endpoint/connection:
+
 - **Database** → Confirm connection by running a simple query (e.g., `SELECT 1`)
 - **Auth** → Confirm the auth provider redirects correctly
 - **Cache** → Confirm a set/get round-trip succeeds
@@ -171,8 +186,10 @@ If the health check fails, review the error output and guide the user through fi
 
 After completing the apply-guide loop, confirm:
 
-- [ ] Integration guide was retrieved via `vercel integration guide <name>`
+- [ ] Integration guide was retrieved via `vercel integration guide <name> --framework <fw>`
+- [ ] Project was linked before provisioning started
 - [ ] All required environment variables are provisioned on Vercel
+- [ ] Local env sync is up to date (auto-sync succeeded or `vercel env pull .env.local --yes` ran)
 - [ ] SDK package installed without errors
 - [ ] Code changes applied and match the guide's patterns
 - [ ] For observability integrations: drain verified and test payload received
@@ -201,6 +218,7 @@ Based on the outcome:
 
 - **Installed successfully** → "Run `/deploy` to deploy with the new integration. Your environment variables are already configured on Vercel."
 - **Env vars missing** → "Provision the missing variables via the Vercel dashboard or `vercel integration add <name>`, then re-run `/marketplace <name>` to continue setup."
+- **CLI handed off to dashboard** → "Run `vercel integration open <name>` to complete the provider web step, then resume from env verification."
 - **Drain not auto-created** → "Create a drain manually via the REST API. See `⤳ skill: observability` for the `/v1/drains` endpoint and payload format."
 - **Need Speed Insights / Web Analytics export** → "These data types require manual drain setup — they are not auto-configured by vendor installs. See `⤳ skill: observability`."
 - **Health check failed** → "Review the error above. Common fixes: copy env vars to `.env.local` with `vercel env pull`, check SDK version compatibility, verify network access."

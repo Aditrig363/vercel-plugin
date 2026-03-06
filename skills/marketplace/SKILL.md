@@ -4,7 +4,7 @@ description: Vercel Marketplace expert guidance — discovering, installing, and
 metadata:
   priority: 3
   pathPatterns:
-    - 'integration.json'
+    - "integration.json"
   bashPatterns:
     - '\bvercel\s+integration\b'
 ---
@@ -14,6 +14,20 @@ metadata:
 You are an expert in the Vercel Marketplace — the integration platform that connects third-party services to Vercel projects with unified billing, auto-provisioned environment variables, and one-click setup.
 
 ## Consuming Integrations
+
+### Linked Project Preflight
+
+Integration provisioning is project-scoped. Verify the repository is linked before running `integration add`.
+
+```bash
+# Check whether this directory is linked to a Vercel project
+test -f .vercel/project.json && echo "Linked" || echo "Not linked"
+
+# Link if needed
+vercel link
+```
+
+If the project is not linked, do not continue with provisioning commands until linking completes.
 
 ### Discovering Integrations
 
@@ -37,12 +51,15 @@ For browsing the full catalog interactively, use the [Vercel Marketplace](https:
 # Get agent-friendly setup guide for a specific integration
 vercel integration guide <name>
 
+# Include framework-specific steps when available
+vercel integration guide <name> --framework <fw>
+
 # Examples
 vercel integration guide neon
-vercel integration guide datadog
+vercel integration guide datadog --framework nextjs
 ```
 
-The guide returns structured setup steps including required environment variables, SDK packages, and code snippets — ideal for agentic workflows.
+Use `--framework <fw>` as the default discovery flow when framework-specific setup matters. The guide returns structured setup steps including required environment variables, SDK packages, and code snippets — ideal for agentic workflows.
 
 ### Installing an Integration
 
@@ -59,11 +76,21 @@ vercel integration add sanity        # CMS
 vercel integration add datadog       # Observability (auto-configures drain)
 ```
 
+`vercel integration add` is the primary scripted/AI path. It installs to the currently linked project, auto-connects the integration, and auto-runs environment sync locally unless disabled.
+
+If the CLI hands off to the dashboard for provider-specific completion, treat that as fallback:
+
+```bash
+vercel integration open <integration-name>
+```
+
+Complete the web step, then return to CLI verification (`vercel env ls` and local env sync check).
+
 ### Auto-Provisioned Environment Variables
 
-When you install a Marketplace integration, Vercel automatically provisions the required environment variables for all linked projects.
+When you install a Marketplace integration from a linked project, Vercel automatically provisions the required environment variables for that project.
 
-**IMPORTANT: Provisioning delay after install.** After installing a database integration (especially Neon), the resource may take **1–3 minutes** to fully provision. During this window, connection attempts return HTTP 500 errors. Do NOT debug the connection string or code — just wait and retry. Run `vercel env pull .env.local --yes` after a brief wait to get the finalized credentials.
+**IMPORTANT: Provisioning delay after install.** After installing a database integration (especially Neon), the resource may take **1–3 minutes** to fully provision. During this window, connection attempts return HTTP 500 errors. Do NOT debug the connection string or code — just wait and retry. If local env sync was disabled or skipped, run `vercel env pull .env.local --yes` after a brief wait to get the finalized credentials.
 
 ```bash
 # View environment variables added by integrations
@@ -84,27 +111,27 @@ No manual `.env` file management is needed — the variables are injected into a
 
 ```ts
 // app/api/users/route.ts — using Neon auto-provisioned env vars
-import { neon } from '@neondatabase/serverless'
+import { neon } from "@neondatabase/serverless";
 
 // POSTGRES_URL is auto-injected by the Neon integration
-const sql = neon(process.env.POSTGRES_URL!)
+const sql = neon(process.env.POSTGRES_URL!);
 
 export async function GET() {
-  const users = await sql`SELECT * FROM users LIMIT 10`
-  return Response.json(users)
+  const users = await sql`SELECT * FROM users LIMIT 10`;
+  return Response.json(users);
 }
 ```
 
 ```ts
 // app/api/cache/route.ts — using Upstash auto-provisioned env vars
-import { Redis } from '@upstash/redis'
+import { Redis } from "@upstash/redis";
 
 // KV_REST_API_URL and KV_REST_API_TOKEN are auto-injected
-const redis = Redis.fromEnv()
+const redis = Redis.fromEnv();
 
 export async function GET() {
-  const cached = await redis.get('featured-products')
-  return Response.json(cached)
+  const cached = await redis.get("featured-products");
+  return Response.json(cached);
 }
 ```
 
@@ -187,35 +214,35 @@ npx create-next-app my-integration --example vercel-integration
 
 ```ts
 // app/api/webhook/route.ts
-import { verifyVercelSignature } from '@vercel/integration-utils'
+import { verifyVercelSignature } from "@vercel/integration-utils";
 
 export async function POST(req: Request) {
-  const body = await req.json()
+  const body = await req.json();
 
   // Verify the webhook is from Vercel
-  const isValid = await verifyVercelSignature(req, body)
+  const isValid = await verifyVercelSignature(req, body);
   if (!isValid) {
-    return Response.json({ error: 'Invalid signature' }, { status: 401 })
+    return Response.json({ error: "Invalid signature" }, { status: 401 });
   }
 
   switch (body.type) {
-    case 'integration.installed':
+    case "integration.installed":
       // Provision resources for the new installation
-      await provisionDatabase(body.payload)
-      break
+      await provisionDatabase(body.payload);
+      break;
 
-    case 'integration.uninstalled':
+    case "integration.uninstalled":
       // Clean up resources
-      await deprovisionDatabase(body.payload)
-      break
+      await deprovisionDatabase(body.payload);
+      break;
 
-    case 'integration.configuration-updated':
+    case "integration.configuration-updated":
       // Handle config changes
-      await updateConfiguration(body.payload)
-      break
+      await updateConfiguration(body.payload);
+      break;
   }
 
-  return Response.json({ received: true })
+  return Response.json({ received: true });
 }
 ```
 
@@ -226,37 +253,37 @@ export async function POST(req: Request) {
 async function provisionEnvVars(
   installationId: string,
   projectId: string,
-  credentials: { url: string; token: string }
+  credentials: { url: string; token: string },
 ) {
   const response = await fetch(
     `https://api.vercel.com/v1/integrations/installations/${installationId}/env`,
     {
-      method: 'POST',
+      method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.VERCEL_INTEGRATION_TOKEN}`,
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         projectId,
         envVars: [
           {
-            key: 'MY_SERVICE_URL',
+            key: "MY_SERVICE_URL",
             value: credentials.url,
-            target: ['production', 'preview', 'development'],
-            type: 'encrypted',
+            target: ["production", "preview", "development"],
+            type: "encrypted",
           },
           {
-            key: 'MY_SERVICE_TOKEN',
+            key: "MY_SERVICE_TOKEN",
             value: credentials.token,
-            target: ['production', 'preview', 'development'],
-            type: 'secret',
+            target: ["production", "preview", "development"],
+            type: "secret",
           },
         ],
       }),
-    }
-  )
+    },
+  );
 
-  return response.json()
+  return response.json();
 }
 ```
 
@@ -271,6 +298,7 @@ vercel integration discover --category <category>
 
 # Get agent-friendly setup guide
 vercel integration guide <name>
+vercel integration guide <name> --framework <framework>
 
 # Add (install) an integration
 vercel integration add <name>
@@ -281,7 +309,7 @@ vercel integration list    # alias: vercel integration ls
 # Check usage / billing balance
 vercel integration balance <name>
 
-# Open integration dashboard in browser
+# Open integration dashboard in browser (fallback when add redirects)
 vercel integration open <name>
 
 # Remove an integration
@@ -294,15 +322,15 @@ vercel integration remove <name>
 
 ## Common Integration Categories
 
-| Category | Popular Integrations | Auto-Provisioned Env Vars |
-|----------|---------------------|---------------------------|
-| Databases | Neon, Supabase, PlanetScale, MongoDB | `POSTGRES_URL`, `DATABASE_URL` |
-| Cache/KV | Upstash Redis | `KV_REST_API_URL`, `KV_REST_API_TOKEN` |
-| Auth | Clerk, Auth0 | `CLERK_SECRET_KEY`, `AUTH0_SECRET` |
-| CMS | Sanity, Contentful, Storyblok | `SANITY_PROJECT_ID`, `CONTENTFUL_TOKEN` |
-| Monitoring | Datadog, Sentry | `SENTRY_DSN`, `DD_API_KEY` |
-| Payments | Stripe | `STRIPE_SECRET_KEY` |
-| Feature Flags | LaunchDarkly, Statsig | `LAUNCHDARKLY_SDK_KEY` |
+| Category      | Popular Integrations                 | Auto-Provisioned Env Vars               |
+| ------------- | ------------------------------------ | --------------------------------------- |
+| Databases     | Neon, Supabase, PlanetScale, MongoDB | `POSTGRES_URL`, `DATABASE_URL`          |
+| Cache/KV      | Upstash Redis                        | `KV_REST_API_URL`, `KV_REST_API_TOKEN`  |
+| Auth          | Clerk, Auth0                         | `CLERK_SECRET_KEY`, `AUTH0_SECRET`      |
+| CMS           | Sanity, Contentful, Storyblok        | `SANITY_PROJECT_ID`, `CONTENTFUL_TOKEN` |
+| Monitoring    | Datadog, Sentry                      | `SENTRY_DSN`, `DD_API_KEY`              |
+| Payments      | Stripe                               | `STRIPE_SECRET_KEY`                     |
+| Feature Flags | LaunchDarkly, Statsig                | `LAUNCHDARKLY_SDK_KEY`                  |
 
 ## Observability Integration Path
 
@@ -310,12 +338,12 @@ Marketplace observability integrations (Datadog, Sentry, Axiom, Honeycomb, etc.)
 
 ### Data-Type Split
 
-| Data Type | Delivery Mechanism | Integration Setup |
-|-----------|--------------------|-------------------|
-| **Logs** | Native drain (auto-configured by Marketplace install) | `vercel integration add <vendor>` auto-creates drain |
-| **Traces** | Native drain (OpenTelemetry-compatible) | Same — auto-configured on install |
-| **Speed Insights** | Custom drain endpoint only | Requires manual drain creation via REST API or Dashboard (`https://vercel.com/dashboard/{team}/~/settings/log-drains`) |
-| **Web Analytics** | Custom drain endpoint only | Requires manual drain creation via REST API or Dashboard (`https://vercel.com/dashboard/{team}/~/settings/log-drains`) |
+| Data Type          | Delivery Mechanism                                    | Integration Setup                                                                                                      |
+| ------------------ | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **Logs**           | Native drain (auto-configured by Marketplace install) | `vercel integration add <vendor>` auto-creates drain                                                                   |
+| **Traces**         | Native drain (OpenTelemetry-compatible)               | Same — auto-configured on install                                                                                      |
+| **Speed Insights** | Custom drain endpoint only                            | Requires manual drain creation via REST API or Dashboard (`https://vercel.com/dashboard/{team}/~/settings/log-drains`) |
+| **Web Analytics**  | Custom drain endpoint only                            | Requires manual drain creation via REST API or Dashboard (`https://vercel.com/dashboard/{team}/~/settings/log-drains`) |
 
 > **Key distinction:** When you install an observability vendor via the Marketplace, it auto-configures drains for **logs and traces** only. Speed Insights and Web Analytics data require a separate, manually configured drain pointing to a custom endpoint. See `⤳ skill: observability` for drain setup details.
 
@@ -395,19 +423,20 @@ curl -X POST -H "Authorization: Bearer $VERCEL_TOKEN" \
 
 ## Decision Matrix
 
-| Need | Use | Why |
-|------|-----|-----|
-| Add a database to your project | `vercel integration add neon` | Auto-provisioned, unified billing |
-| Browse available services | `vercel integration discover` | CLI-native catalog search |
-| Get setup steps for an integration | `vercel integration guide <name>` | Agent-friendly structured guide |
-| Check integration usage/cost | `vercel integration balance <name>` | Billing visibility per integration |
-| Build a SaaS integration | Integration SDK + manifest | Full lifecycle management |
-| Centralize billing | Marketplace integrations | Single Vercel invoice |
-| Auto-inject credentials | Marketplace auto-provisioning | No manual env var management |
-| Add observability vendor | `vercel integration add <vendor>` | Auto-creates log/trace drains |
-| Export Speed Insights / Web Analytics | Manual drain via REST API | Not auto-configured by vendor install |
-| Manage integrations programmatically | Vercel REST API | `/v1/integrations` endpoints |
-| Test integration locally | `vercel dev` | Local development server with Vercel features |
+| Need                                      | Use                                                | Why                                            |
+| ----------------------------------------- | -------------------------------------------------- | ---------------------------------------------- |
+| Add a database to your project            | `vercel integration add neon`                      | Auto-provisioned, unified billing              |
+| Browse available services                 | `vercel integration discover`                      | CLI-native catalog search                      |
+| Get setup steps for an integration        | `vercel integration guide <name> --framework <fw>` | Framework-specific, agent-friendly setup guide |
+| CLI redirects to dashboard during install | `vercel integration open <name>`                   | Fallback to complete provider web flow         |
+| Check integration usage/cost              | `vercel integration balance <name>`                | Billing visibility per integration             |
+| Build a SaaS integration                  | Integration SDK + manifest                         | Full lifecycle management                      |
+| Centralize billing                        | Marketplace integrations                           | Single Vercel invoice                          |
+| Auto-inject credentials                   | Marketplace auto-provisioning                      | No manual env var management                   |
+| Add observability vendor                  | `vercel integration add <vendor>`                  | Auto-creates log/trace drains                  |
+| Export Speed Insights / Web Analytics     | Manual drain via REST API                          | Not auto-configured by vendor install          |
+| Manage integrations programmatically      | Vercel REST API                                    | `/v1/integrations` endpoints                   |
+| Test integration locally                  | `vercel dev`                                       | Local development server with Vercel features  |
 
 ## Cross-References
 
