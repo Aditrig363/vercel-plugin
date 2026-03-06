@@ -27,6 +27,8 @@ import { createLogger } from "./logger.mjs";
 
 const MAX_SKILLS = 3;
 const DEFAULT_INJECTION_BUDGET_BYTES = 12_000;
+const SETUP_MODE_BOOTSTRAP_SKILL = "bootstrap";
+const SETUP_MODE_PRIORITY_BOOST = 50;
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SUPPORTED_TOOLS = ["Read", "Edit", "Write", "Bash"];
 
@@ -113,13 +115,17 @@ export function loadSkills(pluginRoot, logger) {
   const manifestPath = join(root, "generated", "skill-manifest.json");
   let usedManifest = false;
 
+  let manifestVersion = 0;
+  let manifestSkillsFull = null;
   try {
     if (existsSync(manifestPath)) {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
       if (manifest && manifest.skills && typeof manifest.skills === "object") {
         skillMap = manifest.skills;
+        manifestVersion = manifest.version || 1;
+        if (manifestVersion >= 2) manifestSkillsFull = manifest.skills;
         usedManifest = true;
-        l.debug("manifest-loaded", { path: manifestPath, generatedAt: manifest.generatedAt });
+        l.debug("manifest-loaded", { path: manifestPath, generatedAt: manifest.generatedAt, version: manifestVersion });
       }
     }
   } catch (err) {
@@ -172,17 +178,40 @@ export function loadSkills(pluginRoot, logger) {
   const skillCount = Object.keys(skillMap).length;
   l.debug("skillmap-loaded", { skillCount });
 
-  const compiledSkills = compileSkillPatterns(skillMap, {
-    onPathGlobError(skill, p, err) {
-      l.issue("PATH_GLOB_INVALID", `Invalid glob pattern in skill "${skill}": ${p}`, `Fix or remove the invalid pathPatterns entry in skills/${skill}/SKILL.md frontmatter`, { skill, pattern: p, error: String(err) });
-    },
-    onBashRegexError(skill, p, err) {
-      l.issue("BASH_REGEX_INVALID", `Invalid bash regex pattern in skill "${skill}": ${p}`, `Fix or remove the invalid bashPatterns entry in skills/${skill}/SKILL.md frontmatter`, { skill, pattern: p, error: String(err) });
-    },
-    onImportPatternError(skill, p, err) {
-      l.issue("IMPORT_PATTERN_INVALID", `Invalid import pattern in skill "${skill}": ${p}`, `Fix or remove the invalid importPatterns entry in skills/${skill}/SKILL.md frontmatter`, { skill, pattern: p, error: String(err) });
-    },
-  });
+  let compiledSkills;
+
+  // v2 manifests include pre-compiled regex sources — reconstruct RegExp objects directly
+  if (manifestSkillsFull) {
+    compiledSkills = Object.entries(manifestSkillsFull).map(([skill, config]) => ({
+      skill,
+      priority: typeof config.priority === "number" ? config.priority : 0,
+      pathPatterns: config.pathPatterns || [],
+      pathRegexes: (config.pathRegexSources || []).map((src) => {
+        try { return new RegExp(src); } catch { return null; }
+      }).filter(Boolean),
+      bashPatterns: config.bashPatterns || [],
+      bashRegexes: (config.bashRegexSources || []).map((src) => {
+        try { return new RegExp(src); } catch { return null; }
+      }).filter(Boolean),
+      importPatterns: config.importPatterns || [],
+      importRegexes: (config.importRegexSources || []).map((entry) => {
+        try { return new RegExp(entry.source, entry.flags); } catch { return null; }
+      }).filter(Boolean),
+    }));
+    l.debug("manifest-regexes-restored", { skillCount, version: manifestVersion });
+  } else {
+    compiledSkills = compileSkillPatterns(skillMap, {
+      onPathGlobError(skill, p, err) {
+        l.issue("PATH_GLOB_INVALID", `Invalid glob pattern in skill "${skill}": ${p}`, `Fix or remove the invalid pathPatterns entry in skills/${skill}/SKILL.md frontmatter`, { skill, pattern: p, error: String(err) });
+      },
+      onBashRegexError(skill, p, err) {
+        l.issue("BASH_REGEX_INVALID", `Invalid bash regex pattern in skill "${skill}": ${p}`, `Fix or remove the invalid bashPatterns entry in skills/${skill}/SKILL.md frontmatter`, { skill, pattern: p, error: String(err) });
+      },
+      onImportPatternError(skill, p, err) {
+        l.issue("IMPORT_PATTERN_INVALID", `Invalid import pattern in skill "${skill}": ${p}`, `Fix or remove the invalid importPatterns entry in skills/${skill}/SKILL.md frontmatter`, { skill, pattern: p, error: String(err) });
+      },
+    });
+  }
 
   return { skillMap, compiledSkills, usedManifest };
 }
@@ -271,13 +300,16 @@ export function matchSkills(toolName, toolInput, compiledSkills, logger) {
  * @param {boolean} params.dedupOff - Whether dedup is disabled
  * @param {number} [params.maxSkills] - Hard ceiling (defaults to MAX_SKILLS)
  * @param {Set} [params.likelySkills] - Skills identified by session-start profiler
+ * @param {Array} [params.compiledSkills] - Full compiled entries for synthetic setup-mode routing
+ * @param {boolean} [params.setupMode] - Whether setup mode is active
  * @param {object} [logger] - Logger instance
- * @returns {{ newEntries: Array, rankedSkills: string[], vercelJsonRouting: object|null, profilerBoosted: string[] }}
+ * @returns {{ newEntries: Array, rankedSkills: string[], vercelJsonRouting: object|null, profilerBoosted: string[], setupModeRouting: object|null }}
  */
-export function deduplicateSkills({ matchedEntries, matched, toolName, toolInput, injectedSkills, dedupOff, maxSkills, likelySkills }, logger) {
+export function deduplicateSkills({ matchedEntries, matched, toolName, toolInput, injectedSkills, dedupOff, maxSkills, likelySkills, compiledSkills, setupMode }, logger) {
   const l = logger || log;
   const cap = maxSkills ?? MAX_SKILLS;
   const likely = likelySkills || new Set();
+  const setupModeActive = setupMode === true;
 
   // Filter out already-injected skills
   let newEntries = dedupOff
@@ -327,6 +359,59 @@ export function deduplicateSkills({ matchedEntries, matched, toolName, toolInput
     }
   }
 
+  // Setup-mode routing: synthesize and boost bootstrap on first relevant tool call.
+  let setupModeRouting = null;
+  if (setupModeActive) {
+    setupModeRouting = { active: true, synthetic: false, skippedAsSeen: false };
+
+    if (!dedupOff && injectedSkills.has(SETUP_MODE_BOOTSTRAP_SKILL)) {
+      setupModeRouting.skippedAsSeen = true;
+      l.debug("setup-mode-bootstrap-skip", { reason: "already_injected" });
+    } else {
+      let bootstrapEntry = newEntries.find((e) => e.skill === SETUP_MODE_BOOTSTRAP_SKILL);
+      if (!bootstrapEntry) {
+        const bootstrapTemplate = Array.isArray(compiledSkills)
+          ? compiledSkills.find((entry) => entry.skill === SETUP_MODE_BOOTSTRAP_SKILL)
+          : null;
+        bootstrapEntry = bootstrapTemplate
+          ? { ...bootstrapTemplate }
+          : {
+            skill: SETUP_MODE_BOOTSTRAP_SKILL,
+            priority: 0,
+            pathPatterns: [],
+            pathRegexes: [],
+            bashPatterns: [],
+            bashRegexes: [],
+            importPatterns: [],
+            importRegexes: [],
+          };
+        newEntries.push(bootstrapEntry);
+        matched.add(SETUP_MODE_BOOTSTRAP_SKILL);
+        setupModeRouting.synthetic = true;
+      }
+
+      const maxPriority = newEntries.reduce((max, entry) => {
+        const value = typeof entry.effectivePriority === "number"
+          ? entry.effectivePriority
+          : entry.priority;
+        return Math.max(max, typeof value === "number" ? value : 0);
+      }, 0);
+      const basePriority = typeof bootstrapEntry.effectivePriority === "number"
+        ? bootstrapEntry.effectivePriority
+        : bootstrapEntry.priority;
+
+      bootstrapEntry.effectivePriority = Math.max(
+        (typeof basePriority === "number" ? basePriority : 0) + SETUP_MODE_PRIORITY_BOOST,
+        maxPriority + 1,
+      );
+
+      l.debug("setup-mode-bootstrap-routing", {
+        synthetic: setupModeRouting.synthetic,
+        effectivePriority: bootstrapEntry.effectivePriority,
+      });
+    }
+  }
+
   // Sort by effectivePriority (if set) or priority DESC, then skill name ASC
   newEntries = rankEntries(newEntries);
 
@@ -337,7 +422,7 @@ export function deduplicateSkills({ matchedEntries, matched, toolName, toolInput
     previouslyInjected: [...injectedSkills],
   });
 
-  return { newEntries, rankedSkills, vercelJsonRouting, profilerBoosted };
+  return { newEntries, rankedSkills, vercelJsonRouting, profilerBoosted, setupModeRouting };
 }
 
 // ---------------------------------------------------------------------------
@@ -519,10 +604,14 @@ function run() {
   // Profiler likely-skills (set by session-start-profiler.mjs)
   const likelySkillsEnv = process.env.VERCEL_PLUGIN_LIKELY_SKILLS || "";
   const likelySkills = parseLikelySkills(likelySkillsEnv);
+  const setupMode = process.env.VERCEL_PLUGIN_SETUP_MODE === "1";
 
   log.debug("dedup-strategy", { strategy: dedupStrategy, sessionId, seenEnv });
   if (likelySkills.size > 0) {
     log.debug("likely-skills", { skills: [...likelySkills] });
+  }
+  if (setupMode) {
+    log.debug("setup-mode", { active: true, bootstrapSkill: SETUP_MODE_BOOTSTRAP_SKILL });
   }
 
   let injectedSkills = hasEnvDedup ? parseSeenSkills(seenEnv) : new Set();
@@ -544,6 +633,8 @@ function run() {
     injectedSkills,
     dedupOff,
     likelySkills,
+    compiledSkills,
+    setupMode,
   }, log);
 
   const { newEntries, rankedSkills } = dedupResult;

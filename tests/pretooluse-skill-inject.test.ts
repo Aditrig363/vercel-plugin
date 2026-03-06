@@ -911,6 +911,52 @@ async function runHookEnv(
   return { code, stdout, stderr };
 }
 
+describe("setup mode bootstrap routing", () => {
+  test("injects bootstrap on unmatched paths when setup mode is active", async () => {
+    const { code, stdout } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/random-not-matched.txt" } },
+      {
+        VERCEL_PLUGIN_SETUP_MODE: "1",
+        VERCEL_PLUGIN_SEEN_SKILLS: "",
+      },
+    );
+
+    expect(code).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.hookSpecificOutput.additionalContext).toContain("skill:bootstrap");
+    expect(result.hookSpecificOutput.skillInjection.matchedSkills).toContain("bootstrap");
+    expect(result.hookSpecificOutput.skillInjection.injectedSkills[0]).toBe("bootstrap");
+  });
+
+  test("boosts bootstrap ahead of other skills in setup mode", async () => {
+    const { code, stdout } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/vercel.json" } },
+      {
+        VERCEL_PLUGIN_SETUP_MODE: "1",
+        VERCEL_PLUGIN_SEEN_SKILLS: "",
+      },
+    );
+
+    expect(code).toBe(0);
+    const result = JSON.parse(stdout);
+    const injectedSkills = result.hookSpecificOutput.skillInjection.injectedSkills;
+    expect(injectedSkills[0]).toBe("bootstrap");
+  });
+
+  test("skips synthetic bootstrap when bootstrap was already injected", async () => {
+    const { code, stdout } = await runHookEnv(
+      { tool_name: "Read", tool_input: { file_path: "/project/random-not-matched.txt" } },
+      {
+        VERCEL_PLUGIN_SETUP_MODE: "1",
+        VERCEL_PLUGIN_SEEN_SKILLS: "bootstrap",
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({});
+  });
+});
+
 describe("seen-skills env file and dedup controls", () => {
   const nextjsOnlyPath = "/project/app/page.tsx";
 
