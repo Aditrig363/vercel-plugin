@@ -311,6 +311,52 @@ v0 (AI Development Agent)                  ⤳ skill: v0-dev  📖 docs: https:/
     ↔ AI SDK (AI features in generated apps)
     ↔ Vercel Marketplace (integrations in generated apps)
 
+CHAT SDK (TypeScript)                       ⤳ skill: chat-sdk  📖 docs: https://chat-sdk.dev
+├── Core
+│   ⊃ Chat class (event routing, adapter coordination)
+│   ⊃ Thread & Message (normalized cross-platform models)
+│   ⊃ Postable interface (shared by Thread and Channel: post, postEphemeral, mentionUser, startTyping)
+│   ⊃ openDM / channel (out-of-thread message routing)
+│   ⊃ Serialization (registerSingleton, reviver for JSON deserialization)
+│   ⊃ Cards (JSX → Slack Block Kit, Teams Adaptive Cards, Discord Embeds)
+│   ⊃ Modals (Slack-only form dialogs)
+│   ⊃ Streaming (native on Slack, post+edit fallback elsewhere)
+│   ⊃ Emoji system (cross-platform placeholders)
+│
+├── Platform Adapters
+│   ⊃ @chat-adapter/slack (single + multi-workspace, OAuth, native streaming)
+│   ⊃ @chat-adapter/teams (Microsoft Teams, Adaptive Cards)
+│   ⊃ @chat-adapter/discord (HTTP Interactions + Gateway, Ed25519)
+│   ⊃ @chat-adapter/telegram (Telegram Bot API, webhook verification)
+│   ⊃ @chat-adapter/gchat (Google Chat, Spaces)
+│   ⊃ @chat-adapter/github (Issues/PRs as threads)
+│   ⊃ @chat-adapter/linear (Issue comment threads)
+│
+├── State Adapters
+│   ⊃ @chat-adapter/state-redis (production, distributed locking)
+│   ⊃ @chat-adapter/state-ioredis (Redis Cluster/Sentinel)
+│   ⊃ @chat-adapter/state-memory (dev/testing only)
+│
+├── Event Handlers
+│   ⊃ onNewMention, onSubscribedMessage, onNewMessage
+│   ⊃ onReaction, onAction, onSlashCommand
+│   ⊃ onModalSubmit, onModalClose
+│   ⊃ onAssistantThreadStarted, onAssistantContextChanged
+│   ⊃ onAppHomeOpened
+│   ⊃ onMemberJoinedChannel
+│
+├── Key Patterns
+│   ↔ AI SDK (streaming AI responses via thread.post(textStream))
+│   ↔ Workflow DevKit (registerSingleton/reviver for durable serialization)
+│   ↔ Vercel Functions (webhook handlers, waitUntil)
+│   ↔ Next.js (API routes for webhooks)
+│   ↔ Upstash Redis (state adapter backend)
+│
+└── Testing
+    ⊃ Replay framework (record real webhooks, replay in tests)
+    ⊃ Test context factories (createSlackTestContext, etc.)
+    ⊃ Assertion helpers (expectValidMention, expectSentMessage)
+
 VERCEL AGENT                               ⤳ skill: vercel-agent  📖 docs: https://vercel.com/docs/workflow/agent
 ├── Capabilities
 │   ⊃ Automated code review (PR analysis, security, logic errors)
@@ -627,6 +673,8 @@ VERCEL MARKETPLACE                          ⤳ skill: marketplace  📖 docs: h
 | Provider-specific features (e.g., computer use) | Direct provider SDK (`@ai-sdk/anthropic`) | Only when gateway doesn't expose the feature |
 | Connect to external tools | AI SDK MCP Client | Standard protocol, OAuth |
 | Agent needs live Vercel state | Vercel MCP Server | Read projects, deployments, logs via MCP |
+| Multi-platform chat bot (Slack, Teams, Discord, Telegram, etc.) | Chat SDK (`chat` + `@chat-adapter/*`) | Single codebase, unified API, cards, streaming |
+| Chat bot with AI responses | Chat SDK + AI SDK (`thread.post(textStream)`) | Streaming AI across all platforms |
 | UI generation from prompts | v0 | Visual output, GitHub integration |
 
 **IMPORTANT**: Default to AI Gateway for all AI features. Only use direct provider SDKs (`@ai-sdk/anthropic`, `@ai-sdk/openai`, etc.) when you need provider-specific features not exposed through the gateway.
@@ -720,13 +768,27 @@ Three distinct caching systems serve different purposes. They can be used indepe
 **OIDC Authentication (default):** When you run `vercel env pull`, it provisions a `VERCEL_OIDC_TOKEN` — a short-lived JWT that the AI Gateway uses automatically. No manual API keys needed. The `@ai-sdk/gateway` package reads `VERCEL_OIDC_TOKEN` from the environment via `@vercel/oidc`. On Vercel deployments, OIDC tokens are auto-refreshed. For local dev, re-run `vercel env pull` if the token expires (~24h).
 ```
 
-### 2. Build a Durable AI Agent
+### 2. Build a Multi-Platform Chat Bot
+```
+1. npm install chat @chat-adapter/slack @chat-adapter/telegram @chat-adapter/state-redis
+2. Create lib/bot.ts → new Chat({ adapters: { slack, telegram }, state: createRedisState() })
+3. Register handlers: onNewMention, onSubscribedMessage, onAction
+4. Create webhook routes (for example app/api/bot/slack/route.ts and app/api/bot/telegram/route.ts)
+   → bot.webhooks.<platform>(req, { waitUntil })
+5. For AI responses: npm install ai → thread.post(result.textStream)
+6. For rich messages: use Card JSX → renders to each platform's native card format
+7. Deploy to Vercel → configure SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, TELEGRAM_BOT_TOKEN, REDIS_URL
+8. Add more platforms: npm install @chat-adapter/discord @chat-adapter/teams @chat-adapter/telegram
+   → add to adapters map → one webhook route per platform
+```
+
+### 3. Build a Durable AI Agent
 ```
 Next.js (API Route) → Workflow DevKit (DurableAgent) → AI SDK (tool calling)
                     → Neon Postgres (state) → Vercel Functions (step execution)
 ```
 
-### 3. Full-Stack SaaS App
+### 4. Full-Stack SaaS App
 ```
 Next.js (App Router) → Neon Postgres (data) → Clerk (auth, via Marketplace)
                      → Stripe (payments, via Marketplace) → Vercel Blob (uploads)
@@ -740,7 +802,7 @@ Next.js (App Router) → Neon Postgres (data) → Clerk (auth, via Marketplace)
 - **Organization flow**: After sign-in, if the user has no organization, `auth()` returns `{ userId, orgSlug: null }`. Handle this explicitly — redirect to an org creation page or show `<CreateOrganization />`. Without this, the app will loop back to the landing page endlessly.
 - The `proxy.ts` (or `middleware.ts`) must call `clerkMiddleware()` for `auth()` to work in Server Components. If proxy is in the wrong location, you get: `Clerk: auth() was called without Clerk middleware`
 
-### 4. Monorepo with Multiple Apps
+### 5. Monorepo with Multiple Apps
 ```
 Turborepo (orchestration) → Next.js App A → Vercel Platform (deploy)
                           → Next.js App B → Vercel Platform (deploy)
@@ -748,7 +810,7 @@ Turborepo (orchestration) → Next.js App A → Vercel Platform (deploy)
                           → Remote Cache → Vercel (shared across CI)
 ```
 
-### 5. Deploy with Custom CI
+### 6. Deploy with Custom CI
 ```
 Git Push → CI Pipeline → vercel build → vercel deploy --prebuilt
         → VERCEL_TOKEN auth → Preview URL → vercel promote (production)

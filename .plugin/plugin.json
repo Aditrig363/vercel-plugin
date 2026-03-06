@@ -18,6 +18,10 @@
     "deployment",
     "edge-functions",
     "serverless",
-    "ai-gateway"
+    "ai-gateway",
+    "chat-sdk",
+    "chat-bot",
+    "slack-bot",
+    "discord-bot"
   ]
 }

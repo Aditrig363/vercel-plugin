@@ -12,12 +12,12 @@
  * Debug: Set VERCEL_PLUGIN_DEBUG=1 (or VERCEL_PLUGIN_HOOK_DEBUG=1) to emit JSON-lines debug events to stderr.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { join, dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
-import { randomBytes, createHash } from "node:crypto";
-import { buildSkillMap } from "./skill-map-frontmatter.mjs";
+import { randomBytes } from "node:crypto";
+import { buildSkillMap, validateSkillMap } from "./skill-map-frontmatter.mjs";
+import { globToRegex, readSeenSkillsFile, appendSeenSkill } from "./patterns.mjs";
 
 const MAX_SKILLS = 3;
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,107 +47,40 @@ function dbg(event, data) {
 /**
  * Emit a structured issue event in debug mode.
  * Issue codes: STDIN_EMPTY, STDIN_PARSE_FAIL, SKILLMAP_LOAD_FAIL,
- *   SKILLMAP_VALIDATE_FAIL, SKILLMAP_EMPTY, DEDUP_READ_FAIL,
- *   DEDUP_RESET_FAIL, DEDUP_WRITE_FAIL, SKILL_FILE_MISSING,
- *   BASH_REGEX_INVALID
+ *   SKILLMAP_VALIDATE_FAIL, SKILLMAP_EMPTY, SKILLMD_PARSE_FAIL,
+ *   DEDUP_READ_FAIL, DEDUP_RESET_FAIL, DEDUP_WRITE_FAIL,
+ *   SKILL_FILE_MISSING, BASH_REGEX_INVALID, PATH_GLOB_INVALID
  */
 function emitIssue(code, message, hint, context) {
   dbg("issue", { code, message, hint, context });
 }
 
-// ---------------------------------------------------------------------------
-// Skill-map validation
-// ---------------------------------------------------------------------------
-
-const KNOWN_KEYS = new Set(["priority", "pathPatterns", "bashPatterns"]);
-
 /**
- * Validate and normalize a skill-map object.
- * Returns { ok: true, normalizedSkillMap, warnings } or { ok: false, errors }.
+ * Reason codes for the complete event:
+ *   stdin_empty, stdin_parse_fail, tool_unsupported, no_matches,
+ *   all_deduped, injected, skillmap_fail
+ *
+ * Emits exactly one 'complete' event per invocation with aggregate counts.
  */
-export function validateSkillMap(raw) {
-  const errors = [];
-  const warnings = [];
+function emitComplete(reason, counts = {}, timing = null) {
+  const { matchedCount = 0, injectedCount = 0, dedupedCount = 0, cappedCount = 0 } = counts;
+  dbg("complete", {
+    reason,
+    matchedCount,
+    injectedCount,
+    dedupedCount,
+    cappedCount,
+    elapsed_ms: Math.round(safeNow() - t0),
+    ...(timing ? { timing_ms: timing } : {}),
+  });
+}
 
-  if (raw == null || typeof raw !== "object") {
-    return { ok: false, errors: ["skill-map must be a non-null object"] };
-  }
-
-  if (!("skills" in raw)) {
-    return { ok: false, errors: ["skill-map is missing required 'skills' key"] };
-  }
-
-  const skills = raw.skills;
-  if (skills == null || typeof skills !== "object" || Array.isArray(skills)) {
-    return { ok: false, errors: ["'skills' must be a non-null object (not an array)"] };
-  }
-
-  const normalizedSkills = {};
-
-  for (const [skill, config] of Object.entries(skills)) {
-    if (config == null || typeof config !== "object" || Array.isArray(config)) {
-      errors.push(`skill "${skill}": config must be a non-null object`);
-      continue;
-    }
-
-    // Warn on unknown keys
-    for (const key of Object.keys(config)) {
-      if (!KNOWN_KEYS.has(key)) {
-        warnings.push(`skill "${skill}": unknown key "${key}"`);
-      }
-    }
-
-    // Normalize priority
-    let priority = 0;
-    if ("priority" in config) {
-      const p = config.priority;
-      if (typeof p !== "number" || Number.isNaN(p)) {
-        warnings.push(`skill "${skill}": priority is not a valid number, defaulting to 0`);
-      } else {
-        priority = p;
-      }
-    }
-
-    // Normalize pathPatterns
-    let pathPatterns = [];
-    if ("pathPatterns" in config) {
-      if (!Array.isArray(config.pathPatterns)) {
-        warnings.push(`skill "${skill}": pathPatterns is not an array, defaulting to []`);
-      } else {
-        pathPatterns = config.pathPatterns.filter((p, i) => {
-          if (typeof p !== "string") {
-            warnings.push(`skill "${skill}": pathPatterns[${i}] is not a string, removing`);
-            return false;
-          }
-          return true;
-        });
-      }
-    }
-
-    // Normalize bashPatterns
-    let bashPatterns = [];
-    if ("bashPatterns" in config) {
-      if (!Array.isArray(config.bashPatterns)) {
-        warnings.push(`skill "${skill}": bashPatterns is not an array, defaulting to []`);
-      } else {
-        bashPatterns = config.bashPatterns.filter((p, i) => {
-          if (typeof p !== "string") {
-            warnings.push(`skill "${skill}": bashPatterns[${i}] is not a string, removing`);
-            return false;
-          }
-          return true;
-        });
-      }
-    }
-
-    normalizedSkills[skill] = { priority, pathPatterns, bashPatterns };
-  }
-
-  if (errors.length > 0) {
-    return { ok: false, errors };
-  }
-
-  return { ok: true, normalizedSkillMap: { skills: normalizedSkills }, warnings };
+/** @returns {string | null} */
+function getSeenSkillsFile() {
+  const value = process.env.VERCEL_PLUGIN_SEEN_SKILLS;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,12 +97,14 @@ function run() {
     const raw = readFileSync(0, "utf-8").trim();
     if (!raw) {
       emitIssue("STDIN_EMPTY", "No data received on stdin", "Ensure the hook receives JSON on stdin with tool_name, tool_input, session_id", {});
+      emitComplete("stdin_empty");
       return "{}";
     }
     if (DEBUG) timing.stdin_parse = Math.round(safeNow() - tPhase);
     input = JSON.parse(raw);
   } catch (err) {
     emitIssue("STDIN_PARSE_FAIL", "Failed to parse stdin as JSON", "Verify stdin contains valid JSON with tool_name, tool_input, session_id fields", { error: String(err) });
+    emitComplete("stdin_parse_fail");
     return "{}";
   }
 
@@ -177,7 +112,7 @@ function run() {
 
   const toolName = input.tool_name || "";
   const toolInput = input.tool_input || {};
-  // When session_id is missing and SESSION_ID env is unset, use null → memory-only dedup
+  // sessionId is retained for debug metadata only.
   const sessionId = input.session_id || process.env.SESSION_ID || null;
 
   // Determine tool target for metadata
@@ -199,6 +134,13 @@ function run() {
     const skillsDir = join(PLUGIN_ROOT, "skills");
     const built = buildSkillMap(skillsDir);
 
+    // Surface diagnostics from malformed SKILL.md files
+    if (built.diagnostics && built.diagnostics.length > 0) {
+      for (const d of built.diagnostics) {
+        emitIssue("SKILLMD_PARSE_FAIL", `Failed to parse SKILL.md: ${d.message}`, `Fix YAML frontmatter in ${d.file}`, { file: d.file, error: d.error });
+      }
+    }
+
     // Emit debug warnings for type coercion in buildSkillMap
     if (built.warnings && built.warnings.length > 0) {
       for (const w of built.warnings) {
@@ -210,6 +152,7 @@ function run() {
     const validation = validateSkillMap(built);
     if (!validation.ok) {
       emitIssue("SKILLMAP_VALIDATE_FAIL", "Skill map validation failed after build", "Check SKILL.md frontmatter types: filePattern and bashPattern must be arrays", { errors: validation.errors });
+      emitComplete("skillmap_fail");
       return "{}";
     }
     if (validation.warnings && validation.warnings.length > 0) {
@@ -220,12 +163,14 @@ function run() {
     skillMap = validation.normalizedSkillMap.skills;
   } catch (err) {
     emitIssue("SKILLMAP_LOAD_FAIL", "Failed to build skill map from SKILL.md frontmatter", "Check that skills/*/SKILL.md files exist and contain valid YAML frontmatter with metadata.filePattern", { error: String(err) });
+    emitComplete("skillmap_fail");
     return "{}";
   }
   if (DEBUG) timing.skillmap_load = Math.round(safeNow() - tSkillmap);
 
   if (typeof skillMap !== "object" || Object.keys(skillMap).length === 0) {
     emitIssue("SKILLMAP_EMPTY", "Skill map is empty or has no skills", "Ensure skills/*/SKILL.md files have YAML frontmatter with metadata.filePattern or metadata.bashPattern", { type: typeof skillMap });
+    emitComplete("skillmap_fail");
     return "{}";
   }
 
@@ -237,7 +182,12 @@ function run() {
     skill,
     priority: typeof config.priority === "number" ? config.priority : 0,
     pathPatterns: config.pathPatterns || [],
-    pathRegexes: (config.pathPatterns || []).map((p) => globToRegex(p)),
+    pathRegexes: (config.pathPatterns || []).map((p) => {
+      try { return globToRegex(p); } catch (err) {
+        emitIssue("PATH_GLOB_INVALID", `Invalid glob pattern in skill "${skill}": ${p}`, `Fix or remove the invalid filePattern in skills/${skill}/SKILL.md frontmatter`, { skill, pattern: p, error: String(err) });
+        return null;
+      }
+    }).filter(Boolean),
     bashPatterns: config.bashPatterns || [],
     bashRegexes: (config.bashPatterns || []).map((p) => {
       try { return new RegExp(p); } catch (err) {
@@ -249,39 +199,27 @@ function run() {
 
   // ---- Session dedup ----
   const dedupOff = process.env.VERCEL_PLUGIN_HOOK_DEDUP === "off";
-  const usePersistentDedup = !dedupOff && sessionId !== null;
-  const dedupStrategy = dedupOff ? "disabled" : usePersistentDedup ? "persistent" : "memory-only";
+  const seenSkillsFile = getSeenSkillsFile();
+  const useEnvFileDedup = !dedupOff && seenSkillsFile !== null;
+  const dedupStrategy = dedupOff ? "disabled" : useEnvFileDedup ? "env-file" : "memory-only";
 
-  dbg("dedup-strategy", { strategy: dedupStrategy, sessionId });
+  dbg("dedup-strategy", { strategy: dedupStrategy, sessionId, seenSkillsFile });
 
-  const dedupDir = join(tmpdir(), "vercel-plugin-hooks");
-  const dedupFile = usePersistentDedup
-    ? join(dedupDir, `session-${hashSessionId(sessionId)}.json`)
-    : null;
-
-  // RESET_DEDUP=1 clears the dedup file before matching
-  if (process.env.RESET_DEDUP === "1" && dedupFile) {
+  if (process.env.RESET_DEDUP === "1" && useEnvFileDedup) {
     try {
-      if (existsSync(dedupFile)) {
-        writeFileSync(dedupFile, "[]");
-        dbg("dedup-reset", { dedupFile });
-      }
+      writeFileSync(seenSkillsFile, "");
+      dbg("dedup-reset", { seenSkillsFile });
     } catch (err) {
-      emitIssue("DEDUP_RESET_FAIL", "Failed to reset dedup file", "Check write permissions in tmpdir", { dedupFile, error: String(err) });
+      emitIssue("DEDUP_RESET_FAIL", "Failed to reset dedup file", "Check write permissions for VERCEL_PLUGIN_SEEN_SKILLS path", { seenSkillsFile, error: String(err) });
     }
   }
 
   let injectedSkills;
-  if (dedupOff) {
-    injectedSkills = new Set(); // never filters anything, never persists
-  } else if (usePersistentDedup) {
+  if (useEnvFileDedup) {
     try {
-      if (!existsSync(dedupDir)) mkdirSync(dedupDir, { recursive: true });
-      injectedSkills = existsSync(dedupFile)
-        ? new Set(JSON.parse(readFileSync(dedupFile, "utf-8")))
-        : new Set();
+      injectedSkills = readSeenSkillsFile(seenSkillsFile);
     } catch (err) {
-      emitIssue("DEDUP_READ_FAIL", "Failed to read or parse dedup state file", "Check file permissions in tmpdir; dedup will reset for this invocation", { dedupFile, error: String(err) });
+      emitIssue("DEDUP_READ_FAIL", "Failed to read or parse dedup state file", "Check file permissions for VERCEL_PLUGIN_SEEN_SKILLS path; dedup will reset for this invocation", { seenSkillsFile, error: String(err) });
       injectedSkills = new Set();
     }
   } else {
@@ -289,21 +227,16 @@ function run() {
     injectedSkills = new Set();
   }
 
-  function persistDedup() {
-    if (!usePersistentDedup || !dedupFile) return;
-    try {
-      const tmpFile = dedupFile + ".tmp";
-      writeFileSync(tmpFile, JSON.stringify([...injectedSkills]));
-      renameSync(tmpFile, dedupFile);
-    } catch (err) {
-      emitIssue("DEDUP_WRITE_FAIL", "Failed to persist dedup state", "Check write permissions in tmpdir; skills may re-inject next invocation", { dedupFile, error: String(err) });
-    }
-  }
-
   // ---- Determine matched skills (using precompiled regexes) ----
   let tMatch = DEBUG ? safeNow() : 0;
   const matchedEntries = [];
   const matchReasons = {};
+
+  const supportedTools = ["Read", "Edit", "Write", "Bash"];
+  if (!supportedTools.includes(toolName)) {
+    emitComplete("tool_unsupported");
+    return "{}";
+  }
 
   if (["Read", "Edit", "Write"].includes(toolName)) {
     const filePath = toolInput.file_path || "";
@@ -349,7 +282,11 @@ function run() {
       timing.skill_read = 0;
       timing.total = Math.round(safeNow() - t0);
     }
-    dbg("complete", { result: "empty", elapsed_ms: Math.round(safeNow() - t0), ...(DEBUG ? { timing_ms: timing } : {}) });
+    const reason = matched.size === 0 ? "no_matches" : "all_deduped";
+    emitComplete(reason, {
+      matchedCount: matched.size,
+      dedupedCount: matched.size - newSkills.length,
+    }, DEBUG ? timing : null);
     return "{}";
   }
 
@@ -374,6 +311,13 @@ function run() {
         `<!-- skill:${skill} -->\n${content}\n<!-- /skill:${skill} -->`,
       );
       injectedSkills.add(skill);
+      if (useEnvFileDedup) {
+        try {
+          appendSeenSkill(seenSkillsFile, skill);
+        } catch (err) {
+          emitIssue("DEDUP_WRITE_FAIL", "Failed to persist dedup state", "Check write permissions for VERCEL_PLUGIN_SEEN_SKILLS path; skills may re-inject next invocation", { seenSkillsFile, skill, error: String(err) });
+        }
+      }
     } catch (err) {
       emitIssue("SKILL_FILE_MISSING", `SKILL.md not found for skill "${skill}"`, `Create skills/${skill}/SKILL.md with valid frontmatter`, { skillPath, error: String(err) });
     }
@@ -385,15 +329,22 @@ function run() {
 
   if (parts.length === 0) {
     if (DEBUG) timing.total = Math.round(safeNow() - t0);
-    dbg("complete", { result: "empty", elapsed_ms: Math.round(safeNow() - t0), ...(DEBUG ? { timing_ms: timing } : {}) });
+    emitComplete("no_matches", {
+      matchedCount: matched.size,
+      dedupedCount: matchedEntries.length - newEntries.length,
+      cappedCount: newEntries.length > MAX_SKILLS ? newEntries.length - MAX_SKILLS : 0,
+    }, DEBUG ? timing : null);
     return "{}";
   }
 
-  // Persist dedup state
-  persistDedup();
-
   if (DEBUG) timing.total = Math.round(safeNow() - t0);
-  dbg("complete", { result: "injected", skillCount: parts.length, elapsed_ms: Math.round(safeNow() - t0), ...(DEBUG ? { timing_ms: timing } : {}) });
+  const cappedCount = newEntries.length > MAX_SKILLS ? newEntries.length - MAX_SKILLS : 0;
+  emitComplete("injected", {
+    matchedCount: matched.size,
+    injectedCount: parts.length,
+    dedupedCount: matchedEntries.length - newEntries.length,
+    cappedCount,
+  }, DEBUG ? timing : null);
 
   // Build skillInjection metadata
   const droppedByCap = newEntries.length > MAX_SKILLS
@@ -403,7 +354,7 @@ function run() {
   const skillInjection = {
     version: SKILL_INJECTION_VERSION,
     toolName,
-    toolTarget,
+    toolTarget: toolName === "Bash" ? redactCommand(toolTarget) : toolTarget,
     matchedSkills: [...matched],
     injectedSkills: toInject,
     droppedByCap,
@@ -462,63 +413,10 @@ export function redactCommand(command) {
 const SKILL_INJECTION_VERSION = 1;
 
 // ---------------------------------------------------------------------------
-// Session ID hashing
-// ---------------------------------------------------------------------------
-
-const SESSION_ID_MAX = 64;
-
-/**
- * Produce a safe, bounded filename segment from a session ID.
- * Short IDs (≤64 chars, already filesystem-safe) pass through as-is.
- * Longer or unsafe IDs are SHA-256 hashed and truncated to 16 hex chars.
- */
-function hashSessionId(id) {
-  const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, "_");
-  if (sanitized.length <= SESSION_ID_MAX) return sanitized;
-  return createHash("sha256").update(id).digest("hex").slice(0, 16);
-}
-
-// ---------------------------------------------------------------------------
 // Matching helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Convert a simple glob pattern to a regex.
- * Supports *, **, and ? wildcards.
- * Double-star-slash requires slash boundaries — matches zero or more path segments.
- */
-function globToRegex(pattern) {
-  let re = "^";
-  let i = 0;
-  while (i < pattern.length) {
-    const c = pattern[i];
-    if (c === "*") {
-      if (pattern[i + 1] === "*") {
-        // ** matches zero or more path segments with slash boundaries
-        i += 2;
-        if (pattern[i] === "/") {
-          // **/ → zero or more complete path segments (each ending in /)
-          re += "(?:[^/]+/)*";
-          i++;
-        } else {
-          // trailing ** (no slash after) → match rest of path
-          re += ".*";
-        }
-        continue;
-      }
-      re += "[^/]*";
-    } else if (c === "?") {
-      re += "[^/]";
-    } else if (".()+[]{}|^$\\".includes(c)) {
-      re += "\\" + c;
-    } else {
-      re += c;
-    }
-    i++;
-  }
-  re += "$";
-  return new RegExp(re);
-}
+// globToRegex is imported from ./patterns.mjs
 
 function matchPathRegexesWithReason(filePath, regexes, patterns) {
   if (!filePath || regexes.length === 0) return null;
@@ -556,7 +454,22 @@ function matchBashRegexesWithReason(command, regexes, patterns) {
 }
 
 // ---------------------------------------------------------------------------
-// Execute and write result
+// Execute and write result (only when run directly, not when imported)
 // ---------------------------------------------------------------------------
 
-process.stdout.write(run());
+/** Detect whether this module is the main entry point (ESM equivalent of require.main === module). */
+function isMainModule() {
+  try {
+    const scriptPath = realpathSync(resolve(process.argv[1] || ""));
+    const modulePath = realpathSync(fileURLToPath(import.meta.url));
+    return scriptPath === modulePath;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
+  process.stdout.write(run());
+}
+
+export { run, validateSkillMap };

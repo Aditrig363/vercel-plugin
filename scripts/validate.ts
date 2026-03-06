@@ -15,7 +15,8 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { checkCoverage, type CoverageResult } from "./coverage-baseline";
-import { extractFrontmatter, parseSkillFrontmatter } from "../hooks/skill-map-frontmatter.mjs";
+import { extractFrontmatter, parseSkillFrontmatter, buildSkillMap, validateSkillMap } from "../hooks/skill-map-frontmatter.mjs";
+import { globToRegex } from "../hooks/patterns.mjs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,23 +26,34 @@ interface Issue {
   code: string;
   severity: "error" | "warning";
   message: string;
+  check: string;
   file?: string;
   line?: number;
   hint?: string;
 }
 
-interface CheckMetric {
+interface CheckResult {
   name: string;
+  label: string;
+  status: "pass" | "fail" | "warn";
   durationMs: number;
+  errorCount: number;
+  warningCount: number;
 }
 
 interface ValidationReport {
   version: 1;
   timestamp: string;
   summary: { errors: number; warnings: number; checks: number };
+  checkResults: CheckResult[];
   metrics: CheckMetric[];
   issues: Issue[];
   orphanSkills: string[];
+}
+
+interface CheckMetric {
+  name: string;
+  durationMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,14 +94,15 @@ const SKIP_COVERAGE = flags.coverage === "skip";
 const ROOT = resolve(import.meta.dirname, "..");
 const issues: Issue[] = [];
 let checks = 0;
+let currentCheck = "unknown";
 
 function fail(code: string, message: string, extra?: { file?: string; line?: number; hint?: string }) {
-  issues.push({ code, severity: "error", message, ...extra });
+  issues.push({ code, severity: "error", message, check: currentCheck, ...extra });
   if (FORMAT === "pretty") console.error(`  ✗ ${message}`);
 }
 
 function warn(code: string, message: string, extra?: { file?: string; line?: number; hint?: string }) {
-  issues.push({ code, severity: "warning", message, ...extra });
+  issues.push({ code, severity: "warning", message, check: currentCheck, ...extra });
   if (FORMAT === "pretty") console.log(`  ⚠ ${message}`);
 }
 
@@ -125,7 +138,7 @@ function parseFrontmatter(content: string): Record<string, any> | null {
   if (!yamlStr) return null;
   // parseSkillFrontmatter uses js-yaml; let YAML parse errors propagate
   const parsed = parseSkillFrontmatter(yamlStr);
-  return { name: parsed.name, description: parsed.description, ...parsed.metadata, metadata: parsed.metadata };
+  return { name: parsed.name, description: parsed.description, metadata: parsed.metadata };
 }
 
 function lineOf(content: string, needle: string): number | undefined {
@@ -272,32 +285,62 @@ async function validateSkillFrontmatter(): Promise<void> {
       });
     }
 
-    // Type-check metadata fields
-    const meta = fm.metadata ?? {};
-    if (meta.filePattern !== undefined && !Array.isArray(meta.filePattern)) {
-      fail("FM_FILEPATTERN_TYPE", `skills/${dir}/SKILL.md — metadata.filePattern must be an array, got ${typeof meta.filePattern}`, {
-        file: `skills/${dir}/SKILL.md`,
-        line: 1,
-        hint: "Change metadata.filePattern to a YAML list (e.g., filePattern:\\n  - 'src/**')",
-      });
-    }
-    if (meta.bashPattern !== undefined && !Array.isArray(meta.bashPattern)) {
-      fail("FM_BASHPATTERN_TYPE", `skills/${dir}/SKILL.md — metadata.bashPattern must be an array, got ${typeof meta.bashPattern}`, {
-        file: `skills/${dir}/SKILL.md`,
-        line: 1,
-        hint: "Change metadata.bashPattern to a YAML list (e.g., bashPattern:\\n  - '\\\\bvercel\\\\b')",
-      });
-    }
-    if (meta.priority !== undefined && typeof meta.priority !== "number") {
-      fail("FM_PRIORITY_TYPE", `skills/${dir}/SKILL.md — metadata.priority must be a number, got ${typeof meta.priority}`, {
-        file: `skills/${dir}/SKILL.md`,
-        line: 1,
-        hint: "Set metadata.priority to a numeric value (e.g., priority: 5)",
-      });
-    }
+    // Type-check metadata fields via shared validator (buildSkillMap + validateSkillMap)
+    // is done below after the per-file loop.
 
     if (fm.name && fm.description) {
       pass(`skills/${dir}/SKILL.md — name: "${fm.name}", description present`);
+    }
+  }
+
+  // Run the shared buildSkillMap + validateSkillMap pipeline to catch
+  // metadata type issues (filePattern/bashPattern not arrays, bad priority, etc.)
+  // Uses structured warningDetails to avoid brittle regex-parsing of warning strings.
+  const built = buildSkillMap(skillsDir);
+
+  // Surface buildSkillMap coercion warnings as validation issues via structured details
+  for (const d of built.warningDetails) {
+    const skillName = d.skill || "unknown";
+
+    if (d.field === "filePattern" && (d.code === "INVALID_TYPE" || d.code === "COERCE_STRING_TO_ARRAY")) {
+      const suffix = d.code === "COERCE_STRING_TO_ARRAY" ? ", got string" : "";
+      fail("FM_FILEPATTERN_TYPE", `skills/${skillName}/SKILL.md — metadata.filePattern must be an array${suffix}`, {
+        file: `skills/${skillName}/SKILL.md`,
+        line: 1,
+        hint: d.hint || "Change metadata.filePattern to a YAML list (e.g., filePattern:\\n  - 'src/**')",
+      });
+    } else if (d.field === "bashPattern" && (d.code === "INVALID_TYPE" || d.code === "COERCE_STRING_TO_ARRAY")) {
+      const suffix = d.code === "COERCE_STRING_TO_ARRAY" ? ", got string" : "";
+      fail("FM_BASHPATTERN_TYPE", `skills/${skillName}/SKILL.md — metadata.bashPattern must be an array${suffix}`, {
+        file: `skills/${skillName}/SKILL.md`,
+        line: 1,
+        hint: d.hint || "Change metadata.bashPattern to a YAML list (e.g., bashPattern:\\n  - '\\\\bvercel\\\\b')",
+      });
+    }
+  }
+
+  // Run shared validator on the built map for structural issues
+  const validation = validateSkillMap(built);
+  if (!validation.ok) {
+    for (const d of (validation.errorDetails ?? [])) {
+      const skillName = d.skill || "unknown";
+      fail("FM_VALIDATION", `skills/${skillName}/SKILL.md — ${d.message}`, {
+        file: `skills/${skillName}/SKILL.md`,
+        line: 1,
+        hint: d.hint || "Fix the YAML frontmatter metadata fields",
+      });
+    }
+  } else {
+    for (const d of (validation.warningDetails ?? [])) {
+      const skillName = d.skill || "unknown";
+
+      if (d.code === "INVALID_PRIORITY") {
+        fail("FM_PRIORITY_TYPE", `skills/${skillName}/SKILL.md — metadata.priority must be a number`, {
+          file: `skills/${skillName}/SKILL.md`,
+          line: 1,
+          hint: d.hint || "Set metadata.priority to a numeric value (e.g., priority: 5)",
+        });
+      }
     }
   }
 }
@@ -706,17 +749,140 @@ async function validatePreToolUseHook() {
 }
 
 // ---------------------------------------------------------------------------
+// 9. Validate pattern compilation (filePattern → globToRegex, bashPattern → RegExp)
+// ---------------------------------------------------------------------------
+
+async function validatePatternCompilation() {
+  section("[9] Pattern compilation (filePattern + bashPattern)");
+
+  const skillsDir = join(ROOT, "skills");
+  if (!(await exists(skillsDir))) return; // already reported elsewhere
+
+  const dirs = await readdir(skillsDir);
+  let compiled = 0;
+  let failures = 0;
+
+  for (const dir of dirs.sort()) {
+    const skillPath = join(skillsDir, dir, "SKILL.md");
+    if (!(await exists(skillPath))) continue;
+
+    const content = await readFile(skillPath, "utf-8");
+    let fm: Record<string, any> | null;
+    try {
+      fm = parseFrontmatter(content);
+    } catch {
+      continue; // YAML errors already reported in section [2]
+    }
+    if (!fm) continue;
+
+    const meta = fm.metadata ?? {};
+
+    // Compile filePatterns via globToRegex
+    const filePatterns: unknown[] = Array.isArray(meta.filePattern) ? meta.filePattern : [];
+    for (let idx = 0; idx < filePatterns.length; idx++) {
+      const pat = filePatterns[idx];
+      if (typeof pat !== "string") {
+        failures++;
+        fail("PATTERN_FILE_COMPILE", `skills/${dir}/SKILL.md — filePattern[${idx}] is not a string (${typeof pat})`, {
+          file: `skills/${dir}/SKILL.md`,
+          hint: "Each filePattern entry must be a string glob pattern",
+        });
+        continue;
+      }
+      if (pat === "") {
+        failures++;
+        fail("PATTERN_FILE_COMPILE", `skills/${dir}/SKILL.md — filePattern[${idx}] is empty`, {
+          file: `skills/${dir}/SKILL.md`,
+          hint: "Remove empty entries from metadata.filePattern",
+        });
+        continue;
+      }
+      try {
+        globToRegex(pat);
+        compiled++;
+      } catch (err: any) {
+        failures++;
+        fail("PATTERN_FILE_COMPILE", `skills/${dir}/SKILL.md — filePattern "${pat}" failed to compile: ${err.message}`, {
+          file: `skills/${dir}/SKILL.md`,
+          hint: "Fix the glob pattern syntax in metadata.filePattern",
+        });
+      }
+    }
+
+    // Compile bashPatterns as RegExp
+    const bashPatterns: unknown[] = Array.isArray(meta.bashPattern) ? meta.bashPattern : [];
+    for (let idx = 0; idx < bashPatterns.length; idx++) {
+      const pat = bashPatterns[idx];
+      if (typeof pat !== "string") {
+        failures++;
+        fail("PATTERN_BASH_COMPILE", `skills/${dir}/SKILL.md — bashPattern[${idx}] is not a string (${typeof pat})`, {
+          file: `skills/${dir}/SKILL.md`,
+          hint: "Each bashPattern entry must be a string regex pattern",
+        });
+        continue;
+      }
+      if (pat === "") {
+        failures++;
+        fail("PATTERN_BASH_COMPILE", `skills/${dir}/SKILL.md — bashPattern[${idx}] is empty`, {
+          file: `skills/${dir}/SKILL.md`,
+          hint: "Remove empty entries from metadata.bashPattern",
+        });
+        continue;
+      }
+      try {
+        new RegExp(pat);
+        compiled++;
+      } catch (err: any) {
+        failures++;
+        fail("PATTERN_BASH_COMPILE", `skills/${dir}/SKILL.md — bashPattern "${pat}" failed to compile: ${err.message}`, {
+          file: `skills/${dir}/SKILL.md`,
+          hint: "Fix the regex syntax in metadata.bashPattern",
+        });
+      }
+    }
+  }
+
+  if (failures === 0 && compiled > 0) {
+    pass(`All ${compiled} patterns compiled successfully`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
+const CHECK_LABELS: Record<string, string> = {
+  graphSkillRefs: "Ecosystem graph → skill cross-references",
+  orphanSkills: "Orphan skill detection",
+  skillFrontmatter: "SKILL.md YAML frontmatter",
+  pluginJson: "plugin.json validity",
+  hooksJson: "hooks.json validity",
+  coverageBaseline: "llms.txt coverage baseline",
+  commandConventions: "Command conventions",
+  cliBannedPatterns: "CLI banned-pattern scan",
+  preToolUseHook: "PreToolUse hook and skill coverage",
+  patternCompilation: "Pattern compilation",
+};
+
 async function timed<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  currentCheck = name;
+  const issuesBefore = issues.length;
   const start = performance.now();
   const result = await fn();
-  metrics.push({ name, durationMs: Math.round(performance.now() - start) });
+  const durationMs = Math.round(performance.now() - start);
+  metrics.push({ name, durationMs });
+
+  const checkIssues = issues.slice(issuesBefore);
+  const errorCount = checkIssues.filter((i) => i.severity === "error").length;
+  const warningCount = checkIssues.filter((i) => i.severity === "warning").length;
+  const status: CheckResult["status"] = errorCount > 0 ? "fail" : warningCount > 0 ? "warn" : "pass";
+  checkResults.push({ name, label: CHECK_LABELS[name] ?? name, status, durationMs, errorCount, warningCount });
+
   return result;
 }
 
 const metrics: CheckMetric[] = [];
+const checkResults: CheckResult[] = [];
 
 async function main() {
   if (FORMAT === "pretty") {
@@ -732,6 +898,7 @@ async function main() {
   await timed("commandConventions", () => validateCommandConventions());
   await timed("cliBannedPatterns", () => validateCliBannedPatterns());
   await timed("preToolUseHook", () => validatePreToolUseHook());
+  await timed("patternCompilation", () => validatePatternCompilation());
 
   const errorCount = issues.filter((i) => i.severity === "error").length;
   const warnCount = issues.filter((i) => i.severity === "warning").length;
@@ -741,6 +908,7 @@ async function main() {
       version: 1,
       timestamp: new Date().toISOString(),
       summary: { errors: errorCount, warnings: warnCount, checks },
+      checkResults,
       metrics,
       issues,
       orphanSkills,

@@ -63,6 +63,46 @@ describe("validate.ts", () => {
     }
   }, 30_000);
 
+  test("JSON report includes checkResults array with correct shape", async () => {
+    const proc = Bun.spawn(
+      ["bun", "run", join(ROOT, "scripts", "validate.ts"), "--format", "json", "--coverage", "skip"],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    const report = JSON.parse(stdout);
+
+    expect(report.checkResults).toBeArray();
+    expect(report.checkResults.length).toBeGreaterThan(0);
+    for (const cr of report.checkResults) {
+      expect(typeof cr.name).toBe("string");
+      expect(typeof cr.label).toBe("string");
+      expect(["pass", "fail", "warn"]).toContain(cr.status);
+      expect(typeof cr.durationMs).toBe("number");
+      expect(typeof cr.errorCount).toBe("number");
+      expect(typeof cr.warningCount).toBe("number");
+    }
+    // checkResults count should match metrics count
+    expect(report.checkResults.length).toBe(report.metrics.length);
+  }, 30_000);
+
+  test("every issue has a check field matching its source check", async () => {
+    const proc = Bun.spawn(
+      ["bun", "run", join(ROOT, "scripts", "validate.ts"), "--format", "json", "--coverage", "skip"],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    const report = JSON.parse(stdout);
+
+    const validCheckNames = new Set(report.checkResults.map((cr: any) => cr.name));
+    for (const issue of report.issues) {
+      expect(typeof issue.check).toBe("string");
+      expect(issue.check.length).toBeGreaterThan(0);
+      expect(validCheckNames.has(issue.check)).toBe(true);
+    }
+  }, 30_000);
+
   test("every issue has a non-empty hint field", async () => {
     const proc = Bun.spawn(
       ["bun", "run", join(ROOT, "scripts", "validate.ts"), "--format", "json", "--coverage", "skip"],
@@ -117,7 +157,9 @@ describe("validate.ts", () => {
 
       const report = JSON.parse(stdout);
       expect(report.orphanSkills).toContain("fake-orphan-test-skill");
-      expect(report.issues.some((i: any) => i.code === "ORPHAN_SKILL" && i.message.includes("fake-orphan-test-skill"))).toBe(true);
+      const orphanIssue = report.issues.find((i: any) => i.code === "ORPHAN_SKILL" && i.message.includes("fake-orphan-test-skill"));
+      expect(orphanIssue).toBeDefined();
+      expect(orphanIssue.check).toBe("orphanSkills");
     } finally {
       await rm(orphanDir, { recursive: true, force: true });
     }
@@ -184,6 +226,7 @@ describe("validate.ts", () => {
       expect(issue.file).toBe("commands/test-broken-cmd.md");
       expect(issue.hint).toBeDefined();
       expect(issue.hint.length).toBeGreaterThan(0);
+      expect(issue.check).toBe("commandConventions");
     } finally {
       await rm(tmpFile, { force: true });
     }
@@ -275,4 +318,218 @@ describe("validate.ts", () => {
       expect(typeof line).toBe("number");
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// Focused frontmatter validation tests
+// ---------------------------------------------------------------------------
+
+/** Helper: run validate in JSON mode, return parsed report + exit code */
+async function runValidateJson(): Promise<{ code: number; report: any }> {
+  const proc = Bun.spawn(
+    ["bun", "run", join(ROOT, "scripts", "validate.ts"), "--format", "json", "--coverage", "skip"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const stdout = await new Response(proc.stdout).text();
+  const code = await proc.exited;
+  return { code, report: JSON.parse(stdout) };
+}
+
+/** Helper: create a temp skill dir with given SKILL.md content, run fn, then clean up */
+async function withTempSkill(name: string, skillMd: string, fn: () => Promise<void>): Promise<void> {
+  const dir = join(ROOT, "skills", name);
+  try {
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "SKILL.md"), skillMd);
+    await fn();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+describe("validate.ts — focused frontmatter validation", () => {
+  test("broken YAML frontmatter produces FM_INVALID_YAML", async () => {
+    await withTempSkill("zzz-test-broken-yaml", [
+      "---",
+      "name: broken",
+      "description: bad yaml",
+      "metadata:",
+      "  filePattern:",
+      "    - 'ok'",
+      "  invalid: [unclosed bracket",
+      "---",
+      "# Broken",
+    ].join("\n"), async () => {
+      const { code, report } = await runValidateJson();
+      expect(code).not.toBe(0);
+
+      const issue = report.issues.find(
+        (i: any) => i.code === "FM_INVALID_YAML" && i.message.includes("zzz-test-broken-yaml"),
+      );
+      expect(issue).toBeDefined();
+      expect(issue.hint).toBeDefined();
+    });
+  }, 30_000);
+
+  test("string filePattern produces FM_FILEPATTERN_TYPE", async () => {
+    await withTempSkill("zzz-test-string-filepattern", [
+      "---",
+      "name: string-fp",
+      "description: filePattern is a bare string",
+      "metadata:",
+      "  filePattern: 'src/**/*.ts'",
+      "---",
+      "# String filePattern",
+    ].join("\n"), async () => {
+      const { code, report } = await runValidateJson();
+      expect(code).not.toBe(0);
+
+      const issue = report.issues.find(
+        (i: any) => i.code === "FM_FILEPATTERN_TYPE" && i.message.includes("zzz-test-string-filepattern"),
+      );
+      expect(issue).toBeDefined();
+      expect(issue.hint).toMatch(/list/i);
+    });
+  }, 30_000);
+
+  test("invalid bashPattern regex produces PATTERN_BASH_COMPILE", async () => {
+    await withTempSkill("zzz-test-bad-bash-regex", [
+      "---",
+      "name: bad-regex",
+      "description: bashPattern with invalid regex",
+      "metadata:",
+      "  bashPattern:",
+      "    - '[unclosed'",
+      "  filePattern:",
+      "    - '**/*.ts'",
+      "---",
+      "# Bad regex",
+    ].join("\n"), async () => {
+      const { code, report } = await runValidateJson();
+      expect(code).not.toBe(0);
+
+      const issue = report.issues.find(
+        (i: any) => i.code === "PATTERN_BASH_COMPILE" && i.message.includes("zzz-test-bad-bash-regex"),
+      );
+      expect(issue).toBeDefined();
+      expect(issue.hint).toMatch(/regex/i);
+    });
+  }, 30_000);
+
+  test("SKILL.md with filePattern: [42] produces warning-level filtering (no crash)", async () => {
+    await withTempSkill("zzz-test-nonstring-fp", [
+      "---",
+      "name: nonstring-fp",
+      "description: filePattern has a number",
+      "metadata:",
+      "  filePattern:",
+      "    - 42",
+      "  bashPattern:",
+      "    - '\\\\bvercel\\\\b'",
+      "---",
+      "# Non-string filePattern",
+    ].join("\n"), async () => {
+      const { report } = await runValidateJson();
+      // The number entry gets filtered out, leaving no triggers → SKILL_NO_TRIGGERS
+      // but should NOT crash
+      const crashIssues = report.issues.filter(
+        (i: any) => i.message?.includes("zzz-test-nonstring-fp") && i.code === "FM_INVALID_YAML",
+      );
+      expect(crashIssues).toEqual([]);
+    });
+  }, 30_000);
+
+  test("SKILL.md with filePattern: [''] produces warning-level filtering (no crash)", async () => {
+    await withTempSkill("zzz-test-empty-fp", [
+      "---",
+      "name: empty-fp",
+      "description: filePattern has an empty string",
+      "metadata:",
+      "  filePattern:",
+      "    - ''",
+      "  bashPattern:",
+      "    - '\\\\bvercel\\\\b'",
+      "---",
+      "# Empty filePattern",
+    ].join("\n"), async () => {
+      const { report } = await runValidateJson();
+      const crashIssues = report.issues.filter(
+        (i: any) => i.message?.includes("zzz-test-empty-fp") && i.code === "FM_INVALID_YAML",
+      );
+      expect(crashIssues).toEqual([]);
+    });
+  }, 30_000);
+
+  test("metadata.name does not mask missing top-level name (FM_NO_NAME regression)", async () => {
+    await withTempSkill("zzz-test-meta-name-mask", [
+      "---",
+      "description: has metadata.name but no top-level name",
+      "metadata:",
+      "  name: sneaky-name",
+      "  filePattern:",
+      "    - '**/*.ts'",
+      "---",
+      "# No top-level name",
+    ].join("\n"), async () => {
+      const { code, report } = await runValidateJson();
+      expect(code).not.toBe(0);
+
+      const issue = report.issues.find(
+        (i: any) => i.code === "FM_NO_NAME" && i.message.includes("zzz-test-meta-name-mask"),
+      );
+      expect(issue).toBeDefined();
+    });
+  }, 30_000);
+
+  test("string filePattern produces FM_FILEPATTERN_TYPE via structured warningDetails", async () => {
+    await withTempSkill("zzz-test-structured-fp", [
+      "---",
+      "name: structured-fp",
+      "description: filePattern is a bare string (structured test)",
+      "metadata:",
+      "  filePattern: 'src/**/*.ts'",
+      "---",
+      "# Structured filePattern test",
+    ].join("\n"), async () => {
+      const { code, report } = await runValidateJson();
+      expect(code).not.toBe(0);
+
+      const issue = report.issues.find(
+        (i: any) => i.code === "FM_FILEPATTERN_TYPE" && i.message.includes("zzz-test-structured-fp"),
+      );
+      expect(issue).toBeDefined();
+      // Verify the message includes ", got string" (from structured detail code path)
+      expect(issue.message).toMatch(/got string/);
+      expect(issue.hint).toBeDefined();
+    });
+  }, 30_000);
+
+  test("clean SKILL.md with valid patterns produces no errors for that skill", async () => {
+    await withTempSkill("zzz-test-clean-skill", [
+      "---",
+      "name: clean-skill",
+      "description: A perfectly valid test skill",
+      "metadata:",
+      "  filePattern:",
+      "    - '**/*.ts'",
+      "  bashPattern:",
+      "    - '\\bvercel\\b'",
+      "  priority: 5",
+      "---",
+      "# Clean Skill",
+      "",
+      "This skill is well-formed.",
+    ].join("\n"), async () => {
+      const { report } = await runValidateJson();
+
+      // The only issue for this skill should be ORPHAN_SKILL (no graph ref) — no frontmatter errors
+      const fmIssues = report.issues.filter(
+        (i: any) =>
+          i.message?.includes("zzz-test-clean-skill") &&
+          i.code !== "ORPHAN_SKILL" &&
+          i.code !== "SKILL_NO_TRIGGERS",
+      );
+      expect(fmIssues).toEqual([]);
+    });
+  }, 30_000);
 });
