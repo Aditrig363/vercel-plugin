@@ -1,5 +1,14 @@
 # vercel-plugin
 
+## Add Globally
+```
+npx add-plugin https://github.com/vercel-labs/vercel-plugin
+```
+## Add to Your Project
+```
+npx add-plugin https://github.com/vercel-labs/vercel-plugin -s project
+```
+
 A comprehensive [Open Plugin](https://github.com/vercel-labs/open-plugin) that turns any AI agent into a Vercel expert.
 
 ## What It Does
