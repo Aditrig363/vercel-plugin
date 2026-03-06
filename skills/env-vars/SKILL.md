@@ -110,6 +110,42 @@ vercel env rm MY_SECRET production
 vercel env rm MY_SECRET
 ```
 
+## Bootstrap Flow (Fresh Clone / New Machine)
+
+Use this sequence when setting up a project from scratch:
+
+```bash
+# 1) Link first so pulls target the correct Vercel project
+vercel link --yes --project <name-or-id> --scope <team>
+
+# 2) Pull env vars into .env.local
+vercel env pull .env.local --yes
+
+# 3) Verify required keys from .env.example exist in .env.local
+while IFS='=' read -r key _; do
+  [[ -z "$key" || "$key" == \#* ]] && continue
+  grep -q "^${key}=" .env.local || echo "Missing in .env.local: $key"
+done < .env.example
+```
+
+### Temporary Path: Run With Vercel Envs Without Writing a File
+
+If you need Vercel environment variables immediately but do not want to write `.env.local` yet:
+
+```bash
+vercel env run -- npm run dev
+```
+
+This is useful for quick validation during bootstrap, but still pull `.env.local` for a normal local workflow.
+
+### Re-pull After Secret or Provisioning Changes
+
+After creating/updating secrets (`vercel env add`, dashboard changes) or provisioning integrations that add env vars (for example Neon/Upstash), re-run:
+
+```bash
+vercel env pull .env.local --yes
+```
+
 ## OIDC Token Lifecycle
 
 Vercel uses **OIDC (OpenID Connect)** tokens for secure, keyless authentication between your app and Vercel services (AI Gateway, storage, etc.).

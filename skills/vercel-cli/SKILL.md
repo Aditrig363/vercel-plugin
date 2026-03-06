@@ -66,12 +66,28 @@ vercel dev
 # Link current directory to a Vercel project
 vercel link
 
+# Deterministic non-interactive link (recommended for bootstrap/automation)
+vercel link --yes --project <name-or-id> --scope <team>
+
 # Pull environment variables and project settings
 vercel pull
 
 # Pull specific environment
 vercel pull --environment=production
+
+# Open linked project in the Vercel Dashboard
+vercel open
 ```
+
+### Deterministic Project Linking (Recommended)
+
+Prefer explicit non-interactive linking for bootstrap and automation:
+
+```bash
+vercel link --yes --project <name-or-id> --scope <team>
+```
+
+This is more reliable than interactive prompt-driven linking, which can pick the wrong project or team in multi-account setups. If there is any ambiguity, run `vercel open` to confirm the dashboard project, then relink with explicit `--project` and `--scope`.
 
 ### Environment Variables
 

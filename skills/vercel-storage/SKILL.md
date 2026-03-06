@@ -45,6 +45,15 @@ metadata:
 
 You are an expert in Vercel's storage options. Know which products are active, which are sunset, and when to use each.
 
+## Provider Choice for Bootstrap
+
+Choose storage provisioning paths in this order:
+
+1. **Preferred**: Vercel-managed Neon/Upstash through the Vercel Marketplace (`vercel integration add ...` or dashboard). This path auto-provisions accounts/resources and injects environment variables into the linked Vercel project.
+2. **Fallback**: Provider CLI/manual provisioning only when Marketplace is unavailable or you must use an existing external account.
+
+When using fallback/manual provisioning, you must add/sync environment variables yourself and then re-run `vercel env pull .env.local --yes` locally.
+
 ## Active First-Party Storage
 
 ### Vercel Blob — File Storage
@@ -180,6 +189,12 @@ npx dotenv -e .env.local -- npx tsx scripts/seed.ts
 This applies to any Node script that needs Vercel-provisioned env vars — only Next.js auto-loads `.env.local`.
 
 Install via Vercel Marketplace for automatic environment variable provisioning.
+
+#### Neon CLI Fallback Notes
+
+If you use Neon CLI as the fallback path, account/project setup is managed on Neon directly instead of through Vercel Marketplace automation.
+
+For **Vercel-managed Neon projects**, CLI operations require a **Neon API key**; do not rely on normal browser-auth login flow alone.
 
 ### Upstash Redis (replaces @vercel/kv)
 
