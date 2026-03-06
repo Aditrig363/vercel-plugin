@@ -17,7 +17,7 @@
  *   parseInput → loadSkills → matchSkills → deduplicateSkills → injectSkills → formatOutput
  */
 
-import { readFileSync, realpathSync, existsSync } from "node:fs";
+import { readFileSync, realpathSync, existsSync, appendFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSkillMap, validateSkillMap } from "./skill-map-frontmatter.mjs";
@@ -788,7 +788,35 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-  process.stdout.write(run());
+  try {
+    process.stdout.write(run());
+  } catch (err) {
+    // Log to a crash file so we can diagnose hook failures
+    const crashLog = join(
+      process.env.HOME || "/tmp",
+      ".claude",
+      "vercel-plugin-hook-errors.log"
+    );
+    const entry = [
+      `[${new Date().toISOString()}] CRASH in pretooluse-skill-inject.mjs`,
+      `  error: ${err?.message || String(err)}`,
+      `  stack: ${err?.stack || "(no stack)"}`,
+      `  PLUGIN_ROOT: ${PLUGIN_ROOT}`,
+      `  CLAUDE_PLUGIN_ROOT: ${process.env.CLAUDE_PLUGIN_ROOT || "(not set)"}`,
+      `  argv: ${JSON.stringify(process.argv)}`,
+      `  cwd: ${process.cwd()}`,
+      `  stdin_fd_open: ${(() => { try { readFileSync(0, "utf-8"); return "yes"; } catch { return "no/already-read"; } })()}`,
+      "",
+    ].join("\n");
+    try {
+      appendFileSync(crashLog, entry);
+    } catch {
+      // Last resort: write to stderr so Claude Code can surface it
+      process.stderr.write(entry);
+    }
+    // Return empty JSON so the hook doesn't block the tool call
+    process.stdout.write("{}");
+  }
 }
 
 export { run, validateSkillMap };
