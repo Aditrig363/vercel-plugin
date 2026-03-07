@@ -80,11 +80,24 @@ describe("subagent fresh env dedup behavior", () => {
     expect(leadSecondCode).toBe(0);
     expect(JSON.parse(leadSecondStdout)).toEqual({});
 
-    const { code: subagentCode, stdout: subagentStdout, stderr: subagentStderr } = await runHookEnv(
-      { tool_name: "Read", tool_input: { file_path: slackRoutePath } },
-      { VERCEL_PLUGIN_HOOK_DEBUG: "1" },
-      { omitSeenSkillsEnv: true },
-    );
+    const leadSession = testSession;
+    const subagentSession = `subagent-child-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    testSession = subagentSession;
+    let subagentResult: { code: number; stdout: string; stderr: string };
+    try {
+      subagentResult = await runHookEnv(
+        { tool_name: "Read", tool_input: { file_path: slackRoutePath } },
+        { VERCEL_PLUGIN_HOOK_DEBUG: "1" },
+        { omitSeenSkillsEnv: true },
+      );
+    } finally {
+      testSession = leadSession;
+    }
+    const {
+      code: subagentCode,
+      stdout: subagentStdout,
+      stderr: subagentStderr,
+    } = subagentResult;
 
     expect(subagentCode).toBe(0);
     expect(parseInjectedSkills(subagentStdout)).toEqual(EXPECTED_SLACK_ROUTE_SKILLS);
@@ -92,10 +105,10 @@ describe("subagent fresh env dedup behavior", () => {
     const subagentDebugLines = parseDebugLines(subagentStderr);
     const dedupStrategy = subagentDebugLines.find((line) => line.event === "dedup-strategy");
     expect(dedupStrategy).toBeDefined();
-    expect(dedupStrategy?.strategy).toBe("memory-only");
+    expect(dedupStrategy?.strategy).toBe("file");
   });
 
-  test("fresh subagent with its own empty seen-skills env uses env-var strategy but still injects", async () => {
+  test("fresh subagent with its own empty seen-skills env uses file strategy but still injects", async () => {
     const { code, stdout, stderr } = await runHookEnv(
       { tool_name: "Read", tool_input: { file_path: slackRoutePath } },
       { VERCEL_PLUGIN_SEEN_SKILLS: "", VERCEL_PLUGIN_HOOK_DEBUG: "1" },
@@ -107,7 +120,7 @@ describe("subagent fresh env dedup behavior", () => {
     const debugLines = parseDebugLines(stderr);
     const dedupStrategy = debugLines.find((line) => line.event === "dedup-strategy");
     expect(dedupStrategy).toBeDefined();
-    expect(dedupStrategy?.strategy).toBe("env-var");
+    expect(dedupStrategy?.strategy).toBe("file");
   });
 
   test("subagent that explicitly inherits the lead seen-skills list is deduped", async () => {
