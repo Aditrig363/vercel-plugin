@@ -34,6 +34,17 @@ const DEV_SERVER_UNAVAILABLE_WARNING = `<!-- agent-browser-unavailable -->
 **Note**: \`agent-browser\` CLI is not installed. Browser-based dev server verification is unavailable.
 Install it with \`npm install -g agent-browser && agent-browser install\` to enable automatic visual verification.
 <!-- /agent-browser-unavailable -->`;
+const VERCEL_ENV_HELP_ONCE_KEY = "vercel-env-help";
+const VERCEL_ENV_COMMAND = /\bvercel\s+env\s+(add|update|pull)\b/;
+const VERCEL_ENV_HELP = `<!-- vercel-env-help -->
+**Vercel env quick reference**
+- Add and paste the value at the prompt: vercel env add NAME production
+- Add from stdin/file: vercel env add NAME production < .env-value
+- Branch-specific preview var: vercel env add NAME preview feature-branch
+- Update an existing variable: vercel env update NAME production
+- Pull cloud envs locally after changes: vercel env pull .env.local --yes
+- Do NOT pass NAME=value as a positional argument. vercel env add reads the value from stdin or from the interactive prompt.
+<!-- /vercel-env-help -->`;
 const DEV_SERVER_PATTERNS = [
   /\bnext\s+dev\b/,
   /\bnpm\s+run\s+dev\b/,
@@ -159,6 +170,25 @@ function checkDevServerVerify(toolName, toolInput, _injectedSkills, _dedupOff, l
   }
   l.summary("dev-server-verify-triggered", { iterationCount: count });
   return { triggered: true, unavailable: false, loopGuardHit: false, iterationCount: count };
+}
+function checkVercelEnvHelp(toolName, toolInput, injectedSkills, dedupOff, logger) {
+  const l = logger || log;
+  if (toolName !== "Bash") {
+    l.summary("vercel-env-help-not-fired", { reason: "not-bash", tool: toolName });
+    return { triggered: false };
+  }
+  const command = toolInput.command || "";
+  const match = command.match(VERCEL_ENV_COMMAND);
+  if (!match) {
+    l.summary("vercel-env-help-not-fired", { reason: "no-command-match" });
+    return { triggered: false };
+  }
+  if (!dedupOff && injectedSkills.has(VERCEL_ENV_HELP_ONCE_KEY)) {
+    l.summary("vercel-env-help-not-fired", { reason: "already-shown", subcommand: match[1] });
+    return { triggered: false };
+  }
+  l.summary("vercel-env-help-triggered", { subcommand: match[1] });
+  return { triggered: true, subcommand: match[1] };
 }
 function parseInput(raw, logger) {
   const l = logger || log;
@@ -575,6 +605,7 @@ function run() {
   const { matchedEntries, matched } = matchResult;
   const tsxReview = checkTsxReviewTrigger(toolName, toolInput, injectedSkills, dedupOff, log);
   const devServerVerify = checkDevServerVerify(toolName, toolInput, injectedSkills, dedupOff, log);
+  const vercelEnvHelp = checkVercelEnvHelp(toolName, toolInput, injectedSkills, dedupOff, log);
   if (devServerVerify.triggered) {
     for (const entry of matchedEntries) {
       if (entry.skill === DEV_SERVER_VERIFY_SKILL) {
@@ -650,7 +681,19 @@ function run() {
   } else if (devServerVerify.triggered && rankedSkills.includes(DEV_SERVER_VERIFY_SKILL)) {
     devServerVerifyInjected = true;
   }
-  if (rankedSkills.length === 0 && !devServerUnavailableWarning) {
+  let vercelEnvHelpInjected = false;
+  if (vercelEnvHelp.triggered) {
+    vercelEnvHelpInjected = true;
+    injectedSkills.add(VERCEL_ENV_HELP_ONCE_KEY);
+    if (hasEnvDedup) {
+      process.env.VERCEL_PLUGIN_SEEN_SKILLS = appendSeenSkill(
+        process.env.VERCEL_PLUGIN_SEEN_SKILLS,
+        VERCEL_ENV_HELP_ONCE_KEY
+      );
+    }
+    log.debug("vercel-env-help-injected", { subcommand: vercelEnvHelp.subcommand || "" });
+  }
+  if (rankedSkills.length === 0 && !devServerUnavailableWarning && !vercelEnvHelpInjected) {
     const reason = matched.size === 0 ? "no_matches" : "all_deduped";
     if (log.active) {
       timing.skill_read = 0;
@@ -690,6 +733,10 @@ function run() {
   if (devServerUnavailableWarning) {
     parts.push(DEV_SERVER_UNAVAILABLE_WARNING);
     log.debug("dev-server-unavailable-warning-injected", {});
+  }
+  if (vercelEnvHelpInjected) {
+    parts.push(VERCEL_ENV_HELP);
+    log.debug("vercel-env-help-appended", { subcommand: vercelEnvHelp.subcommand || "" });
   }
   if (parts.length === 0) {
     if (log.active) timing.total = log.elapsed();
@@ -826,6 +873,7 @@ export {
   TSX_REVIEW_SKILL,
   checkDevServerVerify,
   checkTsxReviewTrigger,
+  checkVercelEnvHelp,
   deduplicateSkills,
   formatOutput,
   getDevServerVerifyCount,

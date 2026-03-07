@@ -63,6 +63,17 @@ const DEV_SERVER_UNAVAILABLE_WARNING = `<!-- agent-browser-unavailable -->
 **Note**: \`agent-browser\` CLI is not installed. Browser-based dev server verification is unavailable.
 Install it with \`npm install -g agent-browser && agent-browser install\` to enable automatic visual verification.
 <!-- /agent-browser-unavailable -->`;
+const VERCEL_ENV_HELP_ONCE_KEY = 'vercel-env-help';
+const VERCEL_ENV_COMMAND = /\bvercel\s+env\s+(add|update|pull)\b/;
+const VERCEL_ENV_HELP = `<!-- vercel-env-help -->
+**Vercel env quick reference**
+- Add and paste the value at the prompt: vercel env add NAME production
+- Add from stdin/file: vercel env add NAME production < .env-value
+- Branch-specific preview var: vercel env add NAME preview feature-branch
+- Update an existing variable: vercel env update NAME production
+- Pull cloud envs locally after changes: vercel env pull .env.local --yes
+- Do NOT pass NAME=value as a positional argument. vercel env add reads the value from stdin or from the interactive prompt.
+<!-- /vercel-env-help -->`;
 
 /**
  * Regex patterns to detect dev-server startup commands.
@@ -296,6 +307,41 @@ export function checkDevServerVerify(
 
   l.summary("dev-server-verify-triggered", { iterationCount: count });
   return { triggered: true, unavailable: false, loopGuardHit: false, iterationCount: count };
+}
+
+export interface VercelEnvHelpResult {
+  triggered: boolean;
+  subcommand?: string;
+}
+
+function checkVercelEnvHelp(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  injectedSkills: Set<string>,
+  dedupOff: boolean,
+  logger?: Logger,
+): VercelEnvHelpResult {
+  const l = logger || log;
+
+  if (toolName !== "Bash") {
+    l.summary("vercel-env-help-not-fired", { reason: "not-bash", tool: toolName });
+    return { triggered: false };
+  }
+
+  const command = (toolInput.command as string) || "";
+  const match = command.match(VERCEL_ENV_COMMAND);
+  if (!match) {
+    l.summary("vercel-env-help-not-fired", { reason: "no-command-match" });
+    return { triggered: false };
+  }
+
+  if (!dedupOff && injectedSkills.has(VERCEL_ENV_HELP_ONCE_KEY)) {
+    l.summary("vercel-env-help-not-fired", { reason: "already-shown", subcommand: match[1] });
+    return { triggered: false };
+  }
+
+  l.summary("vercel-env-help-triggered", { subcommand: match[1] });
+  return { triggered: true, subcommand: match[1] };
 }
 
 // ---------------------------------------------------------------------------
@@ -936,7 +982,10 @@ function run(): string {
   // Stage 3.6: Dev-server verification trigger
   const devServerVerify = checkDevServerVerify(toolName, toolInput, injectedSkills, dedupOff, log);
 
-  // Stage 3.7: Boost agent-browser-verify priority when dev-server detected
+  // Stage 3.7: Vercel env command quick-help trigger
+  const vercelEnvHelp = checkVercelEnvHelp(toolName, toolInput, injectedSkills, dedupOff, log);
+
+  // Stage 3.8: Boost agent-browser-verify priority when dev-server detected
   if (devServerVerify.triggered) {
     for (const entry of matchedEntries) {
       if (entry.skill === DEV_SERVER_VERIFY_SKILL) {
@@ -1028,7 +1077,19 @@ function run(): string {
     devServerVerifyInjected = true;
   }
 
-  if (rankedSkills.length === 0 && !devServerUnavailableWarning) {
+  let vercelEnvHelpInjected = false;
+  if (vercelEnvHelp.triggered) {
+    vercelEnvHelpInjected = true;
+    injectedSkills.add(VERCEL_ENV_HELP_ONCE_KEY);
+    if (hasEnvDedup) {
+      process.env.VERCEL_PLUGIN_SEEN_SKILLS = appendSeenSkill(
+        process.env.VERCEL_PLUGIN_SEEN_SKILLS, VERCEL_ENV_HELP_ONCE_KEY
+      );
+    }
+    log.debug("vercel-env-help-injected", { subcommand: vercelEnvHelp.subcommand || "" });
+  }
+
+  if (rankedSkills.length === 0 && !devServerUnavailableWarning && !vercelEnvHelpInjected) {
     const reason = matched.size === 0 ? "no_matches" : "all_deduped";
     if (log.active) {
       timing.skill_read = 0;
@@ -1076,6 +1137,11 @@ function run(): string {
   if (devServerUnavailableWarning) {
     parts.push(DEV_SERVER_UNAVAILABLE_WARNING);
     log.debug("dev-server-unavailable-warning-injected", {});
+  }
+
+  if (vercelEnvHelpInjected) {
+    parts.push(VERCEL_ENV_HELP);
+    log.debug("vercel-env-help-appended", { subcommand: vercelEnvHelp.subcommand || "" });
   }
 
   if (parts.length === 0) {
@@ -1250,5 +1316,6 @@ export {
   run, validateSkillMap,
   TSX_REVIEW_SKILL, REVIEW_MARKER, DEFAULT_REVIEW_THRESHOLD, isTsxEditTool, getTsxEditCount, resetTsxEditCount,
   DEV_SERVER_VERIFY_SKILL, DEV_SERVER_VERIFY_MARKER, DEV_SERVER_VERIFY_MAX_ITERATIONS,
+  checkVercelEnvHelp,
   DEV_SERVER_UNAVAILABLE_WARNING,
 };
