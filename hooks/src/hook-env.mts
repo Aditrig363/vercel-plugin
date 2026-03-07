@@ -6,8 +6,8 @@
  * try/catch boilerplate.
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,38 @@ export function requireEnvFile(): string {
     process.exit(0);
   }
   return envFile;
+}
+
+// ---------------------------------------------------------------------------
+// Audit log helpers
+// ---------------------------------------------------------------------------
+
+function resolveAuditLogPath(): string | null {
+  const projectRoot = process.env.CLAUDE_PROJECT_ROOT || process.cwd();
+  const configuredPath = process.env.VERCEL_PLUGIN_AUDIT_LOG_FILE;
+
+  if (configuredPath === "off") {
+    return null;
+  }
+
+  if (typeof configuredPath === "string" && configuredPath.trim() !== "") {
+    return resolve(projectRoot, configuredPath);
+  }
+
+  return join(projectRoot, ".vercel-plugin", "skill-injections.jsonl");
+}
+
+export function appendAuditLog(record: Record<string, unknown>): void {
+  const auditLogPath = resolveAuditLogPath();
+  if (auditLogPath === null) return;
+
+  try {
+    mkdirSync(dirname(auditLogPath), { recursive: true });
+    const payload = { timestamp: new Date().toISOString(), ...record };
+    appendFileSync(auditLogPath, `${JSON.stringify(payload)}\n`, "utf-8");
+  } catch {
+    // Logging is best-effort and must not break hooks.
+  }
 }
 
 // ---------------------------------------------------------------------------

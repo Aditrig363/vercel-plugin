@@ -2,7 +2,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { pluginRoot as resolvePluginRoot, safeReadJson, safeReadFile } from "./hook-env.mjs";
+import { appendAuditLog, pluginRoot as resolvePluginRoot, safeReadJson, safeReadFile } from "./hook-env.mjs";
 import { buildSkillMap, validateSkillMap } from "./skill-map-frontmatter.mjs";
 import {
   parseSeenSkills,
@@ -713,6 +713,18 @@ function run() {
     devServerVerifyTriggered: devServerVerify.triggered
   }, log.active ? timing : null);
   const result = formatOutput({ parts, matched, injectedSkills: loaded, summaryOnly, droppedByCap, droppedByBudget, toolName, toolTarget });
+  if (loaded.length > 0) {
+    appendAuditLog({
+      event: "skill-injection",
+      toolName,
+      toolTarget: toolName === "Bash" ? redactCommand(toolTarget) : toolTarget,
+      matchedSkills: [...matched],
+      injectedSkills: loaded,
+      summaryOnly,
+      droppedByCap,
+      droppedByBudget
+    });
+  }
   return result;
 }
 const REDACT_MAX = 200;
