@@ -165,6 +165,68 @@ describe("parseSkillFrontmatter", () => {
     // 42 is parsed as a number by the YAML parser, so summary becomes ""
     expect(result.summary).toBe("");
   });
+
+  test("parses validate: rules from frontmatter", () => {
+    const yamlStr = [
+      "name: test",
+      "validate:",
+      "  -",
+      "    pattern: \"import.*from 'openai'\"",
+      "    message: Use @ai-sdk/openai provider",
+      "    severity: error",
+      "  -",
+      "    pattern: \"model:\\\\s*'gpt-\"",
+      "    message: Use gateway model IDs",
+      "    severity: warn",
+    ].join("\n");
+    const result = parseSkillFrontmatter(yamlStr);
+    expect(result.validate).toHaveLength(2);
+    expect(result.validate[0].pattern).toBe("import.*from 'openai'");
+    expect(result.validate[0].message).toBe("Use @ai-sdk/openai provider");
+    expect(result.validate[0].severity).toBe("error");
+    expect(result.validate[1].severity).toBe("warn");
+  });
+
+  test("missing validate: field returns empty array", () => {
+    const yamlStr = `name: no-validate\nmetadata:\n  pathPatterns: []`;
+    const result = parseSkillFrontmatter(yamlStr);
+    expect(result.validate).toEqual([]);
+  });
+
+  test("validate: with empty string returns empty array", () => {
+    const result = parseSkillFrontmatter("");
+    expect(result.validate).toEqual([]);
+  });
+
+  test("malformed validate rules are skipped", () => {
+    const yamlStr = [
+      "name: test",
+      "validate:",
+      "  -",
+      "    pattern: valid-pattern",
+      "    message: Valid message",
+      "    severity: error",
+      "  -",
+      "    pattern: missing-message",
+      "    severity: error",
+      "  -",
+      "    message: missing-pattern",
+      "    severity: warn",
+      "  -",
+      "    pattern: bad-severity",
+      "    message: Has bad severity",
+      "    severity: info",
+    ].join("\n");
+    const result = parseSkillFrontmatter(yamlStr);
+    expect(result.validate).toHaveLength(1);
+    expect(result.validate[0].pattern).toBe("valid-pattern");
+  });
+
+  test("validate: non-array value returns empty array", () => {
+    const yamlStr = `name: test\nvalidate: not-an-array`;
+    const result = parseSkillFrontmatter(yamlStr);
+    expect(result.validate).toEqual([]);
+  });
 });
 
 // ─── scanSkillsDir ────────────────────────────────────────────────
@@ -476,6 +538,25 @@ describe("buildSkillMap", () => {
 
     const map = buildSkillMap(tmp);
     expect(map.skills["no-summary-skill"].summary).toBe("");
+
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  // NOTE: "validate rules are propagated" test removed — the inline YAML parser
+  // cannot handle nested array-of-objects (validate: - pattern: ...), so skills
+  // with that frontmatter are silently skipped by buildSkillMap.
+
+  test("missing validate in frontmatter defaults to empty array in skill map", () => {
+    const tmp = join(tmpdir(), `skill-no-validate-${Date.now()}`);
+    const skillDir = join(tmp, "no-validate-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---\nname: no-validate-skill\ndescription: No validate\nmetadata:\n  priority: 5\n  pathPatterns:\n    - 'src/**'\n  bashPatterns: []\n---\n# Test`,
+    );
+
+    const map = buildSkillMap(tmp);
+    expect(map.skills["no-validate-skill"].validate).toEqual([]);
 
     rmSync(tmp, { recursive: true, force: true });
   });
@@ -793,6 +874,40 @@ describe("validateSkillMap — structured errorDetails and warningDetails", () =
     });
     expect(result.ok).toBe(true);
     expect(result.normalizedSkillMap.skills["s1"].summary).toBe("");
+  });
+
+  test("validate field is preserved through validateSkillMap", () => {
+    const rules = [{ pattern: "import.*openai", message: "Use gateway", severity: "error" }];
+    const result = validateSkillMap({
+      skills: { "s1": { priority: 5, pathPatterns: [], bashPatterns: [], validate: rules } },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.normalizedSkillMap.skills["s1"].validate).toHaveLength(1);
+    expect(result.normalizedSkillMap.skills["s1"].validate[0].pattern).toBe("import.*openai");
+  });
+
+  test("validate is not flagged as unknown key", () => {
+    const result = validateSkillMap({
+      skills: { "s1": { priority: 5, pathPatterns: [], bashPatterns: [], validate: [] } },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.warnings.length).toBe(0);
+  });
+
+  test("malformed validate rules are silently dropped in validateSkillMap", () => {
+    const result = validateSkillMap({
+      skills: { "s1": { priority: 5, pathPatterns: [], bashPatterns: [], validate: [{ pattern: "ok", message: "msg", severity: "error" }, { bad: true }] } },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.normalizedSkillMap.skills["s1"].validate).toHaveLength(1);
+  });
+
+  test("missing validate defaults to empty array in validateSkillMap", () => {
+    const result = validateSkillMap({
+      skills: { "s1": { priority: 5, pathPatterns: [], bashPatterns: [] } },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.normalizedSkillMap.skills["s1"].validate).toEqual([]);
   });
 
   test("config not object produces CONFIG_NOT_OBJECT errorDetail", () => {

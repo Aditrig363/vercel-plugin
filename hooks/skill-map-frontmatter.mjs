@@ -250,16 +250,35 @@ function parseSimpleYaml(yamlStr) {
   }
   return parsed.value;
 }
+function parseValidateRules(raw) {
+  if (!Array.isArray(raw)) return [];
+  const rules = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== "object" || Array.isArray(item)) continue;
+    const obj = item;
+    if (typeof obj.pattern !== "string" || obj.pattern === "") continue;
+    if (typeof obj.message !== "string" || obj.message === "") continue;
+    const severity = obj.severity;
+    if (severity !== "error" && severity !== "warn") continue;
+    rules.push({
+      pattern: obj.pattern,
+      message: obj.message,
+      severity
+    });
+  }
+  return rules;
+}
 function parseSkillFrontmatter(yamlStr) {
   if (!yamlStr || !yamlStr.trim()) {
-    return { name: "", description: "", summary: "", metadata: {} };
+    return { name: "", description: "", summary: "", metadata: {}, validate: [] };
   }
   const doc = parseSimpleYaml(yamlStr);
   return {
     name: typeof doc.name === "string" ? doc.name : "",
     description: typeof doc.description === "string" ? doc.description : "",
     summary: typeof doc.summary === "string" ? doc.summary : "",
-    metadata: doc.metadata != null && typeof doc.metadata === "object" && !Array.isArray(doc.metadata) ? doc.metadata : {}
+    metadata: doc.metadata != null && typeof doc.metadata === "object" && !Array.isArray(doc.metadata) ? doc.metadata : {},
+    validate: parseValidateRules(doc.validate)
   };
 }
 function scanSkillsDir(rootDir) {
@@ -299,7 +318,8 @@ function scanSkillsDir(rootDir) {
       name: parsed.name || entry,
       description: parsed.description,
       summary: parsed.summary,
-      metadata: parsed.metadata
+      metadata: parsed.metadata,
+      validate: parsed.validate
     });
   }
   return { skills, diagnostics };
@@ -441,7 +461,8 @@ function buildSkillMap(rootDir) {
       summary: skill.summary || "",
       pathPatterns: filteredPathPatterns,
       bashPatterns: filteredBashPatterns,
-      importPatterns: filteredImportPatterns
+      importPatterns: filteredImportPatterns,
+      validate: skill.validate
     };
   }
   return {
@@ -456,7 +477,8 @@ const KNOWN_KEYS = /* @__PURE__ */ new Set([
   "summary",
   "pathPatterns",
   "bashPatterns",
-  "importPatterns"
+  "importPatterns",
+  "validate"
 ]);
 function validateSkillMap(raw) {
   const errors = [];
@@ -590,12 +612,14 @@ function validateSkillMap(raw) {
       addWarning
     });
     const summary = typeof cfg.summary === "string" ? cfg.summary : "";
+    const validate = parseValidateRules(cfg.validate);
     normalizedSkills[skill] = {
       priority,
       summary,
       pathPatterns,
       bashPatterns,
-      importPatterns
+      importPatterns,
+      validate
     };
   }
   if (errors.length > 0) {

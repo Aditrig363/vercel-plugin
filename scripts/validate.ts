@@ -1026,6 +1026,9 @@ async function validateProfilerSkillSlugs() {
 
   const profilerSrc = await readFile(profilerPath, "utf-8");
 
+  // Bootstrap hint slugs that are NOT actual skill slugs (used for setup signals only)
+  const BOOTSTRAP_HINT_ONLY = new Set(["greenfield", "env-example", "readme", "drizzle-config", "postgres", "prisma-schema", "auth-secret"]);
+
   // Extract all skill slug strings referenced in FILE_MARKERS and PACKAGE_MARKERS
   // Match patterns like: skills: ["nextjs", "turbopack"] and ["ai-sdk"]
   const slugRefs = new Set<string>();
@@ -1060,6 +1063,9 @@ async function validateProfilerSkillSlugs() {
   const built = buildSkillMap(skillsDir);
   const validSlugs = new Set(Object.keys(built.skills));
   const invalid: string[] = [];
+
+  // Remove bootstrap-only hints before validation
+  for (const hint of BOOTSTRAP_HINT_ONLY) slugRefs.delete(hint);
 
   for (const slug of [...slugRefs].sort()) {
     if (validSlugs.has(slug)) {

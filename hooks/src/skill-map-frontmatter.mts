@@ -16,11 +16,18 @@ export interface FrontmatterResult {
   body: string;
 }
 
+export interface ValidationRule {
+  pattern: string;
+  message: string;
+  severity: "error" | "warn";
+}
+
 export interface SkillFrontmatter {
   name: string;
   description: string;
   summary: string;
   metadata: Record<string, unknown>;
+  validate: ValidationRule[];
 }
 
 export interface ScannedSkill {
@@ -29,6 +36,7 @@ export interface ScannedSkill {
   description: string;
   summary: string;
   metadata: Record<string, unknown>;
+  validate: ValidationRule[];
 }
 
 export interface Diagnostic {
@@ -48,6 +56,7 @@ export interface SkillConfig {
   pathPatterns: string[];
   bashPatterns: string[];
   importPatterns: string[];
+  validate: ValidationRule[];
 }
 
 export interface WarningDetail {
@@ -431,9 +440,32 @@ function parseSimpleYaml(yamlStr: string): YamlObject {
 /**
  * Parse a YAML frontmatter string into a structured skill object.
  */
+/**
+ * Parse a raw validate: YAML value into an array of ValidationRule objects.
+ * Malformed entries are silently skipped.
+ */
+function parseValidateRules(raw: unknown): ValidationRule[] {
+  if (!Array.isArray(raw)) return [];
+  const rules: ValidationRule[] = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== "object" || Array.isArray(item)) continue;
+    const obj = item as Record<string, unknown>;
+    if (typeof obj.pattern !== "string" || obj.pattern === "") continue;
+    if (typeof obj.message !== "string" || obj.message === "") continue;
+    const severity = obj.severity;
+    if (severity !== "error" && severity !== "warn") continue;
+    rules.push({
+      pattern: obj.pattern,
+      message: obj.message,
+      severity,
+    });
+  }
+  return rules;
+}
+
 export function parseSkillFrontmatter(yamlStr: string): SkillFrontmatter {
   if (!yamlStr || !yamlStr.trim()) {
-    return { name: "", description: "", summary: "", metadata: {} };
+    return { name: "", description: "", summary: "", metadata: {}, validate: [] };
   }
   const doc = parseSimpleYaml(yamlStr);
   return {
@@ -446,6 +478,7 @@ export function parseSkillFrontmatter(yamlStr: string): SkillFrontmatter {
       !Array.isArray(doc.metadata)
         ? (doc.metadata as Record<string, unknown>)
         : {},
+    validate: parseValidateRules(doc.validate),
   };
 }
 
@@ -502,6 +535,7 @@ export function scanSkillsDir(rootDir: string): ScanResult {
       description: parsed.description,
       summary: parsed.summary,
       metadata: parsed.metadata,
+      validate: parsed.validate,
     });
   }
 
@@ -709,6 +743,7 @@ export function buildSkillMap(rootDir: string): SkillMapResult {
       pathPatterns: filteredPathPatterns,
       bashPatterns: filteredBashPatterns,
       importPatterns: filteredImportPatterns,
+      validate: skill.validate,
     };
   }
 
@@ -730,6 +765,7 @@ const KNOWN_KEYS = new Set([
   "pathPatterns",
   "bashPatterns",
   "importPatterns",
+  "validate",
 ]);
 
 /**
@@ -894,12 +930,16 @@ export function validateSkillMap(raw: unknown): ValidationResult {
     // Normalize summary (optional string, default "")
     const summary = typeof cfg.summary === "string" ? cfg.summary : "";
 
+    // Normalize validate (optional array of ValidationRule, default [])
+    const validate = parseValidateRules(cfg.validate);
+
     normalizedSkills[skill] = {
       priority,
       summary,
       pathPatterns,
       bashPatterns,
       importPatterns,
+      validate,
     };
   }
 
