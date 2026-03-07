@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 function pluginRoot(metaUrl) {
@@ -22,7 +23,8 @@ function resolveAuditLogPath(hookInputCwd) {
   if (typeof configuredPath === "string" && configuredPath.trim() !== "") {
     return resolve(projectRoot, configuredPath);
   }
-  return join(projectRoot, ".vercel-plugin", "skill-injections.jsonl");
+  const projectSlug = projectRoot.replaceAll("/", "-");
+  return join(homedir(), ".claude", "projects", projectSlug, "vercel-plugin", "skill-injections.jsonl");
 }
 function appendAuditLog(record, hookInputCwd) {
   const auditLogPath = resolveAuditLogPath(hookInputCwd);

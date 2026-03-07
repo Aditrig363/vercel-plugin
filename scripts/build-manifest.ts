@@ -110,6 +110,8 @@ function buildManifest(skillsDir: string): { manifest: Manifest; warnings: strin
       pathRegexSources,
       bashRegexSources,
       importRegexSources,
+      ...(config.validate?.length ? { validate: config.validate } : {}),
+      ...(config.promptSignals ? { promptSignals: config.promptSignals } : {}),
     };
   }
 

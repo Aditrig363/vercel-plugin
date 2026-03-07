@@ -324,6 +324,29 @@ function scanSkillsDir(rootDir) {
   }
   return { skills, diagnostics };
 }
+function parsePromptSignals(raw) {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+    return void 0;
+  }
+  const obj = raw;
+  const toStringArray = (v) => {
+    if (!Array.isArray(v)) return [];
+    return v.filter((x) => typeof x === "string" && x !== "");
+  };
+  const toStringArrayArray = (v) => {
+    if (!Array.isArray(v)) return [];
+    return v.filter((g) => Array.isArray(g)).map((g) => g.filter((x) => typeof x === "string" && x !== "")).filter((g) => g.length > 0);
+  };
+  const phrases = toStringArray(obj.phrases);
+  const allOf = toStringArrayArray(obj.allOf);
+  const anyOf = toStringArray(obj.anyOf);
+  const noneOf = toStringArray(obj.noneOf);
+  const minScore = typeof obj.minScore === "number" && !Number.isNaN(obj.minScore) ? obj.minScore : 6;
+  if (phrases.length === 0 && allOf.length === 0 && anyOf.length === 0 && noneOf.length === 0) {
+    return void 0;
+  }
+  return { phrases, allOf, anyOf, noneOf, minScore };
+}
 function normalizePatternField(opts) {
   const { raw, skill, field, fieldTypeHint, coerceStrings, addWarning } = opts;
   let arr;
@@ -456,7 +479,8 @@ function buildSkillMap(rootDir) {
       coerceStrings: true,
       addWarning
     });
-    skills[skill.dir] = {
+    const promptSignals = parsePromptSignals(meta.promptSignals);
+    const entry = {
       priority: meta.priority ?? 5,
       summary: skill.summary || "",
       pathPatterns: filteredPathPatterns,
@@ -464,6 +488,10 @@ function buildSkillMap(rootDir) {
       importPatterns: filteredImportPatterns,
       validate: skill.validate
     };
+    if (promptSignals) {
+      entry.promptSignals = promptSignals;
+    }
+    skills[skill.dir] = entry;
   }
   return {
     skills,
@@ -478,7 +506,8 @@ const KNOWN_KEYS = /* @__PURE__ */ new Set([
   "pathPatterns",
   "bashPatterns",
   "importPatterns",
-  "validate"
+  "validate",
+  "promptSignals"
 ]);
 function validateSkillMap(raw) {
   const errors = [];
@@ -613,7 +642,8 @@ function validateSkillMap(raw) {
     });
     const summary = typeof cfg.summary === "string" ? cfg.summary : "";
     const validate = parseValidateRules(cfg.validate);
-    normalizedSkills[skill] = {
+    const promptSignals = parsePromptSignals(cfg.promptSignals);
+    const normalizedEntry = {
       priority,
       summary,
       pathPatterns,
@@ -621,6 +651,10 @@ function validateSkillMap(raw) {
       importPatterns,
       validate
     };
+    if (promptSignals) {
+      normalizedEntry.promptSignals = promptSignals;
+    }
+    normalizedSkills[skill] = normalizedEntry;
   }
   if (errors.length > 0) {
     return { ok: false, errors, errorDetails };

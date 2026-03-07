@@ -17,6 +17,19 @@ metadata:
     - '\bpnpm\s+(install|i|add)\s+[^\n]*@edge-runtime/'
     - '\bbun\s+(install|i|add)\s+[^\n]*@edge-runtime/'
     - '\byarn\s+add\s+[^\n]*@edge-runtime/'
+validate:
+  -
+    pattern: from\s+['"](node:)?fs['"]
+    message: 'fs module is not available in Edge Runtime — use fetch or KV storage instead'
+    severity: error
+  -
+    pattern: from\s+['"](node:)?child_process['"]
+    message: 'child_process is not available in Edge Runtime'
+    severity: error
+  -
+    pattern: from\s+['"](node:)?(net|dns)['"]
+    message: 'Node.js net/dns modules are not available in Edge Runtime'
+    severity: error
 ---
 
 # Edge Runtime — Vercel's Edge JavaScript Runtime

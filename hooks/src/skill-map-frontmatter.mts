@@ -50,6 +50,14 @@ export interface ScanResult {
   diagnostics: Diagnostic[];
 }
 
+export interface PromptSignals {
+  phrases: string[];
+  allOf: string[][];
+  anyOf: string[];
+  noneOf: string[];
+  minScore: number;
+}
+
 export interface SkillConfig {
   priority: number;
   summary: string;
@@ -57,6 +65,7 @@ export interface SkillConfig {
   bashPatterns: string[];
   importPatterns: string[];
   validate: ValidationRule[];
+  promptSignals?: PromptSignals;
 }
 
 export interface WarningDetail {
@@ -562,6 +571,46 @@ interface NormalizePatternFieldOpts {
  * Handles: string→array coercion (opt-in), non-array fallback, and filtering
  * of non-string / empty entries — all with structured warnings.
  */
+/**
+ * Parse a raw promptSignals value from frontmatter metadata into a typed
+ * PromptSignals object. Returns undefined if the value is missing/invalid.
+ */
+function parsePromptSignals(raw: unknown): PromptSignals | undefined {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const toStringArray = (v: unknown): string[] => {
+    if (!Array.isArray(v)) return [];
+    return v.filter((x): x is string => typeof x === "string" && x !== "");
+  };
+
+  const toStringArrayArray = (v: unknown): string[][] => {
+    if (!Array.isArray(v)) return [];
+    return v
+      .filter((g): g is unknown[] => Array.isArray(g))
+      .map((g) => g.filter((x): x is string => typeof x === "string" && x !== ""))
+      .filter((g) => g.length > 0);
+  };
+
+  const phrases = toStringArray(obj.phrases);
+  const allOf = toStringArrayArray(obj.allOf);
+  const anyOf = toStringArray(obj.anyOf);
+  const noneOf = toStringArray(obj.noneOf);
+  const minScore =
+    typeof obj.minScore === "number" && !Number.isNaN(obj.minScore)
+      ? obj.minScore
+      : 6;
+
+  // Only return if there's at least one signal defined
+  if (phrases.length === 0 && allOf.length === 0 && anyOf.length === 0 && noneOf.length === 0) {
+    return undefined;
+  }
+
+  return { phrases, allOf, anyOf, noneOf, minScore };
+}
+
 function normalizePatternField(opts: NormalizePatternFieldOpts): string[] {
   const { raw, skill, field, fieldTypeHint, coerceStrings, addWarning } = opts;
 
@@ -735,9 +784,12 @@ export function buildSkillMap(rootDir: string): SkillMapResult {
       addWarning,
     });
 
+    // Parse optional promptSignals from metadata
+    const promptSignals = parsePromptSignals(meta.promptSignals);
+
     // Key by directory name -- the canonical identity of a skill.
     // Frontmatter `name` may differ; directory name is authoritative.
-    skills[skill.dir] = {
+    const entry: SkillConfig = {
       priority: (meta.priority as number) ?? 5,
       summary: skill.summary || "",
       pathPatterns: filteredPathPatterns,
@@ -745,6 +797,10 @@ export function buildSkillMap(rootDir: string): SkillMapResult {
       importPatterns: filteredImportPatterns,
       validate: skill.validate,
     };
+    if (promptSignals) {
+      entry.promptSignals = promptSignals;
+    }
+    skills[skill.dir] = entry;
   }
 
   return {
@@ -766,6 +822,7 @@ const KNOWN_KEYS = new Set([
   "bashPatterns",
   "importPatterns",
   "validate",
+  "promptSignals",
 ]);
 
 /**
@@ -933,7 +990,10 @@ export function validateSkillMap(raw: unknown): ValidationResult {
     // Normalize validate (optional array of ValidationRule, default [])
     const validate = parseValidateRules(cfg.validate);
 
-    normalizedSkills[skill] = {
+    // Normalize promptSignals (optional, preserved if valid)
+    const promptSignals = parsePromptSignals(cfg.promptSignals);
+
+    const normalizedEntry: SkillConfig = {
       priority,
       summary,
       pathPatterns,
@@ -941,6 +1001,10 @@ export function validateSkillMap(raw: unknown): ValidationResult {
       importPatterns,
       validate,
     };
+    if (promptSignals) {
+      normalizedEntry.promptSignals = promptSignals;
+    }
+    normalizedSkills[skill] = normalizedEntry;
   }
 
   if (errors.length > 0) {

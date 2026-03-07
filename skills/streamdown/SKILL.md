@@ -15,6 +15,23 @@ metadata:
     - '\bpnpm\s+(install|i|add)\s+[^\n]*\bstreamdown\b'
     - '\bbun\s+(install|i|add)\s+[^\n]*\bstreamdown\b'
     - '\byarn\s+add\s+[^\n]*\bstreamdown\b'
+  promptSignals:
+    phrases:
+      - "streaming markdown"
+      - "streamdown"
+      - "markdown formatting"
+    allOf:
+      - [markdown, stream]
+      - [markdown, render]
+    anyOf:
+      - "terminal"
+      - "chat ui"
+      - "react-markdown"
+    noneOf:
+      - "readme"
+      - "markdown file"
+      - "changelog"
+    minScore: 6
 ---
 
 # Streamdown — Streaming Markdown for AI

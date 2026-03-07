@@ -18,6 +18,15 @@ metadata:
   bashPatterns:
     - '\bvercel\s+dev\b'
     - '\bvercel\s+logs\b'
+validate:
+  -
+    pattern: export\s+default\s+function
+    message: 'Use named exports (GET, POST, PUT, DELETE) instead of default export for route handlers'
+    severity: error
+  -
+    pattern: NextApiRequest|NextApiResponse
+    message: 'NextApiRequest/NextApiResponse are Pages Router types — use Web API Request/Response'
+    severity: error
 ---
 
 # Vercel Functions

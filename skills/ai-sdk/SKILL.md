@@ -42,6 +42,36 @@ metadata:
     - '\bnpx\s+@ai-sdk/devtools\b'
     - '\bnpx\s+@ai-sdk/codemod\b'
     - '\bnpx\s+mcp-to-ai-sdk\b'
+  promptSignals:
+    phrases:
+      - "ai sdk"
+      - "vercel ai"
+      - "generatetext"
+      - "streamtext"
+    allOf:
+      - [streaming, generation]
+      - [structured, output]
+    anyOf:
+      - "usechat"
+      - "usecompletion"
+      - "tool calling"
+      - "embeddings"
+    noneOf:
+      - "openai api directly"
+    minScore: 6
+validate:
+  -
+    pattern: from\s+['"]openai['"]
+    message: 'Direct openai import detected — use @ai-sdk/openai provider instead'
+    severity: error
+  -
+    pattern: from\s+['"](@anthropic-ai/sdk|anthropic)['"]
+    message: 'Direct Anthropic SDK import — use @ai-sdk/anthropic provider instead'
+    severity: error
+  -
+    pattern: ToolLoopAgent
+    message: 'ToolLoopAgent is deprecated — use the AI SDK Agent pattern instead'
+    severity: error
 ---
 
 # Vercel AI SDK (v6)

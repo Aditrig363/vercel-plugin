@@ -12,6 +12,19 @@ metadata:
     - '\bpnpm\s+(install|i|add)\s+[^\n]*@ai-sdk/gateway\b'
     - '\bbun\s+(install|i|add)\s+[^\n]*@ai-sdk/gateway\b'
     - '\byarn\s+add\s+[^\n]*@ai-sdk/gateway\b'
+validate:
+  -
+    pattern: \d+-\d+[)'"]
+    message: 'Model slug uses hyphens — use dots not hyphens for version numbers (e.g., claude-sonnet-4.6)'
+    severity: error
+  -
+    pattern: AI_GATEWAY_API_KEY
+    message: 'AI_GATEWAY_API_KEY is not needed — use OIDC-based auth via Vercel environment'
+    severity: error
+  -
+    pattern: (OPENAI_API_KEY|ANTHROPIC_API_KEY)
+    message: 'Provider API keys bypass the gateway — use OIDC auth via vercel env pull'
+    severity: error
 ---
 
 # Vercel AI Gateway

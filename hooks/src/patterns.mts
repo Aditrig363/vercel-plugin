@@ -10,12 +10,19 @@ import { basename } from "node:path";
 // Types
 // ---------------------------------------------------------------------------
 
+export interface ValidationRule {
+  pattern: string;
+  message: string;
+  severity: "error" | "warn";
+}
+
 export interface SkillEntry {
   priority: number;
   summary?: string;
   pathPatterns: string[];
   bashPatterns: string[];
   importPatterns: string[];
+  validate?: ValidationRule[];
 }
 
 /**

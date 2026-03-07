@@ -20,6 +20,21 @@ metadata:
     - '\bpnpm\s+(install|i|add)\s+[^\n]*\bswr\b'
     - '\bbun\s+(install|i|add)\s+[^\n]*\bswr\b'
     - '\byarn\s+add\s+[^\n]*\bswr\b'
+  promptSignals:
+    phrases:
+      - "swr"
+      - "useswr"
+      - "stale-while-revalidate"
+    allOf:
+      - [data fetching, client]
+      - [cache, revalidat]
+    anyOf:
+      - "mutation"
+      - "optimistic"
+      - "infinite loading"
+      - "pagination"
+    noneOf: []
+    minScore: 6
 ---
 
 # SWR — React Hooks for Data Fetching

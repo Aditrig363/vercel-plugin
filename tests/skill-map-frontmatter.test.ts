@@ -960,3 +960,104 @@ describe("validateSkillMap — malformed array entries", () => {
     expect(result.warnings.some((w: string) => w.includes("bashPatterns[0]") && w.includes("empty"))).toBe(true);
   });
 });
+
+// ─── promptSignals — skill-map validation ─────────────────────────
+
+describe("validateSkillMap — promptSignals", () => {
+  test("promptSignals is not flagged as unknown key", () => {
+    const result = validateSkillMap({
+      skills: {
+        "s1": {
+          priority: 5,
+          pathPatterns: [],
+          bashPatterns: [],
+          promptSignals: {
+            phrases: ["streaming markdown"],
+            allOf: [["markdown", "stream"]],
+            anyOf: ["terminal"],
+            noneOf: ["readme"],
+            minScore: 6,
+          },
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.warnings.length).toBe(0);
+    expect(result.warningDetails.length).toBe(0);
+  });
+
+  test("promptSignals is preserved through validation normalization", () => {
+    const signals = {
+      phrases: ["streamdown", "streaming markdown"],
+      allOf: [["markdown", "render"]],
+      anyOf: ["chat ui", "react-markdown"],
+      noneOf: ["readme", "markdown file"],
+      minScore: 6,
+    };
+    const result = validateSkillMap({
+      skills: {
+        "s1": {
+          priority: 5,
+          pathPatterns: [],
+          bashPatterns: [],
+          promptSignals: signals,
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.normalizedSkillMap.skills["s1"].promptSignals).toBeDefined();
+    expect(result.normalizedSkillMap.skills["s1"].promptSignals!.phrases).toEqual(["streamdown", "streaming markdown"]);
+    expect(result.normalizedSkillMap.skills["s1"].promptSignals!.noneOf).toEqual(["readme", "markdown file"]);
+  });
+
+  test("missing promptSignals is omitted (not defaulted) in normalized output", () => {
+    const result = validateSkillMap({
+      skills: {
+        "s1": { priority: 5, pathPatterns: [], bashPatterns: [] },
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.normalizedSkillMap.skills["s1"].promptSignals).toBeUndefined();
+  });
+
+  test("real skills directory produces no warnings (promptSignals included)", () => {
+    const map = buildSkillMap(SKILLS_DIR);
+    const result = validateSkillMap(map);
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toEqual([]);
+    // Verify at least one skill has promptSignals
+    const withSignals = Object.entries(result.normalizedSkillMap.skills)
+      .filter(([, cfg]: [string, any]) => cfg.promptSignals);
+    expect(withSignals.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── buildSkillMap — promptSignals from SKILL.md frontmatter ──────
+
+describe("buildSkillMap — promptSignals", () => {
+  test("streamdown skill has promptSignals with phrases and noneOf", () => {
+    const map = buildSkillMap(SKILLS_DIR);
+    const streamdown = map.skills["streamdown"];
+    expect(streamdown).toBeDefined();
+    expect(streamdown.promptSignals).toBeDefined();
+    expect(streamdown.promptSignals.phrases.length).toBeGreaterThan(0);
+    expect(streamdown.promptSignals.noneOf).toContain("readme");
+  });
+
+  test("skill without promptSignals omits the field", () => {
+    const tmp = join(tmpdir(), `skill-no-signals-${Date.now()}`);
+    const skillDir = join(tmp, "plain-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---\nname: plain-skill\ndescription: No signals\nmetadata:\n  priority: 5\n  pathPatterns:\n    - 'src/**'\n  bashPatterns: []\n---\n# Test`,
+    );
+
+    const map = buildSkillMap(tmp);
+    expect(map.skills["plain-skill"]).toBeDefined();
+    expect(map.skills["plain-skill"].promptSignals).toBeUndefined();
+    expect(map.warnings).toEqual([]);
+
+    rmSync(tmp, { recursive: true, force: true });
+  });
+});

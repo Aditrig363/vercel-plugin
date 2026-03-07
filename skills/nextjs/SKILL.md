@@ -26,6 +26,39 @@ metadata:
     - '\bnpm\s+run\s+(dev|build|start)\b'
     - '\bpnpm\s+(dev|build)\b'
     - '\bbun\s+run\s+(dev|build)\b'
+  promptSignals:
+    phrases:
+      - "next.js"
+      - "nextjs"
+      - "app router"
+      - "server component"
+      - "server action"
+    allOf:
+      - [middleware, next]
+      - [layout, route]
+    anyOf:
+      - "pages router"
+      - "getserversideprops"
+      - "use server"
+    noneOf: []
+    minScore: 6
+validate:
+  -
+    pattern: export.*getServerSideProps
+    message: 'getServerSideProps is removed in App Router — use server components or route handlers'
+    severity: error
+  -
+    pattern: getServerSideProps
+    message: 'getServerSideProps is a Pages Router pattern — migrate to App Router server components'
+    severity: warn
+  -
+    pattern: from\s+['"]next/router['"]
+    message: 'next/router is Pages Router only — use next/navigation for App Router'
+    severity: error
+  -
+    pattern: (useState|useEffect)
+    message: 'React hooks require "use client" directive — add it at the top of client components'
+    severity: warn
 ---
 
 # Next.js (v16+) — App Router

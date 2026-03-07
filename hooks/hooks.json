@@ -31,6 +31,18 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit-skill-inject.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Bash",
@@ -38,6 +50,16 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse-shadcn-font-fix.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse-validate.mjs\"",
             "timeout": 5
           }
         ]

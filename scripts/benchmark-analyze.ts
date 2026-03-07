@@ -10,6 +10,7 @@
  */
 
 import { readdir, readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
@@ -414,11 +415,12 @@ interface AuditLogParseResult {
 }
 
 /**
- * Also parse the .vercel-plugin/skill-injections.jsonl audit log
- * in the project directory for skill injection data.
+ * Parse the skill-injections.jsonl audit log for skill injection data.
+ * The audit log lives under ~/.claude/projects/<project-slug>/vercel-plugin/.
  */
 async function parseAuditLog(projectDir: string): Promise<AuditLogParseResult> {
-  const auditPath = join(projectDir, ".vercel-plugin", "skill-injections.jsonl");
+  const projectSlug = resolve(projectDir).replaceAll("/", "-");
+  const auditPath = join(homedir(), ".claude", "projects", projectSlug, "vercel-plugin", "skill-injections.jsonl");
   const found = await fileExists(auditPath);
   if (!found) return { found: false, injections: [] };
 

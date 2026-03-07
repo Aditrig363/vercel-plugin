@@ -7,6 +7,7 @@
  */
 
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,7 +63,8 @@ function resolveAuditLogPath(hookInputCwd?: string | null): string | null {
     return resolve(projectRoot, configuredPath);
   }
 
-  return join(projectRoot, ".vercel-plugin", "skill-injections.jsonl");
+  const projectSlug = projectRoot.replaceAll("/", "-");
+  return join(homedir(), ".claude", "projects", projectSlug, "vercel-plugin", "skill-injections.jsonl");
 }
 
 export function appendAuditLog(record: Record<string, unknown>, hookInputCwd?: string | null): void {
