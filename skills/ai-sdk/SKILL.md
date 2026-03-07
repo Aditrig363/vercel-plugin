@@ -4,32 +4,32 @@ description: Vercel AI SDK expert guidance. Use when building AI-powered feature
 metadata:
   priority: 8
   pathPatterns:
-    - 'app/api/chat/**'
-    - 'app/api/completion/**'
-    - 'src/app/api/chat/**'
-    - 'src/app/api/completion/**'
-    - 'pages/api/chat.*'
-    - 'pages/api/chat/**'
-    - 'pages/api/completion.*'
-    - 'pages/api/completion/**'
-    - 'src/pages/api/chat.*'
-    - 'src/pages/api/chat/**'
-    - 'src/pages/api/completion.*'
-    - 'src/pages/api/completion/**'
-    - 'lib/ai/**'
-    - 'src/lib/ai/**'
-    - 'lib/ai.*'
-    - 'src/lib/ai.*'
-    - 'ai/**'
-    - 'apps/*/app/api/chat/**'
-    - 'apps/*/app/api/completion/**'
-    - 'apps/*/src/app/api/chat/**'
-    - 'apps/*/src/app/api/completion/**'
-    - 'apps/*/lib/ai/**'
-    - 'apps/*/src/lib/ai/**'
+    - "app/api/chat/**"
+    - "app/api/completion/**"
+    - "src/app/api/chat/**"
+    - "src/app/api/completion/**"
+    - "pages/api/chat.*"
+    - "pages/api/chat/**"
+    - "pages/api/completion.*"
+    - "pages/api/completion/**"
+    - "src/pages/api/chat.*"
+    - "src/pages/api/chat/**"
+    - "src/pages/api/completion.*"
+    - "src/pages/api/completion/**"
+    - "lib/ai/**"
+    - "src/lib/ai/**"
+    - "lib/ai.*"
+    - "src/lib/ai.*"
+    - "ai/**"
+    - "apps/*/app/api/chat/**"
+    - "apps/*/app/api/completion/**"
+    - "apps/*/src/app/api/chat/**"
+    - "apps/*/src/app/api/completion/**"
+    - "apps/*/lib/ai/**"
+    - "apps/*/src/lib/ai/**"
   importPatterns:
-    - 'ai'
-    - '@ai-sdk/*'
+    - "ai"
+    - "@ai-sdk/*"
   bashPatterns:
     - '\bnpm\s+(install|i|add)\s+[^\n]*\bai\b'
     - '\bpnpm\s+(install|i|add)\s+[^\n]*\bai\b'
@@ -80,9 +80,9 @@ This gives you AI Gateway access with OIDC authentication, cost tracking, failov
 In AI SDK 6, use `gateway('provider/model')` to route through the Vercel AI Gateway:
 
 ```ts
-import { gateway } from 'ai'
+import { gateway } from "ai";
 
-const model = gateway('openai/gpt-5.2')
+const model = gateway("openai/gpt-5.2");
 // or: gateway('anthropic/claude-sonnet-4.6')
 // or: gateway('google/gemini-3-flash')
 ```
@@ -94,47 +94,51 @@ This automatically provides failover, cost tracking, and observability on Vercel
 ## Core Functions
 
 ### Text Generation
+
 ```ts
-import { generateText, streamText, gateway } from 'ai'
+import { generateText, streamText, gateway } from "ai";
 
 // Non-streaming
 const { text } = await generateText({
-  model: gateway('openai/gpt-5.2'),
-  prompt: 'Explain quantum computing in simple terms.',
-})
+  model: gateway("openai/gpt-5.2"),
+  prompt: "Explain quantum computing in simple terms.",
+});
 
 // Streaming
 const result = streamText({
-  model: gateway('openai/gpt-5.2'),
-  prompt: 'Write a poem about coding.',
-})
+  model: gateway("openai/gpt-5.2"),
+  prompt: "Write a poem about coding.",
+});
 
 for await (const chunk of result.textStream) {
-  process.stdout.write(chunk)
+  process.stdout.write(chunk);
 }
 ```
 
 ### Structured Output
+
 ```ts
-import { generateText, Output, gateway } from 'ai'
-import { z } from 'zod'
+import { generateText, Output, gateway } from "ai";
+import { z } from "zod";
 
 const { output } = await generateText({
-  model: gateway('openai/gpt-5.2'),
+  model: gateway("openai/gpt-5.2"),
   output: Output.object({
     schema: z.object({
       recipe: z.object({
         name: z.string(),
-        ingredients: z.array(z.object({
-          name: z.string(),
-          amount: z.string(),
-        })),
+        ingredients: z.array(
+          z.object({
+            name: z.string(),
+            amount: z.string(),
+          }),
+        ),
         steps: z.array(z.string()),
       }),
     }),
   }),
-  prompt: 'Generate a recipe for chocolate chip cookies.',
-})
+  prompt: "Generate a recipe for chocolate chip cookies.",
+});
 ```
 
 ### Tool Calling (MCP-Aligned)
@@ -142,29 +146,29 @@ const { output } = await generateText({
 In AI SDK 6, tools use `inputSchema` (not `parameters`) and `output`/`outputSchema` (not `result`), aligned with the MCP specification.
 
 ```ts
-import { generateText, tool, gateway } from 'ai'
-import { z } from 'zod'
+import { generateText, tool, gateway } from "ai";
+import { z } from "zod";
 
 const result = await generateText({
-  model: gateway('openai/gpt-5.2'),
+  model: gateway("openai/gpt-5.2"),
   tools: {
     weather: tool({
-      description: 'Get the weather for a location',
+      description: "Get the weather for a location",
       inputSchema: z.object({
-        city: z.string().describe('The city name'),
+        city: z.string().describe("The city name"),
       }),
       outputSchema: z.object({
         temperature: z.number(),
         condition: z.string(),
       }),
       execute: async ({ city }) => {
-        const data = await fetchWeather(city)
-        return { temperature: data.temp, condition: data.condition }
+        const data = await fetchWeather(city);
+        return { temperature: data.temp, condition: data.condition };
       },
     }),
   },
-  prompt: 'What is the weather in San Francisco?',
-})
+  prompt: "What is the weather in San Francisco?",
+});
 ```
 
 ### Dynamic Tools (MCP Integration)
@@ -172,17 +176,17 @@ const result = await generateText({
 For tools with schemas not known at compile time (e.g., MCP server tools):
 
 ```ts
-import { dynamicTool } from 'ai'
+import { dynamicTool } from "ai";
 
 const tools = {
   unknownTool: dynamicTool({
-    description: 'A tool discovered at runtime',
+    description: "A tool discovered at runtime",
     execute: async (input) => {
       // Handle dynamically
-      return { result: 'done' }
+      return { result: "done" };
     },
   }),
-}
+};
 ```
 
 ### Agents
@@ -190,22 +194,23 @@ const tools = {
 The Agent class wraps `generateText`/`streamText` with agentic loop control:
 
 ```ts
-import { Agent, gateway } from 'ai'
+import { Agent, gateway } from "ai";
 
 const agent = new Agent({
-  model: gateway('anthropic/claude-sonnet-4.6'),
+  model: gateway("anthropic/claude-sonnet-4.6"),
   tools: { weather, search, calculator },
-  system: 'You are a helpful assistant.',
+  system: "You are a helpful assistant.",
   stopWhen: (context) => context.toolCalls.length === 0, // Stop when no tools called
   prepareStep: (context) => ({
     // Customize each step
-    toolChoice: context.steps.length > 5 ? 'none' : 'auto',
+    toolChoice: context.steps.length > 5 ? "none" : "auto",
   }),
-})
+});
 
 const { text } = await agent.generateText({
-  prompt: 'Research the weather in Tokyo and calculate the average temperature this week.',
-})
+  prompt:
+    "Research the weather in Tokyo and calculate the average temperature this week.",
+});
 ```
 
 ### MCP Client
@@ -213,25 +218,25 @@ const { text } = await agent.generateText({
 Connect to any MCP server and use its tools:
 
 ```ts
-import { gateway } from 'ai'
-import { createMCPClient } from '@ai-sdk/mcp'
+import { gateway } from "ai";
+import { createMCPClient } from "@ai-sdk/mcp";
 
 const mcpClient = await createMCPClient({
   transport: {
-    type: 'sse',
-    url: 'https://my-mcp-server.com/sse',
+    type: "sse",
+    url: "https://my-mcp-server.com/sse",
   },
-})
+});
 
-const tools = await mcpClient.tools()
+const tools = await mcpClient.tools();
 
 const result = await generateText({
-  model: gateway('openai/gpt-5.2'),
+  model: gateway("openai/gpt-5.2"),
   tools,
-  prompt: 'Use the available tools to help the user.',
-})
+  prompt: "Use the available tools to help the user.",
+});
 
-await mcpClient.close()
+await mcpClient.close();
 ```
 
 MCP OAuth for remote servers is handled automatically by `@ai-sdk/mcp`.
@@ -239,43 +244,43 @@ MCP OAuth for remote servers is handled automatically by `@ai-sdk/mcp`.
 ### Embeddings & Reranking
 
 ```ts
-import { embed, embedMany, rerank } from 'ai'
+import { embed, embedMany, rerank } from "ai";
 
 // Single embedding
 const { embedding } = await embed({
-  model: openai.embedding('text-embedding-3-small'),
-  value: 'The quick brown fox',
-})
+  model: openai.embedding("text-embedding-3-small"),
+  value: "The quick brown fox",
+});
 
 // Batch embeddings
 const { embeddings } = await embedMany({
-  model: openai.embedding('text-embedding-3-small'),
-  values: ['text 1', 'text 2', 'text 3'],
-})
+  model: openai.embedding("text-embedding-3-small"),
+  values: ["text 1", "text 2", "text 3"],
+});
 
 // Rerank search results by relevance
 const { results } = await rerank({
-  model: cohere.reranker('rerank-v3.5'),
-  query: 'What is quantum computing?',
+  model: cohere.reranker("rerank-v3.5"),
+  query: "What is quantum computing?",
   documents: searchResults,
-})
+});
 ```
 
 ### Image Generation & Editing
 
 ```ts
-import { generateImage, editImage } from 'ai'
+import { generateImage, editImage } from "ai";
 
 const { image } = await generateImage({
-  model: openai.image('dall-e-3'),
-  prompt: 'A futuristic cityscape at sunset',
-})
+  model: openai.image("dall-e-3"),
+  prompt: "A futuristic cityscape at sunset",
+});
 
 const { image: edited } = await editImage({
-  model: openai.image('dall-e-3'),
+  model: openai.image("dall-e-3"),
   image: originalImage,
-  prompt: 'Add flying cars to the scene',
-})
+  prompt: "Add flying cars to the scene",
+});
 ```
 
 ## UI Hooks (React)
@@ -283,16 +288,16 @@ const { image: edited } = await editImage({
 ### With AI Elements (Recommended)
 
 ```tsx
-'use client'
-import { useChat } from '@ai-sdk/react'
-import { DefaultChatTransport } from 'ai'
-import { Conversation } from '@/components/ai-elements/conversation'
-import { Message } from '@/components/ai-elements/message'
+"use client";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
+import { Conversation } from "@/components/ai-elements/conversation";
+import { Message } from "@/components/ai-elements/message";
 
 function Chat() {
   const { messages, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({ api: '/api/chat' }),
-  })
+    transport: new DefaultChatTransport({ api: "/api/chat" }),
+  });
 
   return (
     <Conversation>
@@ -300,7 +305,7 @@ function Chat() {
         <Message key={message.id} message={message} />
       ))}
     </Conversation>
-  )
+  );
 }
 ```
 
@@ -312,58 +317,86 @@ AI Elements handles UIMessage parts (text, tool calls, reasoning, images) automa
 ### Without AI Elements (Manual)
 
 ```tsx
-'use client'
-import { useChat } from '@ai-sdk/react'
-import { DefaultChatTransport } from 'ai'
+"use client";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
 
 function Chat() {
   const { messages, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({ api: '/api/chat' }),
-  })
+    transport: new DefaultChatTransport({ api: "/api/chat" }),
+  });
 
   return (
     <div>
       {messages.map((m) => (
         <div key={m.id}>
           {m.parts?.map((part, i) => {
-            if (part.type === 'text') return <p key={i}>{part.text}</p>
-            if (part.type.startsWith('tool-')) return <ToolCard key={i} part={part} />
-            return null
+            if (part.type === "text") return <p key={i}>{part.text}</p>;
+            if (part.type.startsWith("tool-"))
+              return <ToolCard key={i} part={part} />;
+            return null;
           })}
         </div>
       ))}
     </div>
-  )
+  );
 }
 ```
 
 **v6 changes from v5:**
+
 - `useChat({ api })` → `useChat({ transport: new DefaultChatTransport({ api }) })`
 - `handleSubmit` → `sendMessage({ text })`
 - `input` / `handleInputChange` → manage your own `useState`
 - `isLoading` → `status === 'streaming' || status === 'submitted'`
 - `message.content` → iterate `message.parts` (UIMessage format)
 
+### Choose the correct streaming response helper
+
+- `toUIMessageStreamResponse()` is for `useChat` + `DefaultChatTransport` UIMessage-based chat UIs. Use it when you need tool calls, metadata, reasoning, and other rich message parts.
+- `toTextStreamResponse()` is for text-only clients, such as plain `fetch()` stream readers or AI SDK UI clients configured for the text stream protocol.
+- Warning: Do **not** return `toUIMessageStreamResponse()` to a plain `fetch()` client unless that client intentionally parses the AI SDK UI message stream protocol.
+
 ### Server-side for useChat
+
 ```ts
 // app/api/chat/route.ts
-import { streamText, convertToModelMessages, stepCountIs, gateway } from 'ai'
-import type { UIMessage } from 'ai'
+import { streamText, convertToModelMessages, stepCountIs, gateway } from "ai";
+import type { UIMessage } from "ai";
 
 export async function POST(req: Request) {
-  const { messages }: { messages: UIMessage[] } = await req.json()
+  const { messages }: { messages: UIMessage[] } = await req.json();
   // IMPORTANT: convertToModelMessages is async in v6
-  const modelMessages = await convertToModelMessages(messages)
+  const modelMessages = await convertToModelMessages(messages);
   const result = streamText({
-    model: gateway('openai/gpt-5.2'),
+    model: gateway("openai/gpt-5.2"),
     messages: modelMessages,
-    tools: { /* your tools */ },
+    tools: {
+      /* your tools */
+    },
     // IMPORTANT: use stopWhen with stepCountIs for multi-step tool calling
     // maxSteps was removed in v6 — use this instead
     stopWhen: stepCountIs(5),
-  })
+  });
   // Use toUIMessageStreamResponse (not toDataStreamResponse) for chat UIs
-  return result.toUIMessageStreamResponse()
+  return result.toUIMessageStreamResponse();
+}
+```
+
+### Server-side for text-only clients
+
+```ts
+// app/api/chat/route.ts
+import { streamText, gateway } from "ai";
+
+export async function POST(req: Request) {
+  const { prompt }: { prompt: string } = await req.json();
+  const result = streamText({
+    model: gateway("openai/gpt-5.2"),
+    prompt,
+  });
+
+  return result.toTextStreamResponse();
 }
 ```
 
@@ -372,43 +405,43 @@ export async function POST(req: Request) {
 Intercept and transform model calls for RAG, guardrails, logging:
 
 ```ts
-import { wrapLanguageModel, gateway } from 'ai'
+import { wrapLanguageModel, gateway } from "ai";
 
 const wrappedModel = wrapLanguageModel({
-  model: gateway('openai/gpt-5.2'),
+  model: gateway("openai/gpt-5.2"),
   middleware: {
     transformParams: async ({ params }) => {
       // Inject RAG context, modify system prompt, etc.
-      return { ...params, system: params.system + '\n\nContext: ...' }
+      return { ...params, system: params.system + "\n\nContext: ..." };
     },
     wrapGenerate: async ({ doGenerate }) => {
-      const result = await doGenerate()
+      const result = await doGenerate();
       // Post-process, log, validate guardrails
-      return result
+      return result;
     },
   },
-})
+});
 ```
 
 ## Provider Routing via AI Gateway
 
 ```ts
-import { generateText } from 'ai'
-import { gateway } from 'ai'
+import { generateText } from "ai";
+import { gateway } from "ai";
 
 const result = await generateText({
-  model: gateway('anthropic/claude-sonnet-4.6'),
-  prompt: 'Hello!',
+  model: gateway("anthropic/claude-sonnet-4.6"),
+  prompt: "Hello!",
   providerOptions: {
     gateway: {
-      order: ['bedrock', 'anthropic'],        // Try Bedrock first
-      models: ['openai/gpt-5.2'],           // Fallback model
-      only: ['anthropic', 'bedrock'],          // Restrict providers
-      user: 'user-123',                        // Usage tracking
-      tags: ['feature:chat', 'env:production'], // Cost attribution
+      order: ["bedrock", "anthropic"], // Try Bedrock first
+      models: ["openai/gpt-5.2"], // Fallback model
+      only: ["anthropic", "bedrock"], // Restrict providers
+      user: "user-123", // Usage tracking
+      tags: ["feature:chat", "env:production"], // Cost attribution
     },
   },
-})
+});
 ```
 
 ## DevTools
@@ -424,11 +457,12 @@ npx @ai-sdk/devtools
 2. **Set up a Vercel project for AI** — `vercel link` → enable AI Gateway at `https://vercel.com/{team}/{project}/settings` → **AI Gateway** → `vercel env pull` to get OIDC credentials. Never manually create `.env.local` with provider-specific API keys.
 3. **Use AI Elements for chat UIs** — `npx ai-elements` installs production-ready Message, Conversation, and Tool components that handle UIMessage parts automatically. ⤳ skill: ai-elements
 4. **Always stream for user-facing AI** — use `streamText` + `useChat`, not `generateText`
-5. **Server: `convertToModelMessages()` (async) + `toUIMessageStreamResponse()`** — not `toDataStreamResponse()`. Client: `DefaultChatTransport` with `useChat`.
-6. **Use structured output** for extracting data — `generateText` with `Output.object()` and Zod schemas
-7. **Use the Agent class** for multi-step reasoning — not manual loops
-8. **Use DurableAgent** (from Workflow DevKit) for production agents that must survive crashes
-9. **Use `mcp-to-ai-sdk`** to generate static tool definitions from MCP servers for security
+5. **UIMessage chat UIs** — `DefaultChatTransport` + `useChat` on the client, `convertToModelMessages()` + `toUIMessageStreamResponse()` on the server
+6. **Text-only clients** — plain `fetch()` readers or text-protocol transports should get `toTextStreamResponse()`
+7. **Use structured output** for extracting data — `generateText` with `Output.object()` and Zod schemas
+8. **Use the Agent class** for multi-step reasoning — not manual loops
+9. **Use DurableAgent** (from Workflow DevKit) for production agents that must survive crashes
+10. **Use `mcp-to-ai-sdk`** to generate static tool definitions from MCP servers for security
 
 ## Common Pitfall: Structured Output Property Name
 
@@ -452,6 +486,7 @@ This is one of the most common v5→v6 migration mistakes. The config key is `ou
 ## Migration from AI SDK 5
 
 Run `npx @ai-sdk/codemod v6` to auto-migrate. Key changes:
+
 - `generateObject` / `streamObject` → `generateText` / `streamText` with `Output.object()`
 - `parameters` → `inputSchema`
 - `result` → `output`
@@ -462,6 +497,7 @@ Run `npx @ai-sdk/codemod v6` to auto-migrate. Key changes:
 - `useChat({ api })` → `useChat({ transport: new DefaultChatTransport({ api }) })`
 - `handleSubmit` / `input` → `sendMessage({ text })` / manage own state
 - `toDataStreamResponse()` → `toUIMessageStreamResponse()` (for chat UIs)
+- text-only clients / text stream protocol → `toTextStreamResponse()`
 - `message.content` → `message.parts` (UIMessage format with typed parts)
 - UIMessage / ModelMessage types introduced
 - `@ai-sdk/react` must be installed separately (`npm install @ai-sdk/react`)
