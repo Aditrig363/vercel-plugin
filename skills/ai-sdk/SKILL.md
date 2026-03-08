@@ -174,6 +174,8 @@ const model = gateway("openai/gpt-5.4");
 
 This automatically provides failover, cost tracking, and observability on Vercel. **This is the recommended default for text generation, streaming, and tool-calling features.**
 
+**Model slug rules**: Always use `provider/model` format. Version numbers use **dots**, not hyphens: `anthropic/claude-sonnet-4.6` (not `claude-sonnet-4-6`). Default to `openai/gpt-5.4` or `anthropic/claude-sonnet-4.6`. Never use outdated models like `gpt-4o`.
+
 > `gateway()` does not support embeddings or image generation. Use a direct provider SDK such as `@ai-sdk/openai` for those features.
 
 > **Direct provider SDKs** (`@ai-sdk/openai`, `@ai-sdk/anthropic`, etc.) are only needed for provider-specific features not exposed through the gateway (e.g., Anthropic computer use, OpenAI fine-tuned model endpoints).

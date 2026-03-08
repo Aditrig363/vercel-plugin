@@ -12,6 +12,17 @@ metadata:
     - 'src/lib/flags/**'
     - 'lib/flags.*'
     - 'src/lib/flags.*'
+    - '.well-known/vercel/flags/**'
+    - 'app/.well-known/vercel/flags/**'
+    - 'src/app/.well-known/vercel/flags/**'
+  importPatterns:
+    - 'flags'
+    - 'flags/next'
+    - 'flags/sveltekit'
+    - '@vercel/flags'
+    - '@vercel/flags/next'
+    - '@vercel/flags/sveltekit'
+    - '@flags-sdk/*'
   bashPatterns:
     - '\bnpm\s+(install|i|add)\s+[^\n]*\bflags\b'
     - '\bpnpm\s+(install|i|add)\s+[^\n]*\bflags\b'

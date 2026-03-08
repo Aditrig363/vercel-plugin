@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-08T20:08:34.265Z",
+  "generatedAt": "2026-03-08T20:16:55.364Z",
   "version": 2,
   "skills": {
     "vercel-agent": {
@@ -936,7 +936,10 @@
         "lib/flags/**",
         "src/lib/flags/**",
         "lib/flags.*",
-        "src/lib/flags.*"
+        "src/lib/flags.*",
+        ".well-known/vercel/flags/**",
+        "app/.well-known/vercel/flags/**",
+        "src/app/.well-known/vercel/flags/**"
       ],
       "bashPatterns": [
         "\\bnpm\\s+(install|i|add)\\s+[^\\n]*\\bflags\\b",
@@ -952,7 +955,15 @@
         "\\bbun\\s+(install|i|add)\\s+[^\\n]*@flags-sdk/",
         "\\byarn\\s+add\\s+[^\\n]*@flags-sdk/"
       ],
-      "importPatterns": [],
+      "importPatterns": [
+        "flags",
+        "flags/next",
+        "flags/sveltekit",
+        "@vercel/flags",
+        "@vercel/flags/next",
+        "@vercel/flags/sveltekit",
+        "@flags-sdk/*"
+      ],
       "bodyPath": "skills/vercel-flags/SKILL.md",
       "pathRegexSources": [
         "^flags\\.ts$",
@@ -962,7 +973,10 @@
         "^lib\\/flags\\/.*$",
         "^src\\/lib\\/flags\\/.*$",
         "^lib\\/flags\\.[^/]*$",
-        "^src\\/lib\\/flags\\.[^/]*$"
+        "^src\\/lib\\/flags\\.[^/]*$",
+        "^\\.well-known\\/vercel\\/flags\\/.*$",
+        "^app\\/\\.well-known\\/vercel\\/flags\\/.*$",
+        "^src\\/app\\/\\.well-known\\/vercel\\/flags\\/.*$"
       ],
       "bashRegexSources": [
         "\\bnpm\\s+(install|i|add)\\s+[^\\n]*\\bflags\\b",
@@ -978,7 +992,36 @@
         "\\bbun\\s+(install|i|add)\\s+[^\\n]*@flags-sdk/",
         "\\byarn\\s+add\\s+[^\\n]*@flags-sdk/"
       ],
-      "importRegexSources": []
+      "importRegexSources": [
+        {
+          "source": "(?:from\\s+|require\\s*\\(\\s*|import\\s*\\(\\s*)['\"]flags(?:\\/[^'\"]*)?['\"]",
+          "flags": "m"
+        },
+        {
+          "source": "(?:from\\s+|require\\s*\\(\\s*|import\\s*\\(\\s*)['\"]flags\\/next(?:\\/[^'\"]*)?['\"]",
+          "flags": "m"
+        },
+        {
+          "source": "(?:from\\s+|require\\s*\\(\\s*|import\\s*\\(\\s*)['\"]flags\\/sveltekit(?:\\/[^'\"]*)?['\"]",
+          "flags": "m"
+        },
+        {
+          "source": "(?:from\\s+|require\\s*\\(\\s*|import\\s*\\(\\s*)['\"]@vercel\\/flags(?:\\/[^'\"]*)?['\"]",
+          "flags": "m"
+        },
+        {
+          "source": "(?:from\\s+|require\\s*\\(\\s*|import\\s*\\(\\s*)['\"]@vercel\\/flags\\/next(?:\\/[^'\"]*)?['\"]",
+          "flags": "m"
+        },
+        {
+          "source": "(?:from\\s+|require\\s*\\(\\s*|import\\s*\\(\\s*)['\"]@vercel\\/flags\\/sveltekit(?:\\/[^'\"]*)?['\"]",
+          "flags": "m"
+        },
+        {
+          "source": "(?:from\\s+|require\\s*\\(\\s*|import\\s*\\(\\s*)['\"]@flags-sdk\\/[^'\"]*(?:\\/[^'\"]*)?['\"]",
+          "flags": "m"
+        }
+      ]
     },
     "shadcn": {
       "priority": 6,
