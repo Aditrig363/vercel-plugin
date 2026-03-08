@@ -14,6 +14,10 @@ metadata:
   bashPatterns:
     - '\bnpx\s+shadcn\b'
     - '\bnpx\s+shadcn@latest\s+(init|add|build|search|list|migrate|info|docs|view)\b'
+    - '\bnpx\s+create-next-app\b'
+    - '\bbunx\s+create-next-app\b'
+    - '\bpnpm\s+create\s+next-app\b'
+    - '\bnpm\s+create\s+next-app\b'
 ---
 
 # shadcn/ui

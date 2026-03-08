@@ -2,16 +2,30 @@
   "description": "Golden snapshot: Edit vercel.json triggers 5 skills, cap drops routing-middleware and vercel-cli",
   "input": {
     "tool_name": "Edit",
-    "tool_input": { "file_path": "/Users/me/project/vercel.json" }
+    "tool_input": {
+      "file_path": "/Users/me/project/vercel.json"
+    }
   },
   "expected": {
     "skillInjection": {
       "version": 1,
       "toolName": "Edit",
       "toolTarget": "/Users/me/project/vercel.json",
-      "matchedSkills": ["cron-jobs", "deployments-cicd", "routing-middleware", "vercel-cli", "vercel-functions"],
-      "injectedSkills": ["vercel-functions", "cron-jobs", "deployments-cicd"],
-      "droppedByCap": ["routing-middleware", "vercel-cli"],
+      "matchedSkills": [
+        "cron-jobs",
+        "deployments-cicd",
+        "routing-middleware",
+        "vercel-cli",
+        "vercel-functions"
+      ],
+      "injectedSkills": [
+        "vercel-functions",
+        "cron-jobs",
+        "deployments-cicd",
+        "routing-middleware",
+        "vercel-cli"
+      ],
+      "droppedByCap": [],
       "droppedByBudget": []
     }
   }

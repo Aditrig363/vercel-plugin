@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-08T20:16:55.364Z",
+  "generatedAt": "2026-03-08T23:26:00.322Z",
   "version": 2,
   "skills": {
     "vercel-agent": {
@@ -1037,7 +1037,11 @@
       ],
       "bashPatterns": [
         "\\bnpx\\s+shadcn\\b",
-        "\\bnpx\\s+shadcn@latest\\s+(init|add|build|search|list|migrate|info|docs|view)\\b"
+        "\\bnpx\\s+shadcn@latest\\s+(init|add|build|search|list|migrate|info|docs|view)\\b",
+        "\\bnpx\\s+create-next-app\\b",
+        "\\bbunx\\s+create-next-app\\b",
+        "\\bpnpm\\s+create\\s+next-app\\b",
+        "\\bnpm\\s+create\\s+next-app\\b"
       ],
       "importPatterns": [],
       "bodyPath": "skills/shadcn/SKILL.md",
@@ -1052,7 +1056,11 @@
       ],
       "bashRegexSources": [
         "\\bnpx\\s+shadcn\\b",
-        "\\bnpx\\s+shadcn@latest\\s+(init|add|build|search|list|migrate|info|docs|view)\\b"
+        "\\bnpx\\s+shadcn@latest\\s+(init|add|build|search|list|migrate|info|docs|view)\\b",
+        "\\bnpx\\s+create-next-app\\b",
+        "\\bbunx\\s+create-next-app\\b",
+        "\\bpnpm\\s+create\\s+next-app\\b",
+        "\\bnpm\\s+create\\s+next-app\\b"
       ],
       "importRegexSources": []
     },

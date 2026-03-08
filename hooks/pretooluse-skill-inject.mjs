@@ -26,8 +26,8 @@ import {
 } from "./patterns.mjs";
 import { resolveVercelJsonSkills, isVercelJsonPath, VERCEL_JSON_SKILLS } from "./vercel-config.mjs";
 import { createLogger } from "./logger.mjs";
-const MAX_SKILLS = 3;
-const DEFAULT_INJECTION_BUDGET_BYTES = 12e3;
+const MAX_SKILLS = 5;
+const DEFAULT_INJECTION_BUDGET_BYTES = 18e3;
 const SETUP_MODE_BOOTSTRAP_SKILL = "bootstrap";
 const SETUP_MODE_PRIORITY_BOOST = 50;
 const PLUGIN_ROOT = resolvePluginRoot();

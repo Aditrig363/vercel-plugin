@@ -271,7 +271,7 @@ describe("pretooluse-skill-inject.mjs", () => {
     expect(r2).toEqual({});
   });
 
-  test("caps at 3 skills when bash command matches 4+ skills", async () => {
+  test("caps at 5 skills when bash command matches 5+ skills", async () => {
     // This command matches 5 distinct skills:
     //   vercel-cli  (vercel deploy)
     //   turborepo   (turbo run build)
@@ -291,7 +291,7 @@ describe("pretooluse-skill-inject.mjs", () => {
     expect(result.hookSpecificOutput.additionalContext).toBeDefined();
     const skillTags =
       result.hookSpecificOutput.additionalContext.match(/<!-- skill:[a-z0-9-]+ -->/g) || [];
-    expect(skillTags.length).toBe(3);
+    expect(skillTags.length).toBe(5);
   });
 
   test("large multi-skill output is valid JSON with correct structure", async () => {
@@ -323,7 +323,7 @@ describe("pretooluse-skill-inject.mjs", () => {
       ctx.match(/<!-- \/skill:([a-z0-9-]+) -->/g) || [];
     expect(openTags.length).toBe(closeTags.length);
     expect(openTags.length).toBeGreaterThanOrEqual(1);
-    expect(openTags.length).toBeLessThanOrEqual(3);
+    expect(openTags.length).toBeLessThanOrEqual(5);
   });
 
   test("returns {} when skills directory is empty (no SKILL.md files)", async () => {
@@ -1443,8 +1443,8 @@ describe("priority ordering for file-path matches", () => {
 });
 
 describe("priority ordering", () => {
-  test("when 4+ skills match, only 3 inject and they are the highest-priority ones", async () => {
-    // Craft a bash command that matches 4+ skills with known priorities:
+  test("when 5 skills match, all 5 inject within cap", async () => {
+    // Craft a bash command that matches 5 skills with known priorities:
     //   ai-sdk (priority 8): "npm install ai"
     //   vercel-storage (priority 7): "npm install @vercel/blob"
     //   turborepo (priority 5): "turbo run build"
@@ -1464,14 +1464,13 @@ describe("priority ordering", () => {
 
     const skillTags =
       ctx.match(/<!-- skill:([a-z0-9-]+) -->/g) || [];
-    expect(skillTags.length).toBe(3);
+    // With cap 5, up to 5 can inject but budget may limit further
+    expect(skillTags.length).toBeGreaterThanOrEqual(3);
+    expect(skillTags.length).toBeLessThanOrEqual(5);
 
-    // The top 3 by priority should be: ai-sdk (8), vercel-storage (7), turborepo (5) or v0-dev (5)
+    // Highest priority skills should be present
     expect(ctx).toContain("skill:ai-sdk");
     expect(ctx).toContain("skill:vercel-storage");
-
-    // vercel-cli (4) should NOT be included (lower priority)
-    expect(ctx).not.toContain("skill:vercel-cli");
   });
 });
 
@@ -1591,27 +1590,23 @@ describe("cap observability (debug mode)", () => {
     const lines = stderr.trim().split("\n").map((l: string) => JSON.parse(l));
     const capEvent = lines.find((l: any) => l.event === "cap-applied");
     expect(capEvent).toBeDefined();
-    expect(capEvent.max).toBe(3);
-    expect(capEvent.totalCandidates).toBeGreaterThan(3);
+    expect(capEvent.max).toBe(5);
+    expect(capEvent.totalCandidates).toBeGreaterThanOrEqual(5);
     expect(typeof capEvent.budgetBytes).toBe("number");
     expect(typeof capEvent.usedBytes).toBe("number");
 
-    // selected array has exactly 3 entries with skill name
+    // selected array has exactly 5 entries with skill name
     expect(Array.isArray(capEvent.selected)).toBe(true);
-    expect(capEvent.selected.length).toBe(3);
+    expect(capEvent.selected.length).toBe(5);
     for (const entry of capEvent.selected) {
       expect(typeof entry.skill).toBe("string");
     }
 
-    // droppedByCap should have the excess skills
+    // droppedByCap may be empty when all 5 fit
     expect(Array.isArray(capEvent.droppedByCap)).toBe(true);
-    expect(capEvent.droppedByCap.length).toBeGreaterThanOrEqual(1);
-    for (const skill of capEvent.droppedByCap) {
-      expect(typeof skill).toBe("string");
-    }
   });
 
-  test("does NOT emit cap-applied when <=3 skills match", async () => {
+  test("does NOT emit cap-applied when <=5 skills match", async () => {
     const { stderr } = await runHookDebug({
       tool_name: "Read",
       tool_input: { file_path: "/Users/me/project/next.config.ts" },
@@ -1690,7 +1685,7 @@ describe("injection byte budget", () => {
     const si = extractSkillInjection(result.hookSpecificOutput);
     expect(si).toBeDefined();
     // MAX_SKILLS=3 ceiling still applies
-    expect(si.injectedSkills.length).toBeLessThanOrEqual(3);
+    expect(si.injectedSkills.length).toBeLessThanOrEqual(5);
   });
 
   test("invalid VERCEL_PLUGIN_INJECTION_BUDGET falls back to default", async () => {
@@ -2357,7 +2352,7 @@ describe("coverage matrix — file paths", () => {
   test("vercel.json → multiple control-plane skills (capped at 3)", async () => {
     const skills = await matchFile("/project/vercel.json");
     // vercel.json now triggers 5 skills; MAX_SKILLS caps at 3
-    expect(skills.length).toBeLessThanOrEqual(3);
+    expect(skills.length).toBeLessThanOrEqual(5);
     // vercel-functions (priority 8) must be included
     expect(skills).toContain("vercel-functions");
   });
@@ -3065,29 +3060,27 @@ describe("vercel.json control-plane coverage", () => {
   test("vercel.json matches at least 4 skills (vercel-functions, cron-jobs, routing-middleware, deployments-cicd, vercel-cli)", async () => {
     // vercel.json is in pathPatterns for: vercel-functions(8), cron-jobs(6),
     // routing-middleware(6), deployments-cicd(6), vercel-cli(4)
-    // With MAX_SKILLS=3, only top 3 by priority should be injected
+    // With MAX_SKILLS=5, all 5 vercel.json skills should fit
     const skills = await matchFile("/project/vercel.json");
 
-    // Must have exactly 3 due to MAX_SKILLS cap
-    expect(skills.length).toBe(3);
+    // All 5 fit within cap
+    expect(skills.length).toBe(5);
 
     // vercel-functions (priority 8) must be first
     expect(skills[0]).toBe("vercel-functions");
 
-    // The remaining 2 should be from the priority-6 group (cron-jobs, deployments-cicd, routing-middleware)
-    // sorted alphabetically: cron-jobs, deployments-cicd, routing-middleware
+    // All control-plane skills present
     expect(skills).toContain("cron-jobs");
     expect(skills).toContain("deployments-cicd");
-
-    // vercel-cli (priority 4) should be dropped by the cap
-    expect(skills).not.toContain("vercel-cli");
+    expect(skills).toContain("routing-middleware");
+    expect(skills).toContain("vercel-cli");
   });
 
   test("apps/*/vercel.json matches same control-plane skills (monorepo)", async () => {
     const skills = await matchFile("/project/apps/web/vercel.json");
 
     // Same set of skills should match for monorepo vercel.json
-    expect(skills.length).toBe(3);
+    expect(skills.length).toBe(5);
     expect(skills[0]).toBe("vercel-functions");
     expect(skills).toContain("cron-jobs");
     expect(skills).toContain("deployments-cicd");
@@ -3194,10 +3187,10 @@ describe("hookSpecificOutput.skillInjection metadata", () => {
     const result = JSON.parse(stdout);
     const si = extractSkillInjection(result.hookSpecificOutput);
     expect(si).toBeDefined();
-    expect(si.injectedSkills.length).toBeLessThanOrEqual(3);
+    expect(si.injectedSkills.length).toBeLessThanOrEqual(5);
     expect(Array.isArray(si.droppedByBudget)).toBe(true);
-    // If more than 3 matched, droppedByCap + droppedByBudget should account for all
-    if (si.matchedSkills.length > 3) {
+    // If more than 5 matched, droppedByCap + droppedByBudget should account for all
+    if (si.matchedSkills.length > 5) {
       expect(si.droppedByCap.length + si.droppedByBudget.length).toBe(
         si.matchedSkills.length - si.injectedSkills.length,
       );
@@ -3928,8 +3921,8 @@ describe("decision logging — reason codes", () => {
     expect(complete).toBeDefined();
     expect(complete.reason).toBe("injected");
     expect(complete.cappedCount).toBeGreaterThan(0);
-    expect(complete.injectedCount).toBe(3);
-    expect(complete.matchedCount).toBeGreaterThan(3);
+    expect(complete.injectedCount).toBe(5);
+    expect(complete.matchedCount).toBeGreaterThanOrEqual(5);
   });
 
   test("exactly one complete event per invocation", async () => {

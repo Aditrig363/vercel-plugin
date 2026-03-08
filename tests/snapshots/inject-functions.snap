@@ -11,12 +11,11 @@
   "injectedSkills": [
     "vercel-functions",
     "vercel-cli",
-    "cron-jobs"
-  ],
-  "summaryOnly": [],
-  "droppedByCap": [
+    "cron-jobs",
     "deployments-cicd",
     "routing-middleware"
   ],
+  "summaryOnly": [],
+  "droppedByCap": [],
   "droppedByBudget": []
 }

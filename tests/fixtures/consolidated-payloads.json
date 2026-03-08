@@ -2,7 +2,7 @@
   "description": "Consolidated golden snapshot fixtures for hook payload assertions",
   "fixtures": [
     {
-      "name": "vercel.json edit — cap collision",
+      "name": "vercel.json edit — all 5 skills fit cap",
       "input": {
         "tool_name": "Edit",
         "tool_input": { "file_path": "/Users/me/project/vercel.json" }
@@ -13,8 +13,8 @@
           "toolName": "Edit",
           "toolTarget": "/Users/me/project/vercel.json",
           "matchedSkills": ["cron-jobs", "deployments-cicd", "routing-middleware", "vercel-cli", "vercel-functions"],
-          "injectedSkills": ["vercel-functions", "cron-jobs", "deployments-cicd"],
-          "droppedByCap": ["routing-middleware", "vercel-cli"],
+          "injectedSkills": ["vercel-functions", "cron-jobs", "deployments-cicd", "routing-middleware", "vercel-cli"],
+          "droppedByCap": [],
           "droppedByBudget": []
         }
       }
@@ -110,7 +110,7 @@
       }
     },
     {
-      "name": "bash cap collision — npm install triggers 4 skills",
+      "name": "bash cap collision — npm install triggers 4 skills, all fit cap 5",
       "input": {
         "tool_name": "Bash",
         "tool_input": { "command": "npm install ai @vercel/analytics @vercel/flags @vercel/workflow" }
@@ -121,8 +121,8 @@
           "toolName": "Bash",
           "toolTarget": "npm install ai @vercel/analytics @vercel/flags @vercel/workflow",
           "matchedSkills": ["ai-sdk", "observability", "vercel-flags", "workflow"],
-          "injectedSkills": ["workflow", "ai-sdk", "observability"],
-          "droppedByCap": ["vercel-flags"],
+          "injectedSkills": ["workflow", "ai-sdk", "observability", "vercel-flags"],
+          "droppedByCap": [],
           "droppedByBudget": []
         }
       }

@@ -51,8 +51,8 @@ import type { VercelJsonRouting } from "./vercel-config.mjs";
 import { createLogger } from "./logger.mjs";
 import type { Logger } from "./logger.mjs";
 
-const MAX_SKILLS = 3;
-const DEFAULT_INJECTION_BUDGET_BYTES = 12_000;
+const MAX_SKILLS = 5;
+const DEFAULT_INJECTION_BUDGET_BYTES = 18_000;
 const SETUP_MODE_BOOTSTRAP_SKILL = "bootstrap";
 const SETUP_MODE_PRIORITY_BOOST = 50;
 const PLUGIN_ROOT = resolvePluginRoot();
