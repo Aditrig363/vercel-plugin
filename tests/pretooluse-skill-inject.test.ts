@@ -1160,6 +1160,28 @@ describe("new pattern coverage", () => {
     expect(result.hookSpecificOutput.additionalContext).toContain("skill:workflow");
   });
 
+  test("matches workflows/async-request-reply.ts to workflow skill via Write", async () => {
+    const { code, stdout } = await runHook({
+      tool_name: "Write",
+      tool_input: {
+        file_path: "/Users/me/project/workflows/async-request-reply.ts",
+        content: [
+          "import { createWebhook, getWritable, sleep } from \"workflow\";",
+          "",
+          "export async function asyncRequestReply(documentId: string) {",
+          "  \"use workflow\";",
+          "  const webhook = createWebhook({ respondWith: \"manual\" });",
+          "  await sleep(\"5s\");",
+          "  return { documentId, token: webhook.token, writer: getWritable() };",
+          "}",
+        ].join("\n"),
+      },
+    });
+    expect(code).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.hookSpecificOutput.additionalContext).toContain("skill:workflow");
+  });
+
   test("matches app/health/route.ts to vercel-functions skill via Read", async () => {
     const { code, stdout } = await runHook({
       tool_name: "Read",
@@ -1178,6 +1200,16 @@ describe("new pattern coverage", () => {
     expect(code).toBe(0);
     const result = JSON.parse(stdout);
     expect(result.hookSpecificOutput.additionalContext).toContain("skill:vercel-storage");
+  });
+
+  test("matches npm install @vercel/workflow to workflow skill via Bash", async () => {
+    const { code, stdout } = await runHook({
+      tool_name: "Bash",
+      tool_input: { command: "npm install @vercel/workflow @workflow/ai" },
+    });
+    expect(code).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.hookSpecificOutput.additionalContext).toContain("skill:workflow");
   });
 
   test("matches src/middleware.mjs to routing-middleware skill via Read", async () => {

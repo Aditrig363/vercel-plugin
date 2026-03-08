@@ -1044,6 +1044,22 @@ describe("buildSkillMap — promptSignals", () => {
     expect(streamdown.promptSignals.noneOf).toContain("readme");
   });
 
+  test("workflow skill promptSignals include workflow durability language", () => {
+    const map = buildSkillMap(SKILLS_DIR);
+    const workflow = map.skills["workflow"];
+    expect(workflow).toBeDefined();
+    expect(workflow.promptSignals).toBeDefined();
+
+    const terms = [
+      ...workflow.promptSignals!.phrases,
+      ...workflow.promptSignals!.anyOf,
+      ...workflow.promptSignals!.noneOf,
+      ...workflow.promptSignals!.allOf.flat(),
+    ].join(" ");
+
+    expect(terms).toMatch(/workflow|durable|resum/i);
+  });
+
   test("skill without promptSignals omits the field", () => {
     const tmp = join(tmpdir(), `skill-no-signals-${Date.now()}`);
     const skillDir = join(tmp, "plain-skill");

@@ -83,6 +83,23 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
     }
   });
 
+  test("injects workflow skill for durable workflow orchestration prompt", async () => {
+    const { code, stdout } = await runHook(
+      [
+        "Use Vercel Workflow DevKit to build a durable workflow with resumable execution,",
+        "retryable steps, and createWebhook-based async request reply callbacks that survive crashes.",
+      ].join(" "),
+    );
+    expect(code).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.hookSpecificOutput).toBeDefined();
+    expect(result.hookSpecificOutput.additionalContext).toContain("skill:workflow");
+
+    const meta = extractSkillInjection(result.hookSpecificOutput);
+    expect(meta).toBeDefined();
+    expect(meta.injectedSkills).toContain("workflow");
+  });
+
   test("returns {} for empty/short prompt", async () => {
     const { code, stdout } = await runHook("hi");
     expect(code).toBe(0);
