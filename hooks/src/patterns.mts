@@ -126,6 +126,20 @@ export function parseSeenSkills(envValue: string): Set<string> {
   return seen;
 }
 
+export function serializeSeenSkills(seen: Set<string>): string {
+  return [...seen].sort().join(",");
+}
+
+export function mergeSeenSkillStates(...values: string[]): string {
+  const merged = new Set<string>();
+  for (const value of values) {
+    for (const skill of parseSeenSkills(value)) {
+      merged.add(skill);
+    }
+  }
+  return serializeSeenSkills(merged);
+}
+
 /**
  * Return updated comma-delimited string with a new skill appended.
  */

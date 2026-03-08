@@ -47,6 +47,18 @@ function parseSeenSkills(envValue) {
   }
   return seen;
 }
+function serializeSeenSkills(seen) {
+  return [...seen].sort().join(",");
+}
+function mergeSeenSkillStates(...values) {
+  const merged = /* @__PURE__ */ new Set();
+  for (const value of values) {
+    for (const skill of parseSeenSkills(value)) {
+      merged.add(skill);
+    }
+  }
+  return serializeSeenSkills(merged);
+}
 function appendSeenSkill(envValue, skill) {
   if (typeof skill !== "string" || skill.trim() === "") return envValue || "";
   const current = typeof envValue === "string" ? envValue.trim() : "";
@@ -147,7 +159,9 @@ export {
   matchBashWithReason,
   matchImportWithReason,
   matchPathWithReason,
+  mergeSeenSkillStates,
   parseLikelySkills,
   parseSeenSkills,
-  rankEntries
+  rankEntries,
+  serializeSeenSkills
 };

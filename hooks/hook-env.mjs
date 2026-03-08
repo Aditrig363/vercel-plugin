@@ -1,4 +1,13 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +49,9 @@ function appendAuditLog(record, hookInputCwd) {
 function dedupFilePath(sessionId, kind) {
   return join(tmpdir(), `vercel-plugin-${sessionId}-${kind}.txt`);
 }
+function dedupClaimDirPath(sessionId, kind) {
+  return join(tmpdir(), `vercel-plugin-${sessionId}-${kind}.d`);
+}
 function readSessionFile(sessionId, kind) {
   try {
     return readFileSync(dedupFilePath(sessionId, kind), "utf-8");
@@ -50,6 +62,39 @@ function readSessionFile(sessionId, kind) {
 function writeSessionFile(sessionId, kind, value) {
   try {
     writeFileSync(dedupFilePath(sessionId, kind), value, "utf-8");
+  } catch {
+  }
+}
+function tryClaimSessionKey(sessionId, kind, key) {
+  try {
+    const claimDir = dedupClaimDirPath(sessionId, kind);
+    mkdirSync(claimDir, { recursive: true });
+    const file = join(claimDir, encodeURIComponent(key));
+    const fd = openSync(file, "wx");
+    closeSync(fd);
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST") {
+      return false;
+    }
+    return false;
+  }
+}
+function listSessionKeys(sessionId, kind) {
+  try {
+    return readdirSync(dedupClaimDirPath(sessionId, kind)).map((entry) => decodeURIComponent(entry)).filter((entry) => entry !== "").sort();
+  } catch {
+    return [];
+  }
+}
+function syncSessionFileFromClaims(sessionId, kind) {
+  const value = listSessionKeys(sessionId, kind).join(",");
+  writeSessionFile(sessionId, kind, value);
+  return value;
+}
+function removeSessionClaimDir(sessionId, kind) {
+  try {
+    rmSync(dedupClaimDirPath(sessionId, kind), { recursive: true, force: true });
   } catch {
   }
 }
@@ -71,11 +116,16 @@ function safeReadJson(path) {
 }
 export {
   appendAuditLog,
+  dedupClaimDirPath,
   dedupFilePath,
+  listSessionKeys,
   pluginRoot,
   readSessionFile,
+  removeSessionClaimDir,
   requireEnvFile,
   safeReadFile,
   safeReadJson,
+  syncSessionFileFromClaims,
+  tryClaimSessionKey,
   writeSessionFile
 };

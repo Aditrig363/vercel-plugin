@@ -6,7 +6,16 @@
  * try/catch boilerplate.
  */
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,6 +97,10 @@ export function dedupFilePath(sessionId: string, kind: string): string {
   return join(tmpdir(), `vercel-plugin-${sessionId}-${kind}.txt`);
 }
 
+export function dedupClaimDirPath(sessionId: string, kind: string): string {
+  return join(tmpdir(), `vercel-plugin-${sessionId}-${kind}.d`);
+}
+
 export function readSessionFile(sessionId: string, kind: string): string {
   try {
     return readFileSync(dedupFilePath(sessionId, kind), "utf-8");
@@ -101,6 +114,52 @@ export function writeSessionFile(sessionId: string, kind: string, value: string)
     writeFileSync(dedupFilePath(sessionId, kind), value, "utf-8");
   } catch {
     // Persistence is best-effort and must not break hooks.
+  }
+}
+
+export function tryClaimSessionKey(sessionId: string, kind: string, key: string): boolean {
+  try {
+    const claimDir = dedupClaimDirPath(sessionId, kind);
+    mkdirSync(claimDir, { recursive: true });
+    const file = join(claimDir, encodeURIComponent(key));
+    const fd = openSync(file, "wx");
+    closeSync(fd);
+    return true;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: string }).code === "EEXIST"
+    ) {
+      return false;
+    }
+    return false;
+  }
+}
+
+export function listSessionKeys(sessionId: string, kind: string): string[] {
+  try {
+    return readdirSync(dedupClaimDirPath(sessionId, kind))
+      .map((entry) => decodeURIComponent(entry))
+      .filter((entry) => entry !== "")
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+export function syncSessionFileFromClaims(sessionId: string, kind: string): string {
+  const value = listSessionKeys(sessionId, kind).join(",");
+  writeSessionFile(sessionId, kind, value);
+  return value;
+}
+
+export function removeSessionClaimDir(sessionId: string, kind: string): void {
+  try {
+    rmSync(dedupClaimDirPath(sessionId, kind), { recursive: true, force: true });
+  } catch {
+    // Cleanup is best-effort and must not break hooks.
   }
 }
 
@@ -131,4 +190,3 @@ export function safeReadJson<T>(path: string): T | null {
     return null;
   }
 }
-

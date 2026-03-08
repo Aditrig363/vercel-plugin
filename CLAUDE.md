@@ -30,16 +30,16 @@ Hook output is type-checked against `SyncHookJSONOutput` from `@anthropic-ai/cla
 
 Deduplication prevents the same skill from being injected twice in a session.
 
-**Mechanism**: Session-scoped temp file + env var initialization
+**Mechanism**: Atomic per-skill claim files + session file snapshot + env var fallback
 
-- **Format**: Comma-delimited string of skill slugs (e.g., `"nextjs,turbopack,ai-sdk"`)
+- **Claim dir**: `<tmpdir>/vercel-plugin-<sessionId>-seen-skills.d/` — one empty file per claimed skill, created atomically with `openSync(path, "wx")` (O_EXCL). First process wins; concurrent processes get `EEXIST` and skip.
+- **Session file**: `<tmpdir>/vercel-plugin-<sessionId>-seen-skills.txt` — derived comma-delimited snapshot, synced from claim dir after each successful claim. Used for debug and fast reads.
 - **Initialization**: `session-start-seen-skills.mjs` appends `export VERCEL_PLUGIN_SEEN_SKILLS=""` to `CLAUDE_ENV_FILE`
-- **Persistence**: `readSessionFile(sessionId, "seen-skills")` / `writeSessionFile(sessionId, "seen-skills", value)` in `hook-env.mjs` — persists to `<tmpdir>/vercel-plugin-<sessionId>-seen-skills.txt`
-- **Cleanup**: `session-end-cleanup.mjs` (SessionEnd hook) deletes the temp files when the session ends
-- **Read**: `parseSeenSkills(envValue)` in `patterns.mjs` splits on commas into a `Set`
-- **Write**: `appendSeenSkill(envValue, skill)` in `patterns.mjs` appends to the comma-delimited string
+- **State merge**: `mergeSeenSkillStates(envValue, fileValue, claimValue)` in `patterns.mjs` unions all sources
+- **Cleanup**: `session-end-cleanup.mjs` (SessionEnd hook) deletes temp files AND claim directories
+- **Shared across hooks**: Both `pretooluse-skill-inject.mjs` and `user-prompt-submit-skill-inject.mjs` use the same claim backend
 - **Strategy detection** (debug mode):
-  - `"file"` — `session_id` is present; dedup state persists across hook invocations via temp file
+  - `"file"` — `session_id` is present; atomic claims prevent parallel race conditions
   - `"env-var"` — no `session_id` but `VERCEL_PLUGIN_SEEN_SKILLS` is set (fallback)
   - `"memory-only"` — neither available; dedup only works within a single invocation
   - `"disabled"` — `VERCEL_PLUGIN_HOOK_DEDUP=off`

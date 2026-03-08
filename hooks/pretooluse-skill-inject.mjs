@@ -2,11 +2,21 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendAuditLog, pluginRoot as resolvePluginRoot, readSessionFile, safeReadJson, safeReadFile, writeSessionFile } from "./hook-env.mjs";
+import {
+  appendAuditLog,
+  listSessionKeys,
+  pluginRoot as resolvePluginRoot,
+  readSessionFile,
+  safeReadJson,
+  safeReadFile,
+  syncSessionFileFromClaims,
+  tryClaimSessionKey
+} from "./hook-env.mjs";
 import { buildSkillMap, validateSkillMap } from "./skill-map-frontmatter.mjs";
 import {
   parseSeenSkills,
   appendSeenSkill,
+  mergeSeenSkillStates,
   parseLikelySkills,
   compileSkillPatterns,
   matchPathWithReason,
@@ -476,7 +486,21 @@ function injectSkills(rankedSkills, options) {
   const summaryOnly = [];
   const droppedByCap = [];
   const droppedByBudget = [];
+  const skippedByConcurrentClaim = [];
   let usedBytes = 0;
+  const canInjectSkill = (skill) => {
+    if (!hasEnvDedup || !sessionId) {
+      return true;
+    }
+    const claimed = tryClaimSessionKey(sessionId, "seen-skills", skill);
+    if (!claimed) {
+      skippedByConcurrentClaim.push(skill);
+      l.debug("skill-skipped-concurrent-claim", { skill, sessionId });
+      return false;
+    }
+    process.env.VERCEL_PLUGIN_SEEN_SKILLS = syncSessionFileFromClaims(sessionId, "seen-skills");
+    return true;
+  };
   for (const skill of rankedSkills) {
     if (loaded.length >= ceiling) {
       droppedByCap.push(skill);
@@ -500,19 +524,19 @@ ${summary}
 <!-- /skill:${skill} -->`;
         const summaryByteLen = Buffer.byteLength(summaryWrapped, "utf-8");
         if (usedBytes + summaryByteLen <= budget) {
+          if (!canInjectSkill(skill)) {
+            continue;
+          }
           parts.push(summaryWrapped);
           loaded.push(skill);
           summaryOnly.push(skill);
           usedBytes += summaryByteLen;
           if (injectedSkills) injectedSkills.add(skill);
-          if (hasEnvDedup) {
+          if (hasEnvDedup && !sessionId) {
             process.env.VERCEL_PLUGIN_SEEN_SKILLS = appendSeenSkill(
               process.env.VERCEL_PLUGIN_SEEN_SKILLS,
               skill
             );
-            if (sessionId) {
-              writeSessionFile(sessionId, "seen-skills", process.env.VERCEL_PLUGIN_SEEN_SKILLS || "");
-            }
           }
           l.debug("summary-fallback", { skill, fullBytes: byteLen, summaryBytes: summaryByteLen });
           continue;
@@ -521,21 +545,21 @@ ${summary}
       droppedByBudget.push(skill);
       continue;
     }
+    if (!canInjectSkill(skill)) {
+      continue;
+    }
     parts.push(wrapped);
     loaded.push(skill);
     usedBytes += byteLen;
     if (injectedSkills) injectedSkills.add(skill);
-    if (hasEnvDedup) {
+    if (hasEnvDedup && !sessionId) {
       process.env.VERCEL_PLUGIN_SEEN_SKILLS = appendSeenSkill(
         process.env.VERCEL_PLUGIN_SEEN_SKILLS,
         skill
       );
-      if (sessionId) {
-        writeSessionFile(sessionId, "seen-skills", process.env.VERCEL_PLUGIN_SEEN_SKILLS || "");
-      }
     }
   }
-  if (droppedByCap.length > 0 || droppedByBudget.length > 0 || summaryOnly.length > 0) {
+  if (droppedByCap.length > 0 || droppedByBudget.length > 0 || summaryOnly.length > 0 || skippedByConcurrentClaim.length > 0) {
     l.debug("cap-applied", {
       max: ceiling,
       budgetBytes: budget,
@@ -544,11 +568,12 @@ ${summary}
       selected: loaded.map((s) => ({ skill: s, mode: summaryOnly.includes(s) ? "summary" : "full" })),
       droppedByCap,
       droppedByBudget,
-      summaryOnly
+      summaryOnly,
+      skippedByConcurrentClaim
     });
   }
-  l.debug("skills-injected", { injected: loaded, summaryOnly, totalParts: parts.length, usedBytes, budgetBytes: budget });
-  return { parts, loaded, summaryOnly, droppedByCap, droppedByBudget };
+  l.debug("skills-injected", { injected: loaded, summaryOnly, skippedByConcurrentClaim, totalParts: parts.length, usedBytes, budgetBytes: budget });
+  return { parts, loaded, summaryOnly, droppedByCap, droppedByBudget, skippedByConcurrentClaim };
 }
 function formatOutput({ parts, matched, injectedSkills, summaryOnly, droppedByCap, droppedByBudget, toolName, toolTarget }) {
   if (parts.length === 0) {
@@ -594,11 +619,12 @@ function run() {
   const dedupOff = process.env.VERCEL_PLUGIN_HOOK_DEDUP === "off";
   const hasFileDedup = !dedupOff && !!sessionId;
   const seenEnv = getSeenSkillsEnv();
+  const seenClaims = hasFileDedup ? listSessionKeys(sessionId, "seen-skills").join(",") : "";
   const seenFile = hasFileDedup ? readSessionFile(sessionId, "seen-skills") : "";
+  const seenState = hasFileDedup ? mergeSeenSkillStates(seenEnv, seenFile, seenClaims) : seenEnv;
   if (hasFileDedup && seenEnv === "") {
-    process.env.VERCEL_PLUGIN_SEEN_SKILLS = seenFile;
+    process.env.VERCEL_PLUGIN_SEEN_SKILLS = seenState;
   }
-  const seenState = seenEnv === "" ? seenFile : seenEnv;
   const hasEnvDedup = !dedupOff && typeof process.env.VERCEL_PLUGIN_SEEN_SKILLS === "string";
   const dedupStrategy = dedupOff ? "disabled" : hasFileDedup ? "file" : hasEnvDedup ? "env-var" : "memory-only";
   const likelySkillsEnv = process.env.VERCEL_PLUGIN_LIKELY_SKILLS || "";
@@ -662,19 +688,26 @@ function run() {
   let devServerVerifyInjected = false;
   let devServerUnavailableWarning = false;
   if (devServerVerify.unavailable) {
-    if (!injectedSkills.has("agent-browser-unavailable-warning")) {
-      devServerUnavailableWarning = true;
-      injectedSkills.add("agent-browser-unavailable-warning");
-      if (hasEnvDedup) {
-        process.env.VERCEL_PLUGIN_SEEN_SKILLS = appendSeenSkill(
-          process.env.VERCEL_PLUGIN_SEEN_SKILLS,
-          "agent-browser-unavailable-warning"
-        );
-        if (sessionId) {
-          writeSessionFile(sessionId, "seen-skills", process.env.VERCEL_PLUGIN_SEEN_SKILLS || "");
+    const warningKey = "agent-browser-unavailable-warning";
+    if (!injectedSkills.has(warningKey)) {
+      let warningClaimed = true;
+      if (sessionId) {
+        warningClaimed = tryClaimSessionKey(sessionId, "seen-skills", warningKey);
+        if (warningClaimed) {
+          process.env.VERCEL_PLUGIN_SEEN_SKILLS = syncSessionFileFromClaims(sessionId, "seen-skills");
         }
       }
-      log.debug("dev-server-verify-unavailable-warning", { reason: "agent-browser not installed" });
+      if (warningClaimed) {
+        devServerUnavailableWarning = true;
+        injectedSkills.add(warningKey);
+        if (hasEnvDedup && !sessionId) {
+          process.env.VERCEL_PLUGIN_SEEN_SKILLS = appendSeenSkill(
+            process.env.VERCEL_PLUGIN_SEEN_SKILLS,
+            warningKey
+          );
+        }
+        log.debug("dev-server-verify-unavailable-warning", { reason: "agent-browser not installed" });
+      }
     }
     const verifyIdx = rankedSkills.indexOf(DEV_SERVER_VERIFY_SKILL);
     if (verifyIdx !== -1) {
@@ -700,18 +733,24 @@ function run() {
   }
   let vercelEnvHelpInjected = false;
   if (vercelEnvHelp.triggered) {
-    vercelEnvHelpInjected = true;
-    injectedSkills.add(VERCEL_ENV_HELP_ONCE_KEY);
-    if (hasEnvDedup) {
-      process.env.VERCEL_PLUGIN_SEEN_SKILLS = appendSeenSkill(
-        process.env.VERCEL_PLUGIN_SEEN_SKILLS,
-        VERCEL_ENV_HELP_ONCE_KEY
-      );
-      if (sessionId) {
-        writeSessionFile(sessionId, "seen-skills", process.env.VERCEL_PLUGIN_SEEN_SKILLS || "");
+    let helpClaimed = true;
+    if (sessionId) {
+      helpClaimed = tryClaimSessionKey(sessionId, "seen-skills", VERCEL_ENV_HELP_ONCE_KEY);
+      if (helpClaimed) {
+        process.env.VERCEL_PLUGIN_SEEN_SKILLS = syncSessionFileFromClaims(sessionId, "seen-skills");
       }
     }
-    log.debug("vercel-env-help-injected", { subcommand: vercelEnvHelp.subcommand || "" });
+    if (helpClaimed) {
+      vercelEnvHelpInjected = true;
+      injectedSkills.add(VERCEL_ENV_HELP_ONCE_KEY);
+      if (hasEnvDedup && !sessionId) {
+        process.env.VERCEL_PLUGIN_SEEN_SKILLS = appendSeenSkill(
+          process.env.VERCEL_PLUGIN_SEEN_SKILLS,
+          VERCEL_ENV_HELP_ONCE_KEY
+        );
+      }
+      log.debug("vercel-env-help-injected", { subcommand: vercelEnvHelp.subcommand || "" });
+    }
   }
   if (rankedSkills.length === 0 && !devServerUnavailableWarning && !vercelEnvHelpInjected) {
     const reason = matched.size === 0 ? "no_matches" : "all_deduped";
