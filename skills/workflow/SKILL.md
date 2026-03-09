@@ -352,6 +352,17 @@ async function emit<T>(event: T): Promise<void> {
 
 Consumers read via `getRun(runId).getReadable()` in the readable route (see above).
 
+**Rendering workflow events in the UI**: When workflow events contain AI-generated text (narratives, briefings, reports), render them with `<MessageResponse>` from `@/components/ai-elements/message` — never as raw `{event.content}`. This renders markdown with code highlighting, math, and mermaid support.
+
+```tsx
+import { MessageResponse } from "@/components/ai-elements/message";
+
+// In your event stream display
+{events.map(event => (
+  event.type === "narrative" && <MessageResponse>{event.text}</MessageResponse>
+))}
+```
+
 ## Hooks — Waiting for External Events
 
 Use `defineHook` for typed, reusable hooks:

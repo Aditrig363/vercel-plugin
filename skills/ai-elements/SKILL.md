@@ -91,6 +91,27 @@ Unlike regular UI libraries, AI Elements understands AI-specific patterns — me
 
 The CLI adds components directly to your codebase with full source code access — no hidden dependencies, fully customizable.
 
+## Rendering Any AI-Generated Markdown
+
+**`<MessageResponse>` is the universal markdown renderer.** Use it for ANY AI-generated text — not just chat messages. It's exported from `@/components/ai-elements/message` and wraps Streamdown with code highlighting, math, mermaid, and CJK plugins.
+
+```tsx
+import { MessageResponse } from "@/components/ai-elements/message";
+
+// Workflow event with markdown content
+<MessageResponse>{event.briefing}</MessageResponse>
+
+// Any AI-generated string
+<MessageResponse>{generatedReport}</MessageResponse>
+
+// Streaming text from getWritable events
+<MessageResponse>{narrativeText}</MessageResponse>
+```
+
+**Never render AI text as raw JSX** like `{event.content}` or `<p>{text}</p>` — this displays ugly unformatted markdown with visible `**`, `##`, `---`. Always wrap in `<MessageResponse>`.
+
+This applies everywhere AI text appears: workflow event displays, briefing panels, reports, narrative streams, notifications, email previews.
+
 ## Design Direction for AI Interfaces
 
 AI Elements solves message rendering, not the whole product aesthetic. Surround it with shadcn + Geist discipline. Use Conversation/Message for the stream area, compose the rest with shadcn primitives. Use Geist Sans for conversational UI, Geist Mono for tool args/JSON/code/timestamps. Default to dark mode for AI products. Avoid generic AI styling: purple gradients, glassmorphism everywhere, over-animated status indicators.
