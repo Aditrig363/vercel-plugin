@@ -56,14 +56,14 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("human output", () => {
-  test("--prompt shows table with streamdown matched", async () => {
+  test("--prompt shows table with ai-elements matched", async () => {
     const result = await run([
       "--prompt",
       "add markdown formatting to streamed text",
     ]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Prompt:");
-    expect(result.stdout).toContain("streamdown");
+    expect(result.stdout).toContain("ai-elements");
     expect(result.stdout).toContain("Score");
     expect(result.stdout).toContain("Selected:");
   });
@@ -106,9 +106,9 @@ describe("JSON output", () => {
     expect(report.dedupState).toHaveProperty("seenSkills");
     expect(report.dedupState).toHaveProperty("filteredByDedup");
 
-    // streamdown should match this prompt
-    expect(report.selectedSkills).toContain("streamdown");
-    expect(report.perSkillResults.streamdown?.matched).toBe(true);
+    // ai-elements should match this prompt
+    expect(report.selectedSkills).toContain("ai-elements");
+    expect(report.perSkillResults["ai-elements"]?.matched).toBe(true);
   });
 
   test("no-match JSON has empty selectedSkills", async () => {
@@ -135,14 +135,14 @@ describe("--seen-skills dedup", () => {
       "add markdown formatting to streamed text",
       "--json",
       "--seen-skills",
-      "streamdown",
+      "ai-elements",
     ]);
     expect(result.exitCode).toBe(0);
 
     const report = JSON.parse(result.stdout);
-    expect(report.selectedSkills).not.toContain("streamdown");
-    expect(report.dedupState.filteredByDedup).toContain("streamdown");
-    expect(report.dedupState.seenSkills).toContain("streamdown");
+    expect(report.selectedSkills).not.toContain("ai-elements");
+    expect(report.dedupState.filteredByDedup).toContain("ai-elements");
+    expect(report.dedupState.seenSkills).toContain("ai-elements");
   });
 
   test("multiple seen skills excluded", async () => {
@@ -169,7 +169,7 @@ describe("--budget-bytes", () => {
   test("tiny budget limits selection", async () => {
     const result = await run([
       "--prompt",
-      "use ai sdk streamtext and streamdown streaming markdown in terminal",
+      "use ai sdk streamtext and ai elements streaming markdown in terminal",
       "--json",
       "--budget-bytes",
       "500",
@@ -202,7 +202,7 @@ describe("--max-skills", () => {
   test("max-skills=1 selects at most one skill", async () => {
     const result = await run([
       "--prompt",
-      "use ai sdk streamtext and streamdown streaming markdown in terminal",
+      "use ai sdk streamtext and ai elements streaming markdown in terminal",
       "--json",
       "--max-skills",
       "1",

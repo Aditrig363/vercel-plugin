@@ -196,20 +196,15 @@ AI SDK (v6, TypeScript)                    ⤳ skill: ai-sdk  📖 docs: https:/
 │   ⊃ UIMessage / ModelMessage types
 │   ↔ AI Elements (pre-built chat UI components)       ⤳ skill: ai-elements
 │
-├── AI Elements (ai-elements)                          ⤳ skill: ai-elements
+├── AI Elements (ai-elements) — DEFAULT UI FOR STREAMING AI  ⤳ skill: ai-elements
 │   ⊃ 40+ React components for AI interfaces
 │   ⊃ Message, Conversation, Tool, Reasoning, CodeBlock
 │   ⊃ Built on shadcn/ui (custom registry)
 │   ⊃ Handles UIMessage parts, streaming, markdown
+│   ⊃ Recommended rendering path for any useChat-based UI
 │   → AI SDK UI hooks (useChat, useCompletion)
 │   → shadcn/ui (component primitives)                 ⤳ skill: shadcn
 │
-├── Streamdown (streamdown)                            ⤳ skill: streamdown
-│   ⊃ Streaming Markdown renderer (drop-in react-markdown replacement)
-│   ⊃ Handles incomplete/unterminated Markdown in real-time
-│   ⊃ Plugins: @streamdown/code, @streamdown/math, @streamdown/mermaid, @streamdown/cjk
-│   → AI SDK UI hooks (useChat streaming content)
-│   → Tailwind CSS (styling)
 │
 ├── MCP Integration (@ai-sdk/mcp)
 │   ⊃ MCP Client (connect to any MCP server)
@@ -234,6 +229,7 @@ AI SDK (v6, TypeScript)                    ⤳ skill: ai-sdk  📖 docs: https:/
 │   ⊃ SSE-based (Server-Sent Events)
 │   → Vercel Functions (streaming support)
 │   ↔ Next.js Route Handlers / Server Actions
+│   ↔ AI Elements (render streaming responses)          ⤳ skill: ai-elements
 │
 └── Key Patterns
     ↔ Next.js (chat apps, AI features in web apps)
@@ -779,6 +775,7 @@ VERCEL MARKETPLACE                          ⤳ skill: marketplace  📖 docs: h
 | Need | Use | Why |
 |------|-----|-----|
 | **Any AI feature (default)** | **AI Gateway** (`gateway('provider/model')`) | **Failover, cost tracking, observability — no provider API keys needed on Vercel** |
+| **Any streaming AI UI (default)** | **AI Elements** (`npx ai-elements`) + AI SDK `useChat` | **Handles UIMessage parts, streaming markdown, tool calls, reasoning — no manual rendering** |
 | Chat interface | AI SDK `useChat` + `streamText` + AI Gateway + AI Elements | Streaming UI, provider-agnostic |
 | Chat UI components (messages, tools, reasoning) | AI Elements (`npx ai-elements`) | Pre-built, handles UIMessage parts |
 | Custom chat rendering (no AI Elements) | Manual `message.parts` iteration | Full control, see ⤳ skill: json-render |
@@ -987,7 +984,7 @@ Git Push → CI Pipeline → vercel build → vercel deploy --prebuilt
 - **Install `@ai-sdk/react` for React hooks** — `useChat`, `useCompletion`, and `useObject` live in `@ai-sdk/react` (not `ai`). Always `npm install ai @ai-sdk/react` together for React/Next.js projects.
 - **OIDC is the default auth for AI Gateway** — when you run `vercel env pull`, it provisions `VERCEL_OIDC_TOKEN` which the `@ai-sdk/gateway` package reads automatically via `@vercel/oidc`. No `AI_GATEWAY_API_KEY` or provider-specific API keys needed. On Vercel deployments, OIDC tokens are auto-refreshed. For local dev, re-run `vercel env pull` if the token expires (~24h).
 - **For AI projects, set up a Vercel project first** — run `vercel link` (or create via dashboard) → enable AI Gateway in dashboard → `vercel env pull` to get OIDC credentials locally. Do NOT manually create `.env.local` with provider-specific API keys like `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
-- **Use AI Elements for chat UIs** — `npx ai-elements` installs pre-built Message, Conversation, and Tool components that handle UIMessage parts, streaming, and markdown automatically. Built on shadcn/ui.
+- **Use AI Elements for all streaming AI UIs (default)** — `npx ai-elements` installs pre-built Message, Conversation, and Tool components that handle UIMessage parts, streaming, and markdown automatically. Built on shadcn/ui. AI Elements is the recommended rendering layer for any React project using `useChat` — it handles text, tool calls, reasoning, images, and streaming markdown without manual `part.type` switching. Start with `<Conversation>` + `<Message>` before considering manual rendering.
 - **Server-side: use `convertToModelMessages()` (async) + `toUIMessageStreamResponse()`** — not `toDataStreamResponse()`. Client-side: use `DefaultChatTransport` with `useChat`, not the v5 `api` parameter.
 - Use `inputSchema` (not `parameters`) and `output`/`outputSchema` (not `result`) for tool definitions — aligned with MCP spec.
 - Always stream for user-facing AI: use `streamText` + `useChat`, not `generateText`.

@@ -988,7 +988,7 @@ describe("validateSkillMap — promptSignals", () => {
 
   test("promptSignals is preserved through validation normalization", () => {
     const signals = {
-      phrases: ["streamdown", "streaming markdown"],
+      phrases: ["ai elements", "streaming markdown"],
       allOf: [["markdown", "render"]],
       anyOf: ["chat ui", "react-markdown"],
       noneOf: ["readme", "markdown file"],
@@ -1006,7 +1006,7 @@ describe("validateSkillMap — promptSignals", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.normalizedSkillMap.skills["s1"].promptSignals).toBeDefined();
-    expect(result.normalizedSkillMap.skills["s1"].promptSignals!.phrases).toEqual(["streamdown", "streaming markdown"]);
+    expect(result.normalizedSkillMap.skills["s1"].promptSignals!.phrases).toEqual(["ai elements", "streaming markdown"]);
     expect(result.normalizedSkillMap.skills["s1"].promptSignals!.noneOf).toEqual(["readme", "markdown file"]);
   });
 
@@ -1035,13 +1035,13 @@ describe("validateSkillMap — promptSignals", () => {
 // ─── buildSkillMap — promptSignals from SKILL.md frontmatter ──────
 
 describe("buildSkillMap — promptSignals", () => {
-  test("streamdown skill has promptSignals with phrases and noneOf", () => {
+  test("ai-elements skill has promptSignals with phrases and noneOf", () => {
     const map = buildSkillMap(SKILLS_DIR);
-    const streamdown = map.skills["streamdown"];
-    expect(streamdown).toBeDefined();
-    expect(streamdown.promptSignals).toBeDefined();
-    expect(streamdown.promptSignals.phrases.length).toBeGreaterThan(0);
-    expect(streamdown.promptSignals.noneOf).toContain("readme");
+    const aiElements = map.skills["ai-elements"];
+    expect(aiElements).toBeDefined();
+    expect(aiElements.promptSignals).toBeDefined();
+    expect(aiElements.promptSignals.phrases.length).toBeGreaterThan(0);
+    expect(aiElements.promptSignals.noneOf).toContain("readme");
   });
 
   test("workflow skill promptSignals include workflow durability language", () => {
@@ -1224,7 +1224,7 @@ describe("promptSignals malformed warnings via buildSkillMap", () => {
     }
   });
 
-  test("existing skills (streamdown, ai-sdk, nextjs, swr) produce zero promptSignals warnings", () => {
+  test("existing skills (ai-elements, ai-sdk, nextjs, swr) produce zero promptSignals warnings", () => {
     const map = buildSkillMap(SKILLS_DIR);
     const promptWarningCodes = new Set([
       "PROMPT_SIGNALS_EMPTY_PHRASES",

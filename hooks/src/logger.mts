@@ -32,6 +32,11 @@ interface CompleteCounts {
   cappedCount: number;
   tsxReviewTriggered?: boolean;
   devServerVerifyTriggered?: boolean;
+  matchedSkills?: string[];
+  injectedSkills?: string[];
+  droppedByCap?: string[];
+  droppedByBudget?: string[];
+  boostsApplied?: string[];
 }
 
 export interface Logger {
@@ -122,6 +127,11 @@ export function createLogger(opts?: { level?: LogLevel } | LogLevel): Logger {
         cappedCount = 0,
         tsxReviewTriggered,
         devServerVerifyTriggered,
+        matchedSkills,
+        injectedSkills,
+        droppedByCap,
+        droppedByBudget,
+        boostsApplied,
       } = counts || {};
       emit("summary", "complete", {
         reason,
@@ -131,6 +141,11 @@ export function createLogger(opts?: { level?: LogLevel } | LogLevel): Logger {
         cappedCount,
         ...(tsxReviewTriggered !== undefined ? { tsxReviewTriggered } : {}),
         ...(devServerVerifyTriggered !== undefined ? { devServerVerifyTriggered } : {}),
+        ...(matchedSkills ? { matchedSkills } : {}),
+        ...(injectedSkills ? { injectedSkills } : {}),
+        ...(droppedByCap && droppedByCap.length > 0 ? { droppedByCap } : {}),
+        ...(droppedByBudget && droppedByBudget.length > 0 ? { droppedByBudget } : {}),
+        ...(boostsApplied && boostsApplied.length > 0 ? { boostsApplied } : {}),
         elapsed_ms: Math.round(safeNow() - t0),
         ...(timing ? { timing_ms: timing } : {}),
       });

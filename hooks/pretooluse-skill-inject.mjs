@@ -666,7 +666,7 @@ function run() {
     compiledSkills,
     setupMode
   }, log);
-  const { newEntries, rankedSkills } = dedupResult;
+  const { newEntries, rankedSkills, profilerBoosted } = dedupResult;
   let tsxReviewInjected = false;
   if (tsxReview.triggered && !rankedSkills.includes(TSX_REVIEW_SKILL)) {
     const reviewTemplate = compiledSkills.find((e) => e.skill === TSX_REVIEW_SKILL);
@@ -762,7 +762,10 @@ function run() {
       matchedCount: matched.size,
       dedupedCount: matched.size - rankedSkills.length,
       tsxReviewTriggered: tsxReview.triggered,
-      devServerVerifyTriggered: devServerVerify.triggered
+      devServerVerifyTriggered: devServerVerify.triggered,
+      matchedSkills: [...matched],
+      injectedSkills: [],
+      boostsApplied: profilerBoosted
     }, log.active ? timing : null);
     return "{}";
   }
@@ -805,7 +808,12 @@ function run() {
       dedupedCount: matchedEntries.length - newEntries.length,
       cappedCount: droppedByCap.length + droppedByBudget.length,
       tsxReviewTriggered: tsxReview.triggered,
-      devServerVerifyTriggered: devServerVerify.triggered
+      devServerVerifyTriggered: devServerVerify.triggered,
+      matchedSkills: [...matched],
+      injectedSkills: [],
+      droppedByCap,
+      droppedByBudget,
+      boostsApplied: profilerBoosted
     }, log.active ? timing : null);
     return "{}";
   }
@@ -817,7 +825,12 @@ function run() {
     dedupedCount: matchedEntries.length - newEntries.length,
     cappedCount,
     tsxReviewTriggered: tsxReview.triggered,
-    devServerVerifyTriggered: devServerVerify.triggered
+    devServerVerifyTriggered: devServerVerify.triggered,
+    matchedSkills: [...matched],
+    injectedSkills: loaded,
+    droppedByCap,
+    droppedByBudget,
+    boostsApplied: profilerBoosted
   }, log.active ? timing : null);
   const result = formatOutput({ parts, matched, injectedSkills: loaded, summaryOnly, droppedByCap, droppedByBudget, toolName, toolTarget });
   if (loaded.length > 0) {

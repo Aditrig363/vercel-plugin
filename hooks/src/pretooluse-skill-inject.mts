@@ -7,8 +7,8 @@
  * Input: JSON on stdin with tool_name, tool_input, session_id, cwd
  * Output: JSON on stdout with { hookSpecificOutput: { additionalContext: "..." } } or {}
  *
- * Injects skills in priority order until byte budget (default 12KB) is exhausted,
- * with a hard ceiling of 3 skills. Deduplicates per session.
+ * Injects skills in priority order until byte budget (default 18KB) is exhausted,
+ * with a hard ceiling of 5 skills. Deduplicates per session.
  *
  * Log levels (VERCEL_PLUGIN_LOG_LEVEL): off | summary | debug | trace
  * Legacy: VERCEL_PLUGIN_DEBUG=1 / VERCEL_PLUGIN_HOOK_DEBUG=1 → debug level
@@ -1057,7 +1057,7 @@ function run(): string {
     setupMode,
   }, log);
 
-  const { newEntries, rankedSkills } = dedupResult;
+  const { newEntries, rankedSkills, profilerBoosted } = dedupResult;
 
   // Stage 4.5: Synthetically inject react-best-practices if TSX review triggered
   let tsxReviewInjected = false;
@@ -1170,6 +1170,9 @@ function run(): string {
       dedupedCount: matched.size - rankedSkills.length,
       tsxReviewTriggered: tsxReview.triggered,
       devServerVerifyTriggered: devServerVerify.triggered,
+      matchedSkills: [...matched],
+      injectedSkills: [],
+      boostsApplied: profilerBoosted,
     }, log.active ? timing : null);
     return "{}";
   }
@@ -1223,6 +1226,11 @@ function run(): string {
       cappedCount: droppedByCap.length + droppedByBudget.length,
       tsxReviewTriggered: tsxReview.triggered,
       devServerVerifyTriggered: devServerVerify.triggered,
+      matchedSkills: [...matched],
+      injectedSkills: [],
+      droppedByCap,
+      droppedByBudget,
+      boostsApplied: profilerBoosted,
     }, log.active ? timing : null);
     return "{}";
   }
@@ -1236,6 +1244,11 @@ function run(): string {
     cappedCount,
     tsxReviewTriggered: tsxReview.triggered,
     devServerVerifyTriggered: devServerVerify.triggered,
+    matchedSkills: [...matched],
+    injectedSkills: loaded,
+    droppedByCap,
+    droppedByBudget,
+    boostsApplied: profilerBoosted,
   }, log.active ? timing : null);
 
   // Stage 6: formatOutput

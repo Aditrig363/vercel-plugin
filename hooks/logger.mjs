@@ -59,7 +59,12 @@ function createLogger(opts) {
         dedupedCount = 0,
         cappedCount = 0,
         tsxReviewTriggered,
-        devServerVerifyTriggered
+        devServerVerifyTriggered,
+        matchedSkills,
+        injectedSkills,
+        droppedByCap,
+        droppedByBudget,
+        boostsApplied
       } = counts || {};
       emit("summary", "complete", {
         reason,
@@ -69,6 +74,11 @@ function createLogger(opts) {
         cappedCount,
         ...tsxReviewTriggered !== void 0 ? { tsxReviewTriggered } : {},
         ...devServerVerifyTriggered !== void 0 ? { devServerVerifyTriggered } : {},
+        ...matchedSkills ? { matchedSkills } : {},
+        ...injectedSkills ? { injectedSkills } : {},
+        ...droppedByCap && droppedByCap.length > 0 ? { droppedByCap } : {},
+        ...droppedByBudget && droppedByBudget.length > 0 ? { droppedByBudget } : {},
+        ...boostsApplied && boostsApplied.length > 0 ? { boostsApplied } : {},
         elapsed_ms: Math.round(safeNow() - t0),
         ...timing ? { timing_ms: timing } : {}
       });

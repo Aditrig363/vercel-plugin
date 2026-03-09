@@ -54,7 +54,7 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
     expect(existsSync(HOOK_SCRIPT)).toBe(true);
   });
 
-  test("injects streamdown skill for 'streaming markdown' prompt", async () => {
+  test("injects ai-elements skill for 'streaming markdown' prompt", async () => {
     const { code, stdout } = await runHook(
       "Also, let's add markdown formatting to the streamed text results using streaming markdown",
     );
@@ -62,12 +62,12 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
     const result = JSON.parse(stdout);
     expect(result.hookSpecificOutput).toBeDefined();
     expect(result.hookSpecificOutput.hookEventName).toBe("UserPromptSubmit");
-    expect(result.hookSpecificOutput.additionalContext).toContain("Streamdown");
+    expect(result.hookSpecificOutput.additionalContext).toContain("AI Elements");
 
     const meta = extractSkillInjection(result.hookSpecificOutput);
     expect(meta).toBeDefined();
     expect(meta.hookEvent).toBe("UserPromptSubmit");
-    expect(meta.injectedSkills).toContain("streamdown");
+    expect(meta.injectedSkills).toContain("ai-elements");
   });
 
   test("injects ai-sdk skill for 'ai sdk' prompt", async () => {
@@ -134,19 +134,19 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
   test("dedup prevents re-injection when skill already seen", async () => {
     // First call: skill should inject
     const { stdout: first } = await runHook(
-      "Use streaming markdown with streamdown for the chat output",
+      "Use streaming markdown with ai elements for the chat output",
       { VERCEL_PLUGIN_SEEN_SKILLS: "" },
     );
     const r1 = JSON.parse(first);
     expect(r1.hookSpecificOutput).toBeDefined();
 
     const meta1 = extractSkillInjection(r1.hookSpecificOutput);
-    expect(meta1?.injectedSkills).toContain("streamdown");
+    expect(meta1?.injectedSkills).toContain("ai-elements");
 
-    // Second call: streamdown already seen
+    // Second call: ai-elements already seen
     const { stdout: second } = await runHook(
-      "Use streaming markdown with streamdown for the chat output",
-      { VERCEL_PLUGIN_SEEN_SKILLS: "streamdown" },
+      "Use streaming markdown with ai elements for the chat output",
+      { VERCEL_PLUGIN_SEEN_SKILLS: "ai-elements" },
     );
     const r2 = JSON.parse(second);
     expect(r2).toEqual({});
@@ -160,7 +160,7 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
     // Craft a prompt that could match many skills
     // Use exact phrase hits from multiple skills
     const { code, stdout } = await runHook(
-      "I want to use streamdown for streaming markdown and also the AI SDK for generateText and SWR for useSWR client-side fetching and next.js app router",
+      "I want to use ai elements for streaming markdown and also the AI SDK for generateText and SWR for useSWR client-side fetching and next.js app router",
       { VERCEL_PLUGIN_SEEN_SKILLS: "" },
     );
     expect(code).toBe(0);
@@ -182,7 +182,7 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
 
   test("output has correct hookSpecificOutput shape", async () => {
     const { code, stdout } = await runHook(
-      "Add streamdown to render streaming markdown in the chat component",
+      "Add ai elements to render streaming markdown in the chat component",
     );
     expect(code).toBe(0);
     const result = JSON.parse(stdout);
@@ -221,7 +221,7 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
   test("perf: prompt matching against all real skills completes in <50ms", async () => {
     const start = performance.now();
     const { code, stdout } = await runHook(
-      "Use streamdown for streaming markdown rendering in the terminal",
+      "Use ai elements for streaming markdown rendering in the terminal",
     );
     const elapsed = performance.now() - start;
     expect(code).toBe(0);
@@ -335,10 +335,10 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
 
     test("all-deduped emits prompt-analysis-issue at debug level", async () => {
       const { code, stderr } = await runHook(
-        "Use streaming markdown with streamdown for the chat output",
+        "Use streaming markdown with ai elements for the chat output",
         {
           VERCEL_PLUGIN_LOG_LEVEL: "debug",
-          VERCEL_PLUGIN_SEEN_SKILLS: "streamdown",
+          VERCEL_PLUGIN_SEEN_SKILLS: "ai-elements",
         },
       );
       expect(code).toBe(0);

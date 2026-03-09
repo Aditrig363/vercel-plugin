@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import {
   normalizePromptText,
   compilePromptSignals,
@@ -46,13 +46,13 @@ describe("normalizePromptText", () => {
 describe("compilePromptSignals", () => {
   test("lowercases all signal terms", () => {
     const compiled = compilePromptSignals({
-      phrases: ["StreamDown", "AI SDK"],
+      phrases: ["AI Elements", "AI SDK"],
       allOf: [["Markdown", "Streamed"]],
       anyOf: ["React", "Vue"],
       noneOf: ["README"],
       minScore: 6,
     });
-    expect(compiled.phrases).toEqual(["streamdown", "ai sdk"]);
+    expect(compiled.phrases).toEqual(["ai elements", "ai sdk"]);
     expect(compiled.allOf).toEqual([["markdown", "streamed"]]);
     expect(compiled.anyOf).toEqual(["react", "vue"]);
     expect(compiled.noneOf).toEqual(["readme"]);
@@ -89,7 +89,7 @@ describe("compilePromptSignals", () => {
 
 describe("matchPromptWithReason — phrases", () => {
   const compiled: CompiledPromptSignals = {
-    phrases: ["streaming markdown", "streamdown"],
+    phrases: ["streaming markdown", "ai elements"],
     allOf: [],
     anyOf: [],
     noneOf: [],
@@ -98,17 +98,17 @@ describe("matchPromptWithReason — phrases", () => {
 
   test("single phrase hit scores +6 and matches", () => {
     const result = matchPromptWithReason(
-      "add streamdown to the chat component",
+      "add ai elements to the chat component",
       compiled,
     );
     expect(result.matched).toBe(true);
     expect(result.score).toBe(6);
-    expect(result.reason).toContain('phrase "streamdown" +6');
+    expect(result.reason).toContain('phrase "ai elements" +6');
   });
 
   test("two phrase hits score +12", () => {
     const result = matchPromptWithReason(
-      "use streamdown for streaming markdown in the chat",
+      "use ai elements for streaming markdown in the chat",
       compiled,
     );
     expect(result.matched).toBe(true);
@@ -136,7 +136,7 @@ describe("matchPromptWithReason — phrases", () => {
 
 describe("matchPromptWithReason — allOf", () => {
   const compiled: CompiledPromptSignals = {
-    phrases: ["streamdown"],
+    phrases: ["ai elements"],
     allOf: [
       ["markdown", "streamed", "text"],
       ["terminal", "markdown", "rendering"],
@@ -148,7 +148,7 @@ describe("matchPromptWithReason — allOf", () => {
 
   test("+4 when all terms in a group match", () => {
     const result = matchPromptWithReason(
-      "use streamdown for markdown streamed text output",
+      "use ai elements for markdown streamed text output",
       compiled,
     );
     expect(result.matched).toBe(true);
@@ -160,7 +160,7 @@ describe("matchPromptWithReason — allOf", () => {
   test("no score when only partial group matches", () => {
     // group1 needs "markdown" + "streamed" + "text" — "streamed" absent here
     const result = matchPromptWithReason(
-      "use streamdown with markdown and some plain content",
+      "use ai elements with markdown and some plain content",
       compiled,
     );
     // phrase(6) only, no allOf bonus
@@ -169,7 +169,7 @@ describe("matchPromptWithReason — allOf", () => {
 
   test("partial group does not score when a term is truly absent", () => {
     const result = matchPromptWithReason(
-      "use streamdown with markdown output",
+      "use ai elements with markdown output",
       compiled,
     );
     // phrase(6), group1 needs "streamed" and "text" — "text" absent, "streamed" absent
@@ -179,7 +179,7 @@ describe("matchPromptWithReason — allOf", () => {
 
   test("both allOf groups can score independently", () => {
     const result = matchPromptWithReason(
-      "use streamdown for markdown streamed text in terminal rendering",
+      "use ai elements for markdown streamed text in terminal rendering",
       compiled,
     );
     // phrase(6) + group1(4) + group2(4) = 14
@@ -194,7 +194,7 @@ describe("matchPromptWithReason — allOf", () => {
 
 describe("matchPromptWithReason — anyOf capping", () => {
   const compiled: CompiledPromptSignals = {
-    phrases: ["streamdown"],
+    phrases: ["ai elements"],
     allOf: [],
     anyOf: ["react", "component", "render", "display", "chat"],
     noneOf: [],
@@ -203,7 +203,7 @@ describe("matchPromptWithReason — anyOf capping", () => {
 
   test("anyOf +1 per hit, capped at +2 total", () => {
     const result = matchPromptWithReason(
-      "streamdown react component render display chat",
+      "ai elements react component render display chat",
       compiled,
     );
     // phrase(6) + anyOf capped at 2 = 8
@@ -212,7 +212,7 @@ describe("matchPromptWithReason — anyOf capping", () => {
 
   test("single anyOf hit gives +1", () => {
     const result = matchPromptWithReason(
-      "use streamdown with react",
+      "use ai elements with react",
       compiled,
     );
     // phrase(6) + anyOf(1) = 7
@@ -226,7 +226,7 @@ describe("matchPromptWithReason — anyOf capping", () => {
 
 describe("matchPromptWithReason — noneOf", () => {
   const compiled: CompiledPromptSignals = {
-    phrases: ["streamdown"],
+    phrases: ["ai elements"],
     allOf: [],
     anyOf: [],
     noneOf: ["readme", "markdown file"],
@@ -235,7 +235,7 @@ describe("matchPromptWithReason — noneOf", () => {
 
   test("noneOf term suppresses match entirely", () => {
     const result = matchPromptWithReason(
-      "use streamdown to render the readme",
+      "use ai elements to render the readme",
       compiled,
     );
     expect(result.matched).toBe(false);
@@ -245,7 +245,7 @@ describe("matchPromptWithReason — noneOf", () => {
 
   test("multi-word noneOf term matches as substring", () => {
     const result = matchPromptWithReason(
-      "use streamdown instead of editing the markdown file",
+      "use ai elements instead of editing the markdown file",
       compiled,
     );
     expect(result.matched).toBe(false);
@@ -254,7 +254,7 @@ describe("matchPromptWithReason — noneOf", () => {
 
   test("no suppression when noneOf terms are absent", () => {
     const result = matchPromptWithReason(
-      "use streamdown for streaming markdown in chat",
+      "use ai elements for streaming markdown in chat",
       compiled,
     );
     expect(result.matched).toBe(true);
@@ -269,14 +269,14 @@ describe("matchPromptWithReason — noneOf", () => {
 describe("matchPromptWithReason — threshold boundaries", () => {
   test("score exactly at minScore matches (with phrase hit)", () => {
     const compiled: CompiledPromptSignals = {
-      phrases: ["streamdown"],
+      phrases: ["ai elements"],
       allOf: [],
       anyOf: [],
       noneOf: [],
       minScore: 6,
     };
     const result = matchPromptWithReason(
-      "use streamdown here",
+      "use ai elements here",
       compiled,
     );
     expect(result.matched).toBe(true);
@@ -285,14 +285,14 @@ describe("matchPromptWithReason — threshold boundaries", () => {
 
   test("score one below minScore does not match", () => {
     const compiled: CompiledPromptSignals = {
-      phrases: ["streamdown"],
+      phrases: ["ai elements"],
       allOf: [],
       anyOf: [],
       noneOf: [],
       minScore: 7,
     };
     const result = matchPromptWithReason(
-      "use streamdown here",
+      "use ai elements here",
       compiled,
     );
     expect(result.matched).toBe(false);
@@ -347,15 +347,15 @@ describe("matchPromptWithReason — threshold boundaries", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Real-world scenario: streamdown noneOf suppression
+// Real-world scenario: ai-elements noneOf suppression
 // ---------------------------------------------------------------------------
 
-describe("matchPromptWithReason — real-world streamdown signals", () => {
-  // These mirror the actual streamdown SKILL.md promptSignals
-  const streamdownSignals: CompiledPromptSignals = compilePromptSignals({
-    phrases: ["streaming markdown", "streamdown", "markdown formatting"],
-    allOf: [["markdown", "stream"], ["markdown", "render"]],
-    anyOf: ["terminal", "chat ui", "react-markdown"],
+describe("matchPromptWithReason — real-world ai-elements signals", () => {
+  // These mirror the actual ai-elements SKILL.md promptSignals
+  const aiElementsSignals: CompiledPromptSignals = compilePromptSignals({
+    phrases: ["streaming markdown", "markdown formatting", "ai elements", "streaming ui", "chat components", "chat ui", "chat interface", "streaming response"],
+    allOf: [["markdown", "stream"], ["markdown", "render"], ["chat", "ui"], ["chat", "interface"], ["stream", "response"], ["ai", "component"]],
+    anyOf: ["terminal", "chat ui", "react-markdown", "useChat", "streamText"],
     noneOf: ["readme", "markdown file", "changelog"],
     minScore: 6,
   });
@@ -363,7 +363,7 @@ describe("matchPromptWithReason — real-world streamdown signals", () => {
   test("'write a readme in markdown' does NOT match (noneOf suppression)", () => {
     const result = matchPromptWithReason(
       "write a readme in markdown",
-      streamdownSignals,
+      aiElementsSignals,
     );
     expect(result.matched).toBe(false);
     expect(result.score).toBe(-Infinity);
@@ -373,7 +373,7 @@ describe("matchPromptWithReason — real-world streamdown signals", () => {
   test("'add markdown formatting to the streamed text results' DOES match", () => {
     const result = matchPromptWithReason(
       "Also, let's add markdown formatting to the streamed text results",
-      streamdownSignals,
+      aiElementsSignals,
     );
     expect(result.matched).toBe(true);
     expect(result.score).toBeGreaterThanOrEqual(6);
@@ -382,7 +382,7 @@ describe("matchPromptWithReason — real-world streamdown signals", () => {
   test("'update the changelog with markdown' does NOT match (noneOf)", () => {
     const result = matchPromptWithReason(
       "update the changelog with markdown",
-      streamdownSignals,
+      aiElementsSignals,
     );
     expect(result.matched).toBe(false);
     expect(result.score).toBe(-Infinity);
@@ -391,19 +391,90 @@ describe("matchPromptWithReason — real-world streamdown signals", () => {
   test("'create a markdown file for docs' does NOT match (noneOf)", () => {
     const result = matchPromptWithReason(
       "create a markdown file for the project docs",
-      streamdownSignals,
+      aiElementsSignals,
     );
     expect(result.matched).toBe(false);
     expect(result.score).toBe(-Infinity);
   });
 
+  test("'build a chat ui with streaming' matches via allOf [chat, ui] + phrase", () => {
+    const result = matchPromptWithReason(
+      "build a chat ui with streaming",
+      aiElementsSignals,
+    );
+    expect(result.matched).toBe(true);
+    expect(result.score).toBeGreaterThanOrEqual(6);
+  });
+
   test("anyOf alone (e.g. 'terminal') does NOT meet threshold without phrase", () => {
     const result = matchPromptWithReason(
       "open a terminal and run the build command",
-      streamdownSignals,
+      aiElementsSignals,
     );
     expect(result.matched).toBe(false);
     expect(result.reason).toContain("no phrase hit");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Import-pattern co-firing: ai-elements patterns cover AI SDK imports
+// ---------------------------------------------------------------------------
+
+describe("import-pattern co-firing — ai-elements covers AI SDK imports", () => {
+  let importPatternToRegex: (pattern: string) => RegExp;
+  let matchImportWithReason: any;
+
+  const aiElementsImportPatterns = ["ai", "@ai-sdk/*", "@ai-sdk/react", "@/components/ai-elements/*"];
+  const aiSdkImportPatterns = ["ai", "@ai-sdk/*"];
+
+  beforeEach(async () => {
+    const mod = await import("../hooks/patterns.mjs");
+    importPatternToRegex = mod.importPatternToRegex;
+    matchImportWithReason = mod.matchImportWithReason;
+  });
+
+  function compilePatterns(patterns: string[]) {
+    return patterns.map((p: string) => ({ pattern: p, regex: importPatternToRegex(p) }));
+  }
+
+  test("import from 'ai' triggers both ai-sdk and ai-elements", () => {
+    const content = `import { streamText } from 'ai';\n`;
+    const aiElemResult = matchImportWithReason(content, compilePatterns(aiElementsImportPatterns));
+    const aiSdkResult = matchImportWithReason(content, compilePatterns(aiSdkImportPatterns));
+    expect(aiElemResult).not.toBeNull();
+    expect(aiSdkResult).not.toBeNull();
+  });
+
+  test("import from '@ai-sdk/openai' triggers both ai-sdk and ai-elements", () => {
+    const content = `import { openai } from '@ai-sdk/openai';\n`;
+    const aiElemResult = matchImportWithReason(content, compilePatterns(aiElementsImportPatterns));
+    const aiSdkResult = matchImportWithReason(content, compilePatterns(aiSdkImportPatterns));
+    expect(aiElemResult).not.toBeNull();
+    expect(aiSdkResult).not.toBeNull();
+  });
+
+  test("import from '@ai-sdk/react' triggers both ai-sdk and ai-elements", () => {
+    const content = `import { useChat } from '@ai-sdk/react';\n`;
+    const aiElemResult = matchImportWithReason(content, compilePatterns(aiElementsImportPatterns));
+    const aiSdkResult = matchImportWithReason(content, compilePatterns(aiSdkImportPatterns));
+    expect(aiElemResult).not.toBeNull();
+    expect(aiSdkResult).not.toBeNull();
+  });
+
+  test("import from '@ai-sdk/anthropic' triggers both via wildcard", () => {
+    const content = `import { anthropic } from '@ai-sdk/anthropic';\n`;
+    const aiElemResult = matchImportWithReason(content, compilePatterns(aiElementsImportPatterns));
+    const aiSdkResult = matchImportWithReason(content, compilePatterns(aiSdkImportPatterns));
+    expect(aiElemResult).not.toBeNull();
+    expect(aiSdkResult).not.toBeNull();
+  });
+
+  test("require('ai') also triggers both", () => {
+    const content = `const { generateText } = require('ai');\n`;
+    const aiElemResult = matchImportWithReason(content, compilePatterns(aiElementsImportPatterns));
+    const aiSdkResult = matchImportWithReason(content, compilePatterns(aiSdkImportPatterns));
+    expect(aiElemResult).not.toBeNull();
+    expect(aiSdkResult).not.toBeNull();
   });
 });
 

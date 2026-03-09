@@ -67,9 +67,11 @@ const FILE_MARKERS: FileMarker[] = [
  */
 const PACKAGE_MARKERS: Record<string, string[]> = {
   "next": ["nextjs"],
-  "ai": ["ai-sdk"],
+  "ai": ["ai-sdk", "ai-elements"],
+  "ai-elements": ["ai-elements"],
   "@ai-sdk/openai": ["ai-sdk"],
   "@ai-sdk/anthropic": ["ai-sdk"],
+  "@ai-sdk/react": ["ai-sdk", "ai-elements"],
   "@ai-sdk/gateway": ["ai-sdk", "ai-gateway"],
   "@vercel/blob": ["vercel-storage"],
   "@vercel/kv": ["vercel-storage"],

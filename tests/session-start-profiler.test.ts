@@ -211,6 +211,53 @@ describe("session-start-profiler", () => {
     expect(skills).toContain("observability");
   });
 
+  test("detects ai-elements via ai-elements or @ai-sdk/react packages", async () => {
+    const projectDir = join(tempDir, "ai-elements-project");
+    mkdirSync(projectDir);
+    writeFileSync(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          "ai-elements": "^0.1.0",
+          "@ai-sdk/react": "^1.0.0",
+        },
+      }),
+    );
+
+    const result = await runProfiler({
+      CLAUDE_ENV_FILE: envFile,
+      CLAUDE_PROJECT_ROOT: projectDir,
+    });
+
+    expect(result.code).toBe(0);
+    const skills = parseLikelySkills(readFileSync(envFile, "utf-8"));
+    expect(skills).toContain("ai-elements");
+    expect(skills).toContain("ai-sdk");
+  });
+
+  test("primes ai-elements when ai package is present", async () => {
+    const projectDir = join(tempDir, "ai-implies-elements");
+    mkdirSync(projectDir);
+    writeFileSync(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          ai: "^4.0.0",
+        },
+      }),
+    );
+
+    const result = await runProfiler({
+      CLAUDE_ENV_FILE: envFile,
+      CLAUDE_PROJECT_ROOT: projectDir,
+    });
+
+    expect(result.code).toBe(0);
+    const skills = parseLikelySkills(readFileSync(envFile, "utf-8"));
+    expect(skills).toContain("ai-sdk");
+    expect(skills).toContain("ai-elements");
+  });
+
   test("detects .mcp.json for vercel-api skill", async () => {
     const projectDir = join(tempDir, "mcp-project");
     mkdirSync(projectDir);
