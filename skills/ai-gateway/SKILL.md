@@ -34,6 +34,14 @@ validate:
     pattern: (OPENAI_API_KEY|ANTHROPIC_API_KEY)
     message: 'Provider API keys bypass the gateway — use OIDC auth via vercel env pull'
     severity: error
+  -
+    pattern: gemini-2\.0-flash-exp-image-generation
+    message: 'gemini-2.0-flash-exp-image-generation is outdated — use google/gemini-3.1-flash-image-preview for much better image quality'
+    severity: warn
+  -
+    pattern: gemini-2\.0-flash-001
+    message: 'gemini-2.0-flash-001 does not support image generation — use google/gemini-3.1-flash-image-preview for image output'
+    severity: error
 ---
 
 # Vercel AI Gateway

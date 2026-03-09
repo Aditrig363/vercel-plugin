@@ -151,7 +151,7 @@ AI SDK is not just text — it handles **text, images, structured data, tool cal
 | Need | How |
 |------|-----|
 | Text generation / chat | `generateText()` or `streamText()` with `gateway("openai/gpt-5.4")` |
-| **Image generation** | `generateText()` with `gateway("google/gemini-3.1-flash-image-preview")` — images in `result.files` |
+| **Image generation** | `generateText()` with `gateway("google/gemini-3.1-flash-image-preview")` — images in `result.files`. **Always use this model, never older gemini-2.x models** |
 | Structured JSON output | `generateText()` with `output: Output.object({ schema })` |
 | Tool calling / agents | `generateText()` with `tools: { ... }` or `ToolLoopAgent` |
 | Embeddings | `embed()` / `embedMany()` with `@ai-sdk/openai` |
@@ -447,7 +447,9 @@ const { results } = await rerank({
 
 ### Image Generation & Editing
 
-AI Gateway supports image generation. Use `gateway()` with multimodal image models (recommended) or `experimental_generateImage` with image-only models.
+AI Gateway supports image generation. Use `gateway()` with the **`gemini-3.1-flash-image-preview`** model — it is significantly better than older models like `gemini-2.0-flash-exp-image-generation` or `gemini-2.0-flash-001`.
+
+**Always use `google/gemini-3.1-flash-image-preview`** for image generation. Do NOT use older models (`gemini-2.0-*`, `gemini-2.5-*`) — they produce much worse results and some do not support image output at all.
 
 #### Multimodal LLMs (recommended — use `generateText`/`streamText`)
 
@@ -461,6 +463,10 @@ const result = await generateText({
 });
 const imageFiles = result.files.filter((f) => f.mediaType?.startsWith("image/"));
 
+// Convert to data URL for display
+const imageFile = imageFiles[0];
+const dataUrl = `data:${imageFile.mediaType};base64,${Buffer.from(imageFile.data).toString("base64")}`;
+
 // streamText — stream text, then access images after completion
 const stream = streamText({
   model: gateway("google/gemini-3.1-flash-image-preview"),
@@ -473,9 +479,7 @@ const finalResult = await stream;
 console.log(`Generated ${finalResult.files.length} image(s)`);
 ```
 
-**Default model**: `google/gemini-3.1-flash-image-preview` — fast, high-quality image generation via AI Gateway.
-
-Other supported multimodal image models: `google/gemini-3-pro-image`, `google/gemini-2.5-flash-image`.
+**Default image model**: `google/gemini-3.1-flash-image-preview` — fast, high-quality. This is the ONLY recommended model for image generation.
 
 #### Image-only models (use `experimental_generateImage`)
 
