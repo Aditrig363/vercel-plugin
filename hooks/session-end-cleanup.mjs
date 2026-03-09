@@ -1,10 +1,24 @@
 #!/usr/bin/env node
-import { readFileSync, rmSync, unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+const SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
+function tempSessionIdSegment(sessionId2) {
+  if (SAFE_SESSION_ID_RE.test(sessionId2)) {
+    return sessionId2;
+  }
+  return createHash("sha256").update(sessionId2).digest("hex");
+}
 function removeFileIfPresent(path) {
   try {
     unlinkSync(path);
+  } catch {
+  }
+}
+function removeDirIfPresent(path) {
+  try {
+    rmSync(path, { recursive: true, force: true });
   } catch {
   }
 }
@@ -21,22 +35,19 @@ function parseSessionIdFromStdin() {
 const sessionId = parseSessionIdFromStdin();
 if (sessionId !== null) {
   const tempRoot = tmpdir();
-  removeFileIfPresent(join(tempRoot, `vercel-plugin-${sessionId}-seen-skills.txt`));
-  removeFileIfPresent(join(tempRoot, `vercel-plugin-${sessionId}-validated-files.txt`));
+  const prefix = `vercel-plugin-${tempSessionIdSegment(sessionId)}-`;
+  let entries = [];
   try {
-    rmSync(join(tempRoot, `vercel-plugin-${sessionId}-seen-skills.d`), {
-      recursive: true,
-      force: true
-    });
+    entries = readdirSync(tempRoot).filter((name) => name.startsWith(prefix));
   } catch {
   }
-  try {
-    rmSync(join(tempRoot, `vercel-plugin-${sessionId}-validated-files.d`), {
-      recursive: true,
-      force: true
-    });
-  } catch {
+  for (const entry of entries) {
+    const fullPath = join(tempRoot, entry);
+    if (entry.endsWith(".d") || entry.endsWith("-pending-launches")) {
+      removeDirIfPresent(fullPath);
+    } else {
+      removeFileIfPresent(fullPath);
+    }
   }
-  removeFileIfPresent(join(tempRoot, `vercel-plugin-${sessionId}-subagent-ledger.jsonl`));
 }
 process.exit(0);

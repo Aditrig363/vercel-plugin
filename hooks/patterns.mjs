@@ -114,6 +114,12 @@ function mergeSeenSkillStates(...values) {
   }
   return serializeSeenSkills(merged);
 }
+function mergeScopedSeenSkillStates(scopeId, envValue, fileValue, claimValue) {
+  if (scopeId === "main") {
+    return mergeSeenSkillStates(envValue, fileValue, claimValue);
+  }
+  return mergeSeenSkillStates(fileValue, claimValue);
+}
 function appendSeenSkill(envValue, skill) {
   if (typeof skill !== "string" || skill.trim() === "") return envValue || "";
   const current = typeof envValue === "string" ? envValue.trim() : "";
@@ -214,6 +220,7 @@ export {
   matchBashWithReason,
   matchImportWithReason,
   matchPathWithReason,
+  mergeScopedSeenSkillStates,
   mergeSeenSkillStates,
   parseLikelySkills,
   parseSeenSkills,

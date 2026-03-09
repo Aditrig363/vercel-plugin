@@ -50,6 +50,12 @@ function appendAuditLog(record, hookInputCwd) {
     logCaughtError(log, "hook-env:append-audit-log-failed", error, { auditLogPath });
   }
 }
+function getDedupScopeId(payload) {
+  if (payload && typeof payload === "object" && "agent_id" in payload && typeof payload.agent_id === "string" && payload.agent_id.length > 0) {
+    return payload.agent_id;
+  }
+  return "main";
+}
 const SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
 function dedupSessionIdSegment(sessionId) {
   if (SAFE_SESSION_ID_RE.test(sessionId)) {
@@ -57,39 +63,46 @@ function dedupSessionIdSegment(sessionId) {
   }
   return createHash("sha256").update(sessionId).digest("hex");
 }
-function resolveDedupTempPath(sessionId, basename) {
+function dedupScopeIdSegment(scopeId) {
+  if (SAFE_SESSION_ID_RE.test(scopeId)) {
+    return scopeId;
+  }
+  return createHash("sha256").update(scopeId).digest("hex");
+}
+function resolveDedupTempPath(sessionId, basename, scopeId) {
   const tempRoot = resolve(tmpdir());
-  const candidate = resolve(join(tempRoot, `vercel-plugin-${dedupSessionIdSegment(sessionId)}-${basename}`));
+  const scopeSegment = scopeId ? `-${dedupScopeIdSegment(scopeId)}` : "";
+  const candidate = resolve(join(tempRoot, `vercel-plugin-${dedupSessionIdSegment(sessionId)}${scopeSegment}-${basename}`));
   const tempPrefix = tempRoot.endsWith(sep) ? tempRoot : `${tempRoot}${sep}`;
   if (!candidate.startsWith(tempPrefix)) {
     throw new Error(`dedup temp path escaped tmpdir: tempRoot=${tempRoot} candidate=${candidate}`);
   }
   return candidate;
 }
-function dedupFilePath(sessionId, kind) {
-  return resolveDedupTempPath(sessionId, `${kind}.txt`);
+function dedupFilePath(sessionId, kind, scopeId) {
+  return resolveDedupTempPath(sessionId, `${kind}.txt`, scopeId);
 }
-function dedupClaimDirPath(sessionId, kind) {
-  return resolveDedupTempPath(sessionId, `${kind}.d`);
+function dedupClaimDirPath(sessionId, kind, scopeId) {
+  return resolveDedupTempPath(sessionId, `${kind}.d`, scopeId);
 }
-function readSessionFile(sessionId, kind) {
+function readSessionFile(sessionId, kind, scopeId) {
   try {
-    return readFileSync(dedupFilePath(sessionId, kind), "utf-8");
+    return readFileSync(dedupFilePath(sessionId, kind, scopeId), "utf-8");
   } catch (error) {
-    logCaughtError(log, "hook-env:read-session-file-failed", error, { sessionId, kind });
+    logCaughtError(log, "hook-env:read-session-file-failed", error, { sessionId, kind, scopeId });
     return "";
   }
 }
-function writeSessionFile(sessionId, kind, value) {
+function writeSessionFile(sessionId, kind, value, scopeId) {
   try {
-    writeFileSync(dedupFilePath(sessionId, kind), value, "utf-8");
+    writeFileSync(dedupFilePath(sessionId, kind, scopeId), value, "utf-8");
   } catch (error) {
-    logCaughtError(log, "hook-env:write-session-file-failed", error, { sessionId, kind });
+    logCaughtError(log, "hook-env:write-session-file-failed", error, { sessionId, kind, scopeId });
   }
 }
-function tryClaimSessionKey(sessionId, kind, key) {
+function tryClaimSessionKey(sessionId, kind, key, scopeId) {
   try {
-    const claimDir = dedupClaimDirPath(sessionId, kind);
+    const claimDir = dedupClaimDirPath(sessionId, kind, scopeId);
     mkdirSync(claimDir, { recursive: true });
     const file = join(claimDir, encodeURIComponent(key));
     const fd = openSync(file, "wx");
@@ -102,25 +115,28 @@ function tryClaimSessionKey(sessionId, kind, key) {
     return false;
   }
 }
-function listSessionKeys(sessionId, kind) {
+function listSessionKeys(sessionId, kind, scopeId) {
   try {
-    return readdirSync(dedupClaimDirPath(sessionId, kind)).map((entry) => decodeURIComponent(entry)).filter((entry) => entry !== "").sort();
+    return readdirSync(dedupClaimDirPath(sessionId, kind, scopeId)).map((entry) => decodeURIComponent(entry)).filter((entry) => entry !== "").sort();
   } catch (error) {
-    logCaughtError(log, "hook-env:list-session-keys-failed", error, { sessionId, kind });
+    logCaughtError(log, "hook-env:list-session-keys-failed", error, { sessionId, kind, scopeId });
     return [];
   }
 }
-function syncSessionFileFromClaims(sessionId, kind) {
-  const value = listSessionKeys(sessionId, kind).join(",");
-  writeSessionFile(sessionId, kind, value);
+function syncSessionFileFromClaims(sessionId, kind, scopeId) {
+  const value = listSessionKeys(sessionId, kind, scopeId).join(",");
+  writeSessionFile(sessionId, kind, value, scopeId);
   return value;
 }
-function removeSessionClaimDir(sessionId, kind) {
+function removeSessionClaimDir(sessionId, kind, scopeId) {
   try {
-    rmSync(dedupClaimDirPath(sessionId, kind), { recursive: true, force: true });
+    rmSync(dedupClaimDirPath(sessionId, kind, scopeId), { recursive: true, force: true });
   } catch (error) {
-    logCaughtError(log, "hook-env:remove-session-claim-dir-failed", error, { sessionId, kind });
+    logCaughtError(log, "hook-env:remove-session-claim-dir-failed", error, { sessionId, kind, scopeId });
   }
+}
+function profileCachePath(sessionId) {
+  return resolveDedupTempPath(sessionId, "profile.json");
 }
 function generateVerificationId() {
   return randomUUID();
@@ -148,8 +164,10 @@ export {
   dedupClaimDirPath,
   dedupFilePath,
   generateVerificationId,
+  getDedupScopeId,
   listSessionKeys,
   pluginRoot,
+  profileCachePath,
   readSessionFile,
   removeSessionClaimDir,
   requireEnvFile,

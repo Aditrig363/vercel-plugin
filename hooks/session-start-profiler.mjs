@@ -3,12 +3,13 @@ import {
   appendFileSync,
   constants as fsConstants,
   existsSync,
-  readdirSync
+  readdirSync,
+  writeFileSync
 } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { requireEnvFile, safeReadJson } from "./hook-env.mjs";
+import { profileCachePath, requireEnvFile, safeReadJson } from "./hook-env.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
 const FILE_MARKERS = [
   { file: "next.config.js", skills: ["nextjs", "turbopack"] },
@@ -305,8 +306,19 @@ const AGENT_BROWSER_BINARY = "agent-browser";
 function checkAgentBrowser() {
   return resolveBinaryFromPath(AGENT_BROWSER_BINARY) !== null;
 }
+function parseSessionStartInput() {
+  try {
+    const raw = require("node:fs").readFileSync(0, "utf8");
+    if (!raw.trim()) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 function main() {
   const envFile = requireEnvFile();
+  const hookInput = parseSessionStartInput();
+  const sessionId = hookInput?.session_id ?? null;
   const projectRoot = process.env.CLAUDE_PROJECT_ROOT || process.cwd();
   const greenfield = checkGreenfield(projectRoot);
   if (greenfield) {
@@ -366,6 +378,26 @@ function main() {
       resourceHintCount: setupSignals.resourceHints.length,
       setupMode: setupSignals.setupMode
     });
+  }
+  if (sessionId) {
+    try {
+      const cache = {
+        projectRoot,
+        likelySkills,
+        greenfield: greenfield !== null,
+        bootstrapHints: setupSignals.bootstrapHints,
+        resourceHints: setupSignals.resourceHints,
+        setupMode: setupSignals.setupMode,
+        agentBrowserAvailable,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      writeFileSync(profileCachePath(sessionId), JSON.stringify(cache), "utf-8");
+    } catch (error) {
+      logCaughtError(log, "session-start-profiler:write-profile-cache-failed", error, {
+        sessionId,
+        projectRoot
+      });
+    }
   }
   process.exit(0);
 }

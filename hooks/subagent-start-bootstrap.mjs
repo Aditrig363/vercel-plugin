@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { pluginRoot as resolvePluginRoot } from "./hook-env.mjs";
+import { pluginRoot as resolvePluginRoot, profileCachePath, safeReadFile, safeReadJson } from "./hook-env.mjs";
+import { extractFrontmatter } from "./skill-map-frontmatter.mjs";
 import { loadSkills } from "./pretooluse-skill-inject.mjs";
 import { createLogger } from "./logger.mjs";
 const PLUGIN_ROOT = resolvePluginRoot();
 const MINIMAL_BUDGET_BYTES = 1024;
+const LIGHT_BUDGET_BYTES = 3072;
 const STANDARD_BUDGET_BYTES = 8e3;
-const MINIMAL_AGENT_TYPES = /* @__PURE__ */ new Set(["Explore", "Plan"]);
 const log = createLogger();
 function parseInput() {
   try {
@@ -19,22 +20,48 @@ function parseInput() {
     return null;
   }
 }
-function getLikelySkills() {
+function getLikelySkills(sessionId) {
+  if (sessionId) {
+    const cache = safeReadJson(profileCachePath(sessionId));
+    if (cache && Array.isArray(cache.likelySkills) && cache.likelySkills.length > 0) {
+      log.debug("subagent-start-bootstrap:profile-cache-hit", { sessionId, skills: cache.likelySkills });
+      return cache.likelySkills;
+    }
+    log.debug("subagent-start-bootstrap:profile-cache-miss", { sessionId });
+  }
   const raw = process.env.VERCEL_PLUGIN_LIKELY_SKILLS;
   if (!raw || raw.trim() === "") return [];
   return raw.split(",").map((s) => s.trim()).filter(Boolean);
 }
+function resolveBudgetCategory(agentType) {
+  if (agentType === "Explore") return "minimal";
+  if (agentType === "Plan") return "light";
+  return "standard";
+}
+function budgetBytesForCategory(category) {
+  switch (category) {
+    case "minimal":
+      return MINIMAL_BUDGET_BYTES;
+    case "light":
+      return LIGHT_BUDGET_BYTES;
+    case "standard":
+      return STANDARD_BUDGET_BYTES;
+  }
+}
+function profileLine(agentType, likelySkills) {
+  return "Vercel plugin active. Project likely uses: " + (likelySkills.length > 0 ? likelySkills.join(", ") : "unknown stack") + ".";
+}
 function buildMinimalContext(agentType, likelySkills) {
   const parts = [];
-  parts.push(`<!-- vercel-plugin:subagent-bootstrap agent_type="${agentType}" -->`);
-  parts.push("Vercel plugin active. Project likely uses: " + (likelySkills.length > 0 ? likelySkills.join(", ") : "unknown stack") + ".");
+  parts.push(`<!-- vercel-plugin:subagent-bootstrap agent_type="${agentType}" budget="minimal" -->`);
+  parts.push(profileLine(agentType, likelySkills));
   parts.push("<!-- /vercel-plugin:subagent-bootstrap -->");
   return parts.join("\n");
 }
-function buildStandardContext(agentType, likelySkills, budgetBytes) {
+function buildLightContext(agentType, likelySkills, budgetBytes) {
   const parts = [];
-  parts.push(`<!-- vercel-plugin:subagent-bootstrap agent_type="${agentType}" -->`);
-  parts.push("Vercel plugin active. Project likely uses: " + (likelySkills.length > 0 ? likelySkills.join(", ") : "unknown stack") + ".");
+  parts.push(`<!-- vercel-plugin:subagent-bootstrap agent_type="${agentType}" budget="light" -->`);
+  parts.push(profileLine(agentType, likelySkills));
   let usedBytes = Buffer.byteLength(parts.join("\n"), "utf8");
   const loaded = loadSkills(PLUGIN_ROOT, log);
   if (loaded) {
@@ -50,6 +77,53 @@ function buildStandardContext(agentType, likelySkills, budgetBytes) {
       usedBytes += lineBytes + 1;
     }
   }
+  const constraints = [
+    "Deployment targets Vercel. Use framework conventions (e.g. Next.js app router, API routes).",
+    "Environment variables are managed via `vercel env`. Do not hardcode secrets."
+  ];
+  for (const constraint of constraints) {
+    const lineBytes = Buffer.byteLength(constraint, "utf8");
+    if (usedBytes + lineBytes + 1 > budgetBytes) break;
+    parts.push(constraint);
+    usedBytes += lineBytes + 1;
+  }
+  parts.push("<!-- /vercel-plugin:subagent-bootstrap -->");
+  return parts.join("\n");
+}
+function buildStandardContext(agentType, likelySkills, budgetBytes) {
+  const parts = [];
+  parts.push(`<!-- vercel-plugin:subagent-bootstrap agent_type="${agentType}" budget="standard" -->`);
+  parts.push(profileLine(agentType, likelySkills));
+  let usedBytes = Buffer.byteLength(parts.join("\n"), "utf8");
+  const loaded = loadSkills(PLUGIN_ROOT, log);
+  for (const skill of likelySkills) {
+    const skillPath = join(PLUGIN_ROOT, "skills", skill, "SKILL.md");
+    const raw = safeReadFile(skillPath);
+    if (raw !== null) {
+      const { body } = extractFrontmatter(raw);
+      const content = body.trimStart();
+      const wrapped = `<!-- skill:${skill} -->
+${content}
+<!-- /skill:${skill} -->`;
+      const byteLen = Buffer.byteLength(wrapped, "utf8");
+      if (usedBytes + byteLen + 1 <= budgetBytes) {
+        parts.push(wrapped);
+        usedBytes += byteLen + 1;
+        continue;
+      }
+    }
+    const summary = loaded?.skillMap[skill]?.summary;
+    if (summary) {
+      const line = `<!-- skill:${skill} mode:summary -->
+${summary}
+<!-- /skill:${skill} -->`;
+      const lineBytes = Buffer.byteLength(line, "utf8");
+      if (usedBytes + lineBytes + 1 <= budgetBytes) {
+        parts.push(line);
+        usedBytes += lineBytes + 1;
+      }
+    }
+  }
   parts.push("<!-- /vercel-plugin:subagent-bootstrap -->");
   return parts.join("\n");
 }
@@ -60,18 +134,25 @@ function main() {
   }
   const agentId = input.agent_id ?? "unknown";
   const agentType = input.agent_type ?? "unknown";
-  log.debug("subagent-start-bootstrap", { agentId, agentType });
-  const likelySkills = getLikelySkills();
-  const isMinimal = MINIMAL_AGENT_TYPES.has(agentType);
+  const sessionId = input.session_id;
+  log.debug("subagent-start-bootstrap", { agentId, agentType, sessionId });
+  const likelySkills = getLikelySkills(sessionId);
+  const category = resolveBudgetCategory(agentType);
+  const maxBytes = budgetBytesForCategory(category);
   let context;
-  if (isMinimal) {
-    context = buildMinimalContext(agentType, likelySkills);
-  } else {
-    context = buildStandardContext(agentType, likelySkills, STANDARD_BUDGET_BYTES);
+  switch (category) {
+    case "minimal":
+      context = buildMinimalContext(agentType, likelySkills);
+      break;
+    case "light":
+      context = buildLightContext(agentType, likelySkills, maxBytes);
+      break;
+    case "standard":
+      context = buildStandardContext(agentType, likelySkills, maxBytes);
+      break;
   }
-  const maxBytes = isMinimal ? MINIMAL_BUDGET_BYTES : STANDARD_BUDGET_BYTES;
   if (Buffer.byteLength(context, "utf8") > maxBytes) {
-    context = context.slice(0, maxBytes);
+    context = Buffer.from(context, "utf8").subarray(0, maxBytes).toString("utf8");
   }
   const output = {
     hookSpecificOutput: {
@@ -88,6 +169,10 @@ if (isEntrypoint) {
   main();
 }
 export {
+  LIGHT_BUDGET_BYTES,
+  MINIMAL_BUDGET_BYTES,
+  STANDARD_BUDGET_BYTES,
+  buildLightContext,
   buildMinimalContext,
   buildStandardContext,
   getLikelySkills,
