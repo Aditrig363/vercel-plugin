@@ -1,12 +1,45 @@
 import { basename } from "node:path";
-function globToRegex(pattern) {
-  if (typeof pattern !== "string") {
-    throw new TypeError(`globToRegex: expected string, got ${typeof pattern}`);
+const REGEX_META_CHARS = ".()+[]{}|^$\\";
+function parseBraceExpansion(pattern, startIndex) {
+  let depth = 0;
+  let current = "";
+  let sawTopLevelComma = false;
+  const alternatives = [];
+  for (let i = startIndex; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (i === startIndex) {
+      depth = 1;
+      continue;
+    }
+    if (c === "{") {
+      depth++;
+      current += c;
+      continue;
+    }
+    if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        if (!sawTopLevelComma) {
+          return null;
+        }
+        alternatives.push(current);
+        return { alternatives, endIndex: i };
+      }
+      current += c;
+      continue;
+    }
+    if (c === "," && depth === 1) {
+      sawTopLevelComma = true;
+      alternatives.push(current);
+      current = "";
+      continue;
+    }
+    current += c;
   }
-  if (pattern === "") {
-    throw new Error("globToRegex: pattern must not be empty");
-  }
-  let re = "^";
+  return null;
+}
+function globPatternToRegexSource(pattern) {
+  let re = "";
   let i = 0;
   while (i < pattern.length) {
     const c = pattern[i];
@@ -22,17 +55,39 @@ function globToRegex(pattern) {
         continue;
       }
       re += "[^/]*";
-    } else if (c === "?") {
+      i++;
+      continue;
+    }
+    if (c === "?") {
       re += "[^/]";
-    } else if (".()+[]{}|^$\\".includes(c)) {
+      i++;
+      continue;
+    }
+    if (c === "{") {
+      const expansion = parseBraceExpansion(pattern, i);
+      if (expansion) {
+        re += `(?:${expansion.alternatives.map(globPatternToRegexSource).join("|")})`;
+        i = expansion.endIndex + 1;
+        continue;
+      }
+    }
+    if (REGEX_META_CHARS.includes(c)) {
       re += "\\" + c;
     } else {
       re += c;
     }
     i++;
   }
-  re += "$";
-  return new RegExp(re);
+  return re;
+}
+function globToRegex(pattern) {
+  if (typeof pattern !== "string") {
+    throw new TypeError(`globToRegex: expected string, got ${typeof pattern}`);
+  }
+  if (pattern === "") {
+    throw new Error("globToRegex: pattern must not be empty");
+  }
+  return new RegExp(`^${globPatternToRegexSource(pattern)}$`);
 }
 function parseSeenSkills(envValue) {
   if (typeof envValue !== "string" || envValue.trim() === "") {

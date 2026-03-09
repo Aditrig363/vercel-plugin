@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
@@ -9,7 +10,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 function pluginRoot(metaUrl) {
   const base = metaUrl ?? import.meta.url;
@@ -46,11 +47,27 @@ function appendAuditLog(record, hookInputCwd) {
   } catch {
   }
 }
+const SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
+function dedupSessionIdSegment(sessionId) {
+  if (SAFE_SESSION_ID_RE.test(sessionId)) {
+    return sessionId;
+  }
+  return createHash("sha256").update(sessionId).digest("hex");
+}
+function resolveDedupTempPath(sessionId, basename) {
+  const tempRoot = resolve(tmpdir());
+  const candidate = resolve(join(tempRoot, `vercel-plugin-${dedupSessionIdSegment(sessionId)}-${basename}`));
+  const tempPrefix = tempRoot.endsWith(sep) ? tempRoot : `${tempRoot}${sep}`;
+  if (!candidate.startsWith(tempPrefix)) {
+    throw new Error(`dedup temp path escaped tmpdir: tempRoot=${tempRoot} candidate=${candidate}`);
+  }
+  return candidate;
+}
 function dedupFilePath(sessionId, kind) {
-  return join(tmpdir(), `vercel-plugin-${sessionId}-${kind}.txt`);
+  return resolveDedupTempPath(sessionId, `${kind}.txt`);
 }
 function dedupClaimDirPath(sessionId, kind) {
-  return join(tmpdir(), `vercel-plugin-${sessionId}-${kind}.d`);
+  return resolveDedupTempPath(sessionId, `${kind}.d`);
 }
 function readSessionFile(sessionId, kind) {
   try {
