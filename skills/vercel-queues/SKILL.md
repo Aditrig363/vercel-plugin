@@ -10,8 +10,17 @@ metadata:
     - 'lib/queue.*'
     - 'src/lib/queues.*'
     - 'src/lib/queue.*'
+    - 'workflows/**'
+    - 'src/workflows/**'
+    - 'app/api/workflow/**'
+    - 'src/app/api/workflow/**'
+    - 'app/api/workflows/**'
+    - 'src/app/api/workflows/**'
     - 'vercel.ts'
     - 'vercel.mts'
+  importPatterns:
+    - 'workflow'
+    - '@vercel/workflow'
   bashPatterns:
     - '\bnpm\s+(install|i|add)\s+[^\n]*@vercel/queue\b'
     - '\bpnpm\s+(install|i|add)\s+[^\n]*@vercel/queue\b'

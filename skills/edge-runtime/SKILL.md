@@ -5,6 +5,10 @@ metadata:
   priority: 4
   pathPatterns:
     - 'edge-runtime.config.*'
+    - 'middleware.ts'
+    - 'middleware.js'
+    - 'src/middleware.ts'
+    - 'src/middleware.js'
   importPatterns:
     - 'edge-runtime'
     - '@edge-runtime/*'
@@ -17,6 +21,11 @@ metadata:
     - '\bpnpm\s+(install|i|add)\s+[^\n]*@edge-runtime/'
     - '\bbun\s+(install|i|add)\s+[^\n]*@edge-runtime/'
     - '\byarn\s+add\s+[^\n]*@edge-runtime/'
+  promptSignals:
+    phrases:
+      - 'edge runtime'
+      - 'edge function'
+      - 'run at the edge'
 validate:
   -
     pattern: from\s+['"](node:)?fs['"]

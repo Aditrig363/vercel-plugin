@@ -18,6 +18,9 @@ metadata:
     - 'src/lib/resend.*'
     - 'lib/email.*'
     - 'src/lib/email.*'
+    - 'lib/email*'
+    - 'src/lib/email*'
+    - '**/email-template*'
   bashPatterns:
     - '\bnpm\s+(install|i|add)\s+[^\n]*\bresend\b'
     - '\bpnpm\s+(install|i|add)\s+[^\n]*\bresend\b'

@@ -7,6 +7,14 @@ metadata:
     - '.vercel/firewall/**'
   bashPatterns:
     - '\bvercel\s+firewall\b'
+  promptSignals:
+    phrases:
+      - 'rate limit'
+      - 'rate limiting'
+      - 'firewall'
+      - 'WAF'
+      - 'DDoS protection'
+    minScore: 6
 ---
 
 # Vercel Firewall
