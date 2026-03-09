@@ -3,9 +3,11 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pluginRoot as resolvePluginRoot, profileCachePath, safeReadFile, safeReadJson } from "./hook-env.mjs";
-import { extractFrontmatter } from "./skill-map-frontmatter.mjs";
+import { createLogger, logCaughtError } from "./logger.mjs";
+import { compilePromptSignals, matchPromptWithReason, normalizePromptText } from "./prompt-patterns.mjs";
 import { loadSkills } from "./pretooluse-skill-inject.mjs";
-import { createLogger } from "./logger.mjs";
+import { buildSkillMap, extractFrontmatter } from "./skill-map-frontmatter.mjs";
+import { claimPendingLaunch } from "./subagent-state.mjs";
 const PLUGIN_ROOT = resolvePluginRoot();
 const MINIMAL_BUDGET_BYTES = 1024;
 const LIGHT_BUDGET_BYTES = 3072;
@@ -47,6 +49,50 @@ function budgetBytesForCategory(category) {
     case "standard":
       return STANDARD_BUDGET_BYTES;
   }
+}
+function getPromptMatchedSkills(promptText) {
+  const normalizedPrompt = normalizePromptText(promptText);
+  if (!normalizedPrompt) return [];
+  try {
+    const { skills: skillMap, diagnostics } = buildSkillMap(join(PLUGIN_ROOT, "skills"));
+    if (diagnostics.length > 0) {
+      log.debug("subagent-start-bootstrap:prompt-skill-diagnostics", {
+        diagnosticCount: diagnostics.length
+      });
+    }
+    const matches = [];
+    for (const [skill, config] of Object.entries(skillMap)) {
+      if (!config.promptSignals) continue;
+      const compiled = compilePromptSignals(config.promptSignals);
+      const result = matchPromptWithReason(normalizedPrompt, compiled);
+      if (!result.matched) continue;
+      matches.push({
+        skill,
+        score: result.score,
+        priority: config.priority
+      });
+    }
+    matches.sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      if (right.priority !== left.priority) return right.priority - left.priority;
+      return left.skill.localeCompare(right.skill);
+    });
+    const matchedSkills = matches.map((entry) => entry.skill);
+    log.debug("subagent-start-bootstrap:prompt-skill-match", {
+      promptLength: promptText.length,
+      matchedSkills
+    });
+    return matchedSkills;
+  } catch (error) {
+    logCaughtError(log, "subagent-start-bootstrap:prompt-skill-match-failed", error, {
+      promptLength: promptText.length
+    });
+    return [];
+  }
+}
+function mergeLikelySkills(likelySkills, promptMatchedSkills) {
+  if (promptMatchedSkills.length === 0) return likelySkills;
+  return [.../* @__PURE__ */ new Set([...promptMatchedSkills, ...likelySkills])];
 }
 function profileLine(agentType, likelySkills) {
   return "Vercel plugin active. Project likely uses: " + (likelySkills.length > 0 ? likelySkills.join(", ") : "unknown stack") + ".";
@@ -136,19 +182,29 @@ function main() {
   const agentType = input.agent_type ?? "unknown";
   const sessionId = input.session_id;
   log.debug("subagent-start-bootstrap", { agentId, agentType, sessionId });
+  const pendingLaunch = sessionId ? claimPendingLaunch(sessionId, agentType) : null;
   const likelySkills = getLikelySkills(sessionId);
+  const launchPromptSkills = pendingLaunch ? getPromptMatchedSkills(`${pendingLaunch.description} ${pendingLaunch.prompt}`.trim()) : [];
+  const effectiveLikelySkills = pendingLaunch ? mergeLikelySkills(likelySkills, launchPromptSkills) : likelySkills;
+  log.debug("subagent-start-bootstrap:pending-launch", {
+    sessionId,
+    agentType,
+    claimedLaunch: pendingLaunch !== null,
+    launchPromptSkills,
+    likelySkills: effectiveLikelySkills
+  });
   const category = resolveBudgetCategory(agentType);
   const maxBytes = budgetBytesForCategory(category);
   let context;
   switch (category) {
     case "minimal":
-      context = buildMinimalContext(agentType, likelySkills);
+      context = buildMinimalContext(agentType, effectiveLikelySkills);
       break;
     case "light":
-      context = buildLightContext(agentType, likelySkills, maxBytes);
+      context = buildLightContext(agentType, effectiveLikelySkills, maxBytes);
       break;
     case "standard":
-      context = buildStandardContext(agentType, likelySkills, maxBytes);
+      context = buildStandardContext(agentType, effectiveLikelySkills, maxBytes);
       break;
   }
   if (Buffer.byteLength(context, "utf8") > maxBytes) {
@@ -176,6 +232,8 @@ export {
   buildMinimalContext,
   buildStandardContext,
   getLikelySkills,
+  getPromptMatchedSkills,
   main,
+  mergeLikelySkills,
   parseInput
 };
