@@ -28,6 +28,8 @@ const RESULTS_DIR = join(homedir(), "dev", "vercel-plugin-testing", "sandbox-res
 const args = process.argv.slice(2);
 const concurrencyArg = args.includes("--concurrency") ? parseInt(args[args.indexOf("--concurrency") + 1], 10) : 5;
 const timeoutArg = args.includes("--timeout") ? parseInt(args[args.indexOf("--timeout") + 1], 10) : 1_800_000; // 30 min default
+const KEEP_ALIVE = args.includes("--keep-alive"); // Keep sandboxes running after eval for overnight checks
+const KEEP_ALIVE_HOURS = args.includes("--keep-hours") ? parseInt(args[args.indexOf("--keep-hours") + 1], 10) : 8;
 const CONCURRENCY = Math.min(Math.max(concurrencyArg, 1), 10);
 const TIMEOUT_MS = timeoutArg;
 
@@ -248,6 +250,33 @@ async function runScenario(
     const claimedSkills = (await sh(sandbox, "ls /tmp/vercel-plugin-*-seen-skills.d/ 2>/dev/null")).split("\n").filter(Boolean);
     const projectFilesList = (await sh(sandbox, `find ${projectDir} -maxdepth 3 -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/.next/*' -not -path '*/.claude/*' -type f 2>/dev/null | head -40`)).split("\n").filter(Boolean);
 
+    // 10. If --keep-alive, start dev server and extend timeout
+    if (KEEP_ALIVE && projectFilesList.length > 0) {
+      console.log(`  [${scenario.slug}] Starting dev server for keep-alive...`);
+      // Check if next is installed
+      const hasNext = await sh(sandbox, `test -f ${projectDir}/node_modules/.bin/next && echo YES || echo NO`);
+      if (hasNext === "YES") {
+        await sh(sandbox, `cd ${projectDir} && nohup npx next dev --port 3000 --turbopack > /tmp/next-dev.log 2>&1 & echo started`);
+        // Wait for it to come up
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 3000));
+          const status = await sh(sandbox, "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000 2>/dev/null");
+          if (status === "200" || status === "307") {
+            try { appUrl = sandbox.domain(3000); } catch {}
+            console.log(`  [${scenario.slug}] Dev server UP: ${appUrl}`);
+            break;
+          }
+        }
+        // Extend timeout
+        try {
+          await sandbox.extendTimeout(KEEP_ALIVE_HOURS * 60 * 60 * 1000);
+          console.log(`  [${scenario.slug}] Extended timeout by ${KEEP_ALIVE_HOURS}h`);
+        } catch (e: any) {
+          console.log(`  [${scenario.slug}] extendTimeout failed: ${e.message?.slice(0, 80)}`);
+        }
+      }
+    }
+
     console.log(`  [${scenario.slug}] DONE (${elapsed(t0)}) | exit=${sessionExit} | skills=${claimedSkills.length} | files=${projectFilesList.length}${appUrl ? ` | url=${appUrl}` : ""}`);
 
     return {
@@ -275,7 +304,8 @@ async function runScenario(
       pollHistory,
     };
   } finally {
-    if (sandbox) {
+    // Only stop sandbox if NOT keeping alive
+    if (sandbox && !KEEP_ALIVE) {
       try { await sandbox.stop(); } catch {}
     }
   }
@@ -362,7 +392,31 @@ async function main() {
     if (extra.length) console.log(`    bonus: ${extra.join(", ")}`);
   }
 
-  process.exit(passed === results.length ? 0 : 1);
+  if (!KEEP_ALIVE) {
+    process.exit(passed === results.length ? 0 : 1);
+  }
+
+  // --keep-alive: print URLs and keep process running
+  const liveApps = results.filter(r => r.appUrl);
+  if (liveApps.length > 0) {
+    console.log(`\n=== SANDBOXES KEPT ALIVE (${KEEP_ALIVE_HOURS}h) ===`);
+    console.log("Check these URLs in your browser:\n");
+    for (const r of liveApps) {
+      console.log(`  ${r.slug}: ${r.appUrl}`);
+    }
+    console.log(`\nProcess will keep running to maintain sandbox heartbeat.`);
+    console.log(`Press Ctrl+C to stop all sandboxes.\n`);
+
+    // Save URLs to a file for easy reference
+    await writeFile(join(resultsPath, "live-urls.json"), JSON.stringify(
+      Object.fromEntries(liveApps.map(r => [r.slug, { url: r.appUrl, sandboxId: r.sandboxId }])),
+      null, 2,
+    ));
+
+    // The sandboxes already had extendTimeout called. Just keep the process alive.
+    // The sandbox SDK doesn't need periodic pings — extendTimeout set the lifetime.
+    await new Promise(() => {}); // Block forever (Ctrl+C to exit)
+  }
 }
 
 main().catch(e => { console.error("Fatal:", e); process.exit(2); });
