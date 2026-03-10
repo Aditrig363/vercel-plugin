@@ -5,6 +5,7 @@ metadata:
   priority: 5
   docs:
     - "https://vercel.com/docs/security/vercel-firewall"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - '.vercel/firewall/**'
   bashPatterns:

@@ -572,6 +572,8 @@ function buildSkillMap(rootDir) {
       coerceStrings: true,
       addWarning
     });
+    const rawSitemap = meta.sitemap;
+    const sitemap = typeof rawSitemap === "string" && rawSitemap.length > 0 ? rawSitemap : void 0;
     const entry = {
       priority: meta.priority ?? 5,
       summary: skill.summary || "",
@@ -581,6 +583,9 @@ function buildSkillMap(rootDir) {
       importPatterns: filteredImportPatterns,
       validate: skill.validate
     };
+    if (sitemap) {
+      entry.sitemap = sitemap;
+    }
     if (promptSignals) {
       entry.promptSignals = promptSignals;
     }
@@ -600,6 +605,7 @@ const KNOWN_KEYS = /* @__PURE__ */ new Set([
   "priority",
   "summary",
   "docs",
+  "sitemap",
   "pathPatterns",
   "bashPatterns",
   "importPatterns",
@@ -752,6 +758,7 @@ function validateSkillMap(raw) {
       skill,
       addWarning
     });
+    const sitemap = typeof cfg.sitemap === "string" && cfg.sitemap.length > 0 ? cfg.sitemap : void 0;
     const normalizedEntry = {
       priority,
       summary,
@@ -761,6 +768,9 @@ function validateSkillMap(raw) {
       importPatterns,
       validate
     };
+    if (sitemap) {
+      normalizedEntry.sitemap = sitemap;
+    }
     if (promptSignals) {
       normalizedEntry.promptSignals = promptSignals;
     }

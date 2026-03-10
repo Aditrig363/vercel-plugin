@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://vercel.com/font"
     - "https://github.com/vercel/geist-font"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'app/layout.*'
     - 'src/app/layout.*'

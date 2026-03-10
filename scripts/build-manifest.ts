@@ -104,6 +104,7 @@ function buildManifest(skillsDir: string): { manifest: Manifest; warnings: strin
       priority: config.priority,
       summary: config.summary,
       docs: config.docs,
+      ...(config.sitemap ? { sitemap: config.sitemap } : {}),
       pathPatterns,
       bashPatterns,
       importPatterns,

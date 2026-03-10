@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://sdk.vercel.ai/docs"
     - "https://sdk.vercel.ai/docs/reference"
+  sitemap: "https://sdk.vercel.ai/sitemap.xml"
   pathPatterns:
     - "app/api/chat/**"
     - "app/api/completion/**"

@@ -5,6 +5,7 @@ metadata:
   priority: 6
   docs:
     - "https://vercel.com/docs/cron-jobs"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'vercel.json'
     - 'apps/*/vercel.json'

@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://vercel.com/docs/workflow-collaboration/feature-flags"
     - "https://flags-sdk.dev"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'flags.ts'
     - 'flags.js'

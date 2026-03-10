@@ -409,7 +409,7 @@ export function formatOutput(
   droppedByCap: string[],
   droppedByBudget: string[],
   promptMatchReasons?: Record<string, string>,
-  skillMap?: Record<string, { docs?: string[] }>,
+  skillMap?: Record<string, { docs?: string[]; sitemap?: string }>,
 ): string {
   if (parts.length === 0) {
     return "{}";

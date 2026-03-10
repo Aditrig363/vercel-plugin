@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://vercel.com/docs/observability"
     - "https://vercel.com/docs/observability/otel-overview"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'instrumentation.ts'
     - 'instrumentation.js'

@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://vercel.com/docs/solutions/cms"
     - "https://nextjs.org/docs/app/building-your-application/data-fetching"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'sanity.config.*'
     - 'sanity.cli.*'

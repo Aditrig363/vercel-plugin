@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://docs.stripe.com"
     - "https://docs.stripe.com/payments/quickstart"
+  sitemap: "https://docs.stripe.com/sitemap.xml"
   pathPatterns:
     - 'app/api/webhook/stripe/**'
     - 'app/api/webhooks/stripe/**'

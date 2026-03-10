@@ -5,6 +5,7 @@ metadata:
   priority: 5
   docs:
     - "https://turborepo.dev/docs"
+  sitemap: "https://turborepo.dev/sitemap.xml"
   pathPatterns: 
     - 'turbo.json'
     - 'turbo/**'

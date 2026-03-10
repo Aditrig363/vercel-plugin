@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://vercel.com/docs/functions/runtimes/edge-runtime"
     - "https://edge-runtime.vercel.app"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'edge-runtime.config.*'
     - 'middleware.ts'

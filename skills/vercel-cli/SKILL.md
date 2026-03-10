@@ -5,6 +5,7 @@ metadata:
   priority: 4
   docs:
     - "https://vercel.com/docs/cli"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'vercel.json'
     - 'vercel.ts'

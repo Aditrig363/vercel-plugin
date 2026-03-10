@@ -73,6 +73,7 @@ export interface SkillConfig {
   priority: number;
   summary: string;
   docs: string[];
+  sitemap?: string;
   pathPatterns: string[];
   bashPatterns: string[];
   importPatterns: string[];
@@ -924,6 +925,13 @@ export function buildSkillMap(rootDir: string): SkillMapResult {
       addWarning,
     });
 
+    // Parse sitemap (optional single URL string)
+    const rawSitemap = meta.sitemap;
+    const sitemap =
+      typeof rawSitemap === "string" && rawSitemap.length > 0
+        ? rawSitemap
+        : undefined;
+
     // Key by directory name -- the canonical identity of a skill.
     // Frontmatter `name` may differ; directory name is authoritative.
     const entry: SkillConfig = {
@@ -935,6 +943,9 @@ export function buildSkillMap(rootDir: string): SkillMapResult {
       importPatterns: filteredImportPatterns,
       validate: skill.validate,
     };
+    if (sitemap) {
+      entry.sitemap = sitemap;
+    }
     if (promptSignals) {
       entry.promptSignals = promptSignals;
     }
@@ -960,6 +971,7 @@ const KNOWN_KEYS = new Set([
   "priority",
   "summary",
   "docs",
+  "sitemap",
   "pathPatterns",
   "bashPatterns",
   "importPatterns",
@@ -1149,6 +1161,12 @@ export function validateSkillMap(raw: unknown): ValidationResult {
       addWarning,
     });
 
+    // Normalize sitemap (optional string URL)
+    const sitemap =
+      typeof cfg.sitemap === "string" && cfg.sitemap.length > 0
+        ? cfg.sitemap
+        : undefined;
+
     const normalizedEntry: SkillConfig = {
       priority,
       summary,
@@ -1158,6 +1176,9 @@ export function validateSkillMap(raw: unknown): ValidationResult {
       importPatterns,
       validate,
     };
+    if (sitemap) {
+      normalizedEntry.sitemap = sitemap;
+    }
     if (promptSignals) {
       normalizedEntry.promptSignals = promptSignals;
     }

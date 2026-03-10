@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://vercel.com/docs/functions"
     - "https://vercel.com/docs/functions/runtimes"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'api/**/*.*'
     - 'pages/api/**'

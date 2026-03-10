@@ -6,6 +6,7 @@ metadata:
   priority: 7
   docs:
     - "https://vercel.com/docs/projects/project-configuration"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns: []
   bashPatterns:
     - '\bnext\s+dev\b'

@@ -5,6 +5,7 @@ metadata:
   priority: 5
   docs:
     - "https://sdk.vercel.ai/docs/ai-sdk-ui/chatbot-with-tool-calling"
+  sitemap: "https://sdk.vercel.ai/sitemap.xml"
   pathPatterns:
     - 'components/ai-elements/**'
     - 'src/components/ai-elements/**'

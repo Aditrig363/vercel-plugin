@@ -6,6 +6,7 @@ metadata:
   priority: 6
   docs:
     - "https://sdk.vercel.ai/docs/ai-sdk-ui/storing-messages"
+  sitemap: "https://sdk.vercel.ai/sitemap.xml"
   pathPatterns:
     - "app/api/generate/**"
     - "app/api/generations/**"

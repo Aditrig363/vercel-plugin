@@ -217,9 +217,14 @@ function buildDocsBlock(injectedSkills, skillMap) {
   if (!skillMap) return "";
   const entries = [];
   for (const skill of injectedSkills) {
-    const docs = skillMap[skill]?.docs;
+    const cfg = skillMap[skill];
+    const docs = cfg?.docs;
     if (docs && docs.length > 0) {
-      entries.push(`  - **${skill}**: ${docs.join(" , ")}`);
+      let line = `  - **${skill}**: ${docs.join(" , ")}`;
+      if (cfg?.sitemap) {
+        line += ` (sitemap: ${cfg.sitemap})`;
+      }
+      entries.push(line);
     }
   }
   if (entries.length === 0) return "";

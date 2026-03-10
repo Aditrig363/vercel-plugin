@@ -5,6 +5,7 @@ metadata:
   priority: 7
   docs:
     - "https://vercel.com/docs/storage"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'lib/blob/**'
     - 'lib/storage/**'

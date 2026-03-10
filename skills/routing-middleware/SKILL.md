@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://nextjs.org/docs/app/building-your-application/routing/middleware"
     - "https://vercel.com/docs/routing-middleware"
+  sitemap: "https://nextjs.org/sitemap.xml"
   pathPatterns: 
     - 'middleware.ts'
     - 'middleware.js'

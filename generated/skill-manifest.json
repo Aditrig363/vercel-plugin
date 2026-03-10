@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-10T18:46:46.927Z",
+  "generatedAt": "2026-03-10T20:27:16.789Z",
   "version": 2,
   "skills": {
     "vercel-agent": {
@@ -9,6 +9,7 @@
         "https://vercel.com/docs",
         "https://sdk.vercel.ai/docs"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         ".github/workflows/vercel*.yml",
         ".github/workflows/vercel*.yaml",
@@ -63,6 +64,7 @@
         "https://nextjs.org/docs/app/building-your-application/routing/middleware",
         "https://vercel.com/docs/routing-middleware"
       ],
+      "sitemap": "https://nextjs.org/sitemap.xml",
       "pathPatterns": [
         "middleware.ts",
         "middleware.js",
@@ -441,6 +443,7 @@
       "docs": [
         "https://nextjs.org/docs/app/api-reference/file-conventions/route"
       ],
+      "sitemap": "https://nextjs.org/sitemap.xml",
       "pathPatterns": [
         "components/chat/**",
         "components/chat-*.tsx",
@@ -495,6 +498,7 @@
         "https://docs.stripe.com",
         "https://docs.stripe.com/payments/quickstart"
       ],
+      "sitemap": "https://docs.stripe.com/sitemap.xml",
       "pathPatterns": [
         "app/api/webhook/stripe/**",
         "app/api/webhooks/stripe/**",
@@ -588,6 +592,7 @@
         "https://vercel.com/docs/deployments/overview",
         "https://vercel.com/docs/git"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         ".github/workflows/*.yml",
         ".github/workflows/*.yaml",
@@ -655,6 +660,7 @@
       "docs": [
         "https://vercel.com/docs/storage"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "lib/blob/**",
         "lib/storage/**",
@@ -1265,6 +1271,7 @@
         "https://vercel.com/docs/getting-started-with-vercel",
         "https://nextjs.org/docs/getting-started/installation"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         ".env.example",
         ".env.sample",
@@ -1378,6 +1385,7 @@
       "docs": [
         "https://vercel.com/docs/cli"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "vercel.json",
         "vercel.ts",
@@ -1502,6 +1510,7 @@
       "docs": [
         "https://nextjs.org/docs/app/building-your-application/caching"
       ],
+      "sitemap": "https://nextjs.org/sitemap.xml",
       "pathPatterns": [
         "lib/cache/**",
         "src/lib/cache/**",
@@ -1558,6 +1567,7 @@
         "https://vercel.com/docs/ai-gateway",
         "https://sdk.vercel.ai/docs/ai-sdk-core/settings"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [],
       "bashPatterns": [
         "\\bvercel\\s+env\\s+pull\\b",
@@ -1656,6 +1666,7 @@
         "https://authjs.dev/getting-started",
         "https://nextjs.org/docs/app/building-your-application/authentication"
       ],
+      "sitemap": "https://authjs.dev/sitemap.xml",
       "pathPatterns": [
         "middleware.ts",
         "middleware.js",
@@ -1755,6 +1766,7 @@
       "docs": [
         "https://sdk.vercel.ai/docs/ai-sdk-ui/storing-messages"
       ],
+      "sitemap": "https://sdk.vercel.ai/sitemap.xml",
       "pathPatterns": [
         "app/api/generate/**",
         "app/api/generations/**",
@@ -1940,6 +1952,7 @@
       "docs": [
         "https://vercel.com/docs/workflow-collaboration/conformance"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "lib/queues/**",
         "src/lib/queues/**",
@@ -2033,6 +2046,7 @@
         "https://turbo.build/pack/docs",
         "https://nextjs.org/docs/architecture/turbopack"
       ],
+      "sitemap": "https://turbo.build/sitemap.xml",
       "pathPatterns": [
         "next.config.*"
       ],
@@ -2078,6 +2092,7 @@
       "docs": [
         "https://vercel.com/docs/integrations"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "integration.json"
       ],
@@ -2126,6 +2141,7 @@
         "https://vercel.com/docs/workflow-collaboration/feature-flags",
         "https://flags-sdk.dev"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "flags.ts",
         "flags.js",
@@ -2316,6 +2332,7 @@
       "docs": [
         "https://vercel.com/docs/cron-jobs"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "vercel.json",
         "apps/*/vercel.json"
@@ -2358,6 +2375,7 @@
         "https://vercel.com/docs/observability",
         "https://vercel.com/docs/observability/otel-overview"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "instrumentation.ts",
         "instrumentation.js",
@@ -2596,6 +2614,7 @@
       "docs": [
         "https://vercel.com/docs/projects/project-configuration"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [],
       "bashPatterns": [
         "\\bnext\\s+dev\\b",
@@ -2724,6 +2743,7 @@
         "https://vercel.com/docs/solutions/cms",
         "https://nextjs.org/docs/app/building-your-application/data-fetching"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "sanity.config.*",
         "sanity.cli.*",
@@ -2852,6 +2872,7 @@
         "https://vercel.com/font",
         "https://github.com/vercel/geist-font"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "app/layout.*",
         "src/app/layout.*",
@@ -2937,6 +2958,7 @@
         "https://vercel.com/docs/workflow",
         "https://useworkflow.dev"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "lib/workflow/**",
         "src/lib/workflow/**",
@@ -2945,7 +2967,18 @@
         "src/lib/workflow.*",
         "workflow.*",
         "*workflow*",
-        "*workflow*/**"
+        "*workflow*/**",
+        "**/chain-engine*",
+        "**/chain_engine*",
+        "**/chainEngine*",
+        "**/pipeline-engine*",
+        "**/pipeline_engine*",
+        "**/pipelineEngine*",
+        "**/state-machine*",
+        "**/state_machine*",
+        "**/stateMachine*",
+        "**/orchestrat*",
+        "**/escalation*"
       ],
       "bashPatterns": [
         "\\bnpm\\s+(install|i|add)\\s+[^\\n]*@vercel/workflow\\b",
@@ -2978,7 +3011,18 @@
         "^src\\/lib\\/workflow\\.[^/]*$",
         "^workflow\\.[^/]*$",
         "^[^/]*workflow[^/]*$",
-        "^[^/]*workflow[^/]*\\/.*$"
+        "^[^/]*workflow[^/]*\\/.*$",
+        "^(?:[^/]+\\/)*chain-engine[^/]*$",
+        "^(?:[^/]+\\/)*chain_engine[^/]*$",
+        "^(?:[^/]+\\/)*chainEngine[^/]*$",
+        "^(?:[^/]+\\/)*pipeline-engine[^/]*$",
+        "^(?:[^/]+\\/)*pipeline_engine[^/]*$",
+        "^(?:[^/]+\\/)*pipelineEngine[^/]*$",
+        "^(?:[^/]+\\/)*state-machine[^/]*$",
+        "^(?:[^/]+\\/)*state_machine[^/]*$",
+        "^(?:[^/]+\\/)*stateMachine[^/]*$",
+        "^(?:[^/]+\\/)*orchestrat[^/]*$",
+        "^(?:[^/]+\\/)*escalation[^/]*$"
       ],
       "bashRegexSources": [
         "\\bnpm\\s+(install|i|add)\\s+[^\\n]*@vercel/workflow\\b",
@@ -3168,6 +3212,45 @@
           "conversation should persist",
           "conversation persists",
           "conversation should survive",
+          "sequential chain",
+          "email chain",
+          "chain of emails",
+          "chain of steps",
+          "chain engine",
+          "chain with triggers",
+          "trigger chain",
+          "triggered chain",
+          "webhook chain",
+          "webhook pipeline",
+          "webhook orchestration",
+          "multi-service trigger",
+          "cross-service trigger",
+          "various triggers",
+          "different triggers",
+          "triggers from different",
+          "triggers from various",
+          "sequential steps",
+          "sequential pipeline",
+          "sequential process",
+          "sequential emails",
+          "escalation chain",
+          "escalation pipeline",
+          "state machine",
+          "step-based",
+          "step based",
+          "delay between steps",
+          "delay between emails",
+          "delayed steps",
+          "conditional steps",
+          "skip steps",
+          "branch based on",
+          "wait for webhook",
+          "wait for trigger",
+          "wait for event",
+          "orchestrate emails",
+          "orchestrate webhooks",
+          "orchestrate services",
+          "chain across services",
           "workflow stuck",
           "workflow hung",
           "workflow hanging",
@@ -3393,6 +3476,142 @@
             "retry"
           ],
           [
+            "chain",
+            "trigger"
+          ],
+          [
+            "chain",
+            "sequential"
+          ],
+          [
+            "chain",
+            "email"
+          ],
+          [
+            "chain",
+            "webhook"
+          ],
+          [
+            "chain",
+            "delay"
+          ],
+          [
+            "chain",
+            "step"
+          ],
+          [
+            "chain",
+            "escalat"
+          ],
+          [
+            "sequential",
+            "trigger"
+          ],
+          [
+            "sequential",
+            "email"
+          ],
+          [
+            "sequential",
+            "step"
+          ],
+          [
+            "sequential",
+            "webhook"
+          ],
+          [
+            "trigger",
+            "orchestrat"
+          ],
+          [
+            "trigger",
+            "service"
+          ],
+          [
+            "trigger",
+            "delay"
+          ],
+          [
+            "trigger",
+            "sequential"
+          ],
+          [
+            "webhook",
+            "chain"
+          ],
+          [
+            "webhook",
+            "orchestrat"
+          ],
+          [
+            "webhook",
+            "pipeline"
+          ],
+          [
+            "webhook",
+            "sequential"
+          ],
+          [
+            "email",
+            "trigger"
+          ],
+          [
+            "email",
+            "pipeline"
+          ],
+          [
+            "email",
+            "sequential"
+          ],
+          [
+            "email",
+            "delay"
+          ],
+          [
+            "email",
+            "escalat"
+          ],
+          [
+            "escalat",
+            "trigger"
+          ],
+          [
+            "escalat",
+            "step"
+          ],
+          [
+            "escalat",
+            "email"
+          ],
+          [
+            "state",
+            "machine"
+          ],
+          [
+            "conditional",
+            "step"
+          ],
+          [
+            "conditional",
+            "skip"
+          ],
+          [
+            "branch",
+            "condition"
+          ],
+          [
+            "wait",
+            "webhook"
+          ],
+          [
+            "wait",
+            "trigger"
+          ],
+          [
+            "wait",
+            "event"
+          ],
+          [
             "workflow",
             "stuck"
           ],
@@ -3477,7 +3696,15 @@
           "reconnect",
           "survive",
           "persist",
-          "approval"
+          "approval",
+          "chain",
+          "sequential",
+          "trigger",
+          "webhook",
+          "escalation",
+          "state machine",
+          "orchestrate",
+          "orchestration"
         ],
         "noneOf": [
           "github actions",
@@ -3584,6 +3811,7 @@
         "https://nextjs.org/docs",
         "https://nextjs.org/docs/app"
       ],
+      "sitemap": "https://nextjs.org/sitemap.xml",
       "pathPatterns": [
         "next.config.*",
         "next-env.d.ts",
@@ -3781,6 +4009,7 @@
       "docs": [
         "https://sdk.vercel.ai/docs/ai-sdk-ui/chatbot-with-tool-calling"
       ],
+      "sitemap": "https://sdk.vercel.ai/sitemap.xml",
       "pathPatterns": [
         "components/ai-elements/**",
         "src/components/ai-elements/**",
@@ -3990,6 +4219,7 @@
       "docs": [
         "https://vercel.com/docs/sandbox"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [],
       "bashPatterns": [
         "\\bnpm\\s+(install|i|add)\\s+[^\\n]*@vercel/sandbox\\b",
@@ -4176,6 +4406,7 @@
         "https://github.com/vercel/satori",
         "https://nextjs.org/docs/app/api-reference/file-conventions/metadata/opengraph-image"
       ],
+      "sitemap": "https://nextjs.org/sitemap.xml",
       "pathPatterns": [
         "app/**/og/**",
         "app/**/og.*",
@@ -4286,6 +4517,7 @@
         "https://sdk.vercel.ai/docs/ai-sdk-ui/chatbot",
         "https://github.com/vercel/ai-chatbot"
       ],
+      "sitemap": "https://sdk.vercel.ai/sitemap.xml",
       "pathPatterns": [
         "app/api/chat/**",
         "app/api/chat-bot/**",
@@ -4488,6 +4720,7 @@
       "docs": [
         "https://turborepo.dev/docs"
       ],
+      "sitemap": "https://turborepo.dev/sitemap.xml",
       "pathPatterns": [
         "turbo.json",
         "turbo/**"
@@ -4546,6 +4779,7 @@
         "https://sdk.vercel.ai/docs",
         "https://sdk.vercel.ai/docs/reference"
       ],
+      "sitemap": "https://sdk.vercel.ai/sitemap.xml",
       "pathPatterns": [
         "app/api/chat/**",
         "app/api/completion/**",
@@ -4849,6 +5083,7 @@
         "https://v0.dev/docs",
         "https://vercel.com/docs/v0"
       ],
+      "sitemap": "https://v0.dev/sitemap.xml",
       "pathPatterns": [],
       "bashPatterns": [
         "\\bnpx\\s+v0\\b",
@@ -4916,6 +5151,7 @@
       "docs": [
         "https://vercel.com/docs/environment-variables"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         ".env",
         ".env.*",
@@ -4984,6 +5220,7 @@
         "https://resend.com/docs",
         "https://react.email/docs/introduction"
       ],
+      "sitemap": "https://resend.com/sitemap.xml",
       "pathPatterns": [
         "emails/**",
         "src/emails/**",
@@ -5081,6 +5318,7 @@
       "docs": [
         "https://vercel.com/docs/rest-api"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         ".mcp.json",
         ".vercel/project.json"
@@ -5137,6 +5375,7 @@
       "docs": [
         "https://vercel.com/docs/sign-in-with-vercel"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "app/api/auth/**",
         "app/login/**",
@@ -5464,6 +5703,7 @@
       "docs": [
         "https://vercel.com/docs/security/vercel-firewall"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         ".vercel/firewall/**"
       ],
@@ -5523,6 +5763,7 @@
         "https://vercel.com/docs/functions/runtimes/edge-runtime",
         "https://edge-runtime.vercel.app"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "edge-runtime.config.*",
         "middleware.ts",
@@ -5644,6 +5885,7 @@
         "https://vercel.com/docs/functions",
         "https://vercel.com/docs/functions/runtimes"
       ],
+      "sitemap": "https://vercel.com/sitemap/docs.xml",
       "pathPatterns": [
         "api/**/*.*",
         "pages/api/**",
@@ -5722,6 +5964,7 @@
       "docs": [
         "https://swr.vercel.app/docs"
       ],
+      "sitemap": "https://swr.vercel.app/sitemap.xml",
       "pathPatterns": [
         "lib/fetcher.*",
         "src/lib/fetcher.*",

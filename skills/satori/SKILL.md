@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://github.com/vercel/satori"
     - "https://nextjs.org/docs/app/api-reference/file-conventions/metadata/opengraph-image"
+  sitemap: "https://nextjs.org/sitemap.xml"
   pathPatterns:
     - 'app/**/og/**'
     - 'app/**/og.*'

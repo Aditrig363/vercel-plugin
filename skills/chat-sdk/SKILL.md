@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://sdk.vercel.ai/docs/ai-sdk-ui/chatbot"
     - "https://github.com/vercel/ai-chatbot"
+  sitemap: "https://sdk.vercel.ai/sitemap.xml"
   pathPatterns:
     - "app/api/chat/**"
     - "app/api/chat-bot/**"

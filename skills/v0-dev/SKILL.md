@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://v0.dev/docs"
     - "https://vercel.com/docs/v0"
+  sitemap: "https://v0.dev/sitemap.xml"
   pathPatterns: []
   importPatterns:
     - '@v0/sdk'

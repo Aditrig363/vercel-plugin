@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://nextjs.org/docs"
     - "https://nextjs.org/docs/app"
+  sitemap: "https://nextjs.org/sitemap.xml"
   pathPatterns:
     - 'next.config.*'
     - 'next-env.d.ts'

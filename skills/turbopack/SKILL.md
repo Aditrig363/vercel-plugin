@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://turbo.build/pack/docs"
     - "https://nextjs.org/docs/architecture/turbopack"
+  sitemap: "https://turbo.build/sitemap.xml"
   pathPatterns: 
     - 'next.config.*'
   bashPatterns: 

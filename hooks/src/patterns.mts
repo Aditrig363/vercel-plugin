@@ -404,15 +404,20 @@ const DOCS_WARNING =
  */
 export function buildDocsBlock(
   injectedSkills: string[],
-  skillMap: Record<string, { docs?: string[] }> | undefined,
+  skillMap: Record<string, { docs?: string[]; sitemap?: string }> | undefined,
 ): string {
   if (!skillMap) return "";
 
   const entries: string[] = [];
   for (const skill of injectedSkills) {
-    const docs = skillMap[skill]?.docs;
+    const cfg = skillMap[skill];
+    const docs = cfg?.docs;
     if (docs && docs.length > 0) {
-      entries.push(`  - **${skill}**: ${docs.join(" , ")}`);
+      let line = `  - **${skill}**: ${docs.join(" , ")}`;
+      if (cfg?.sitemap) {
+        line += ` (sitemap: ${cfg.sitemap})`;
+      }
+      entries.push(line);
     }
   }
 

@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://vercel.com/docs/workflow"
     - "https://useworkflow.dev"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'lib/workflow/**'
     - 'src/lib/workflow/**'
@@ -15,6 +16,18 @@ metadata:
     - 'workflow.*'
     - '*workflow*'
     - '*workflow*/**'
+    # Chain / pipeline / orchestration engine files
+    - '**/chain-engine*'
+    - '**/chain_engine*'
+    - '**/chainEngine*'
+    - '**/pipeline-engine*'
+    - '**/pipeline_engine*'
+    - '**/pipelineEngine*'
+    - '**/state-machine*'
+    - '**/state_machine*'
+    - '**/stateMachine*'
+    - '**/orchestrat*'
+    - '**/escalation*'
   importPatterns:
     - '@vercel/workflow'
     - 'workflow'
@@ -124,6 +137,46 @@ metadata:
       - "conversation should persist"
       - "conversation persists"
       - "conversation should survive"
+      # Sequential / chain / trigger orchestration language
+      - "sequential chain"
+      - "email chain"
+      - "chain of emails"
+      - "chain of steps"
+      - "chain engine"
+      - "chain with triggers"
+      - "trigger chain"
+      - "triggered chain"
+      - "webhook chain"
+      - "webhook pipeline"
+      - "webhook orchestration"
+      - "multi-service trigger"
+      - "cross-service trigger"
+      - "various triggers"
+      - "different triggers"
+      - "triggers from different"
+      - "triggers from various"
+      - "sequential steps"
+      - "sequential pipeline"
+      - "sequential process"
+      - "sequential emails"
+      - "escalation chain"
+      - "escalation pipeline"
+      - "state machine"
+      - "step-based"
+      - "step based"
+      - "delay between steps"
+      - "delay between emails"
+      - "delayed steps"
+      - "conditional steps"
+      - "skip steps"
+      - "branch based on"
+      - "wait for webhook"
+      - "wait for trigger"
+      - "wait for event"
+      - "orchestrate emails"
+      - "orchestrate webhooks"
+      - "orchestrate services"
+      - "chain across services"
       # Debugging
       - "workflow stuck"
       - "workflow hung"
@@ -201,6 +254,41 @@ metadata:
       - [each, stage]
       - [step, reliable]
       - [step, retry]
+      # Chain / trigger / sequential orchestration
+      - [chain, trigger]
+      - [chain, sequential]
+      - [chain, email]
+      - [chain, webhook]
+      - [chain, delay]
+      - [chain, step]
+      - [chain, escalat]
+      - [sequential, trigger]
+      - [sequential, email]
+      - [sequential, step]
+      - [sequential, webhook]
+      - [trigger, orchestrat]
+      - [trigger, service]
+      - [trigger, delay]
+      - [trigger, sequential]
+      - [webhook, chain]
+      - [webhook, orchestrat]
+      - [webhook, pipeline]
+      - [webhook, sequential]
+      - [email, trigger]
+      - [email, pipeline]
+      - [email, sequential]
+      - [email, delay]
+      - [email, escalat]
+      - [escalat, trigger]
+      - [escalat, step]
+      - [escalat, email]
+      - [state, machine]
+      - [conditional, step]
+      - [conditional, skip]
+      - [branch, condition]
+      - [wait, webhook]
+      - [wait, trigger]
+      - [wait, event]
       - [workflow, stuck]
       - [workflow, hung]
       - [workflow, timeout]
@@ -241,6 +329,14 @@ metadata:
       - "survive"
       - "persist"
       - "approval"
+      - "chain"
+      - "sequential"
+      - "trigger"
+      - "webhook"
+      - "escalation"
+      - "state machine"
+      - "orchestrate"
+      - "orchestration"
     noneOf:
       - "github actions"
       - ".github/workflows"

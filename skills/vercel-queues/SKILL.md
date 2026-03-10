@@ -5,6 +5,7 @@ metadata:
   priority: 5
   docs:
     - "https://vercel.com/docs/workflow-collaboration/conformance"
+  sitemap: "https://vercel.com/sitemap/docs.xml"
   pathPatterns:
     - 'lib/queues/**'
     - 'src/lib/queues/**'

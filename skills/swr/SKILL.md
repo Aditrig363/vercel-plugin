@@ -5,6 +5,7 @@ metadata:
   priority: 4
   docs:
     - "https://swr.vercel.app/docs"
+  sitemap: "https://swr.vercel.app/sitemap.xml"
   pathPatterns:
     - 'lib/fetcher.*'
     - 'src/lib/fetcher.*'

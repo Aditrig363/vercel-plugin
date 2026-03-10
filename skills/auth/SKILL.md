@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://authjs.dev/getting-started"
     - "https://nextjs.org/docs/app/building-your-application/authentication"
+  sitemap: "https://authjs.dev/sitemap.xml"
   pathPatterns:
     - 'middleware.ts'
     - 'middleware.js'

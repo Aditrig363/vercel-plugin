@@ -991,7 +991,7 @@ export interface FormatOutputParams {
   matchReasons?: Record<string, { pattern: string; matchType: string }>;
   reasons?: Record<string, SkillInjectionReason>;
   verificationId?: string;
-  skillMap?: Record<string, { docs?: string[] }>;
+  skillMap?: Record<string, { docs?: string[]; sitemap?: string }>;
 }
 
 /**

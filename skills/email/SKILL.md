@@ -6,6 +6,7 @@ metadata:
   docs:
     - "https://resend.com/docs"
     - "https://react.email/docs/introduction"
+  sitemap: "https://resend.com/sitemap.xml"
   pathPatterns:
     - 'emails/**'
     - 'src/emails/**'

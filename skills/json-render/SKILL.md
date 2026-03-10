@@ -5,6 +5,7 @@ metadata:
   priority: 4
   docs:
     - "https://nextjs.org/docs/app/api-reference/file-conventions/route"
+  sitemap: "https://nextjs.org/sitemap.xml"
   pathPatterns:
     - 'components/chat/**'
     - 'components/chat-*.tsx'
