@@ -3,6 +3,8 @@ name: ai-elements
 description: AI Elements component library guidance — pre-built React components for AI interfaces built on shadcn/ui. Use when building chat UIs, message displays, tool call rendering, streaming responses, reasoning panels, or any AI-native interface with the AI SDK.
 metadata:
   priority: 5
+  docs:
+    - "https://sdk.vercel.ai/docs/ai-sdk-ui/chatbot-with-tool-calling"
   pathPatterns:
     - 'components/ai-elements/**'
     - 'src/components/ai-elements/**'
@@ -470,7 +472,8 @@ function CustomMessage({ message }) {
 | Building a chat interface with AI SDK | Yes — handles streaming, parts, markdown |
 | Displaying tool call results | Yes — built-in tool status UI |
 | Rendering AI reasoning/thinking | Yes — collapsible reasoning component |
-| Simple text completion display | Optional — may be overkill |
+| Streaming text panels (perspectives, summaries, reports) | Yes — use `<MessageResponse>` for each panel |
+| Simple text completion display | Yes — models always produce markdown, use `<MessageResponse>` |
 | Non-React framework (Vue, Svelte) | No — React only (use AI SDK hooks directly) |
 | Custom design system, no shadcn | Maybe — install and customize the source |
 
