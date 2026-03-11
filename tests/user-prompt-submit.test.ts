@@ -249,7 +249,7 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
       expect(result.env).toBeUndefined();
 
       const envContents = readFileSync(envFile, "utf-8");
-      expect(envContents).toContain('export VERCEL_PLUGIN_SEEN_SKILLS="ai-elements"');
+      expect(envContents).toBe("");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

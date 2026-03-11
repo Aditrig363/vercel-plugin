@@ -134,38 +134,6 @@ function resolvePromptText(input: Record<string, unknown>): string {
     ?? "";
 }
 
-function escapeShellEnvValue(value: string): string {
-  return value.replace(/(["\\$`])/g, "\\$1");
-}
-
-function formatEnvExport(key: string, value: string): string {
-  return `export ${key}="${escapeShellEnvValue(value)}"\n`;
-}
-
-function appendSeenSkillsEnvFile(envFile: string, seenSkills: string, logger: Logger): void {
-  try {
-    appendFileSync(envFile, formatEnvExport(ENV_SEEN_SKILLS_KEY, seenSkills), "utf-8");
-    logger.debug("seen-skills-env-appended", {
-      envFile,
-      seenSkills,
-      state: "skill_injection_completed",
-    });
-  } catch (error) {
-    logger.issue(
-      "SEEN_SKILLS_ENV_APPEND_FAILED",
-      "Failed to append VERCEL_PLUGIN_SEEN_SKILLS to CLAUDE_ENV_FILE",
-      "Verify CLAUDE_ENV_FILE exists and is writable",
-      {
-        attempted: "append_seen_skills_export",
-        envFile,
-        seenSkills,
-        state: "skill_injection_completed",
-        error: String(error),
-      },
-    );
-  }
-}
-
 function formatEmptyOutput(platform: PromptHookPlatform, env?: Record<string, string>): string {
   if (platform === "cursor") {
     const output: Record<string, unknown> = { continue: true };
@@ -860,12 +828,8 @@ export function run(): string {
   let outputEnv: Record<string, string> | undefined;
   const envFile = nonEmptyString(process.env.CLAUDE_ENV_FILE);
   const seenSkills = getSeenSkillsEnv();
-  if (loaded.length > 0 && seenSkills !== "") {
-    if (envFile) {
-      appendSeenSkillsEnvFile(envFile, seenSkills, log);
-    } else if (platform === "cursor") {
-      outputEnv = { [ENV_SEEN_SKILLS_KEY]: seenSkills };
-    }
+  if (loaded.length > 0 && seenSkills !== "" && !envFile && platform === "cursor") {
+    outputEnv = { [ENV_SEEN_SKILLS_KEY]: seenSkills };
   }
   // Stage 5: formatOutput
   // Build prompt match reasons for the banner

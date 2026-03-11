@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -63,36 +63,6 @@ function resolvePromptCwd(input, env) {
 }
 function resolvePromptText(input) {
   return nonEmptyString(input.prompt) ?? nonEmptyString(input.message) ?? "";
-}
-function escapeShellEnvValue(value) {
-  return value.replace(/(["\\$`])/g, "\\$1");
-}
-function formatEnvExport(key, value) {
-  return `export ${key}="${escapeShellEnvValue(value)}"
-`;
-}
-function appendSeenSkillsEnvFile(envFile, seenSkills, logger) {
-  try {
-    appendFileSync(envFile, formatEnvExport(ENV_SEEN_SKILLS_KEY, seenSkills), "utf-8");
-    logger.debug("seen-skills-env-appended", {
-      envFile,
-      seenSkills,
-      state: "skill_injection_completed"
-    });
-  } catch (error) {
-    logger.issue(
-      "SEEN_SKILLS_ENV_APPEND_FAILED",
-      "Failed to append VERCEL_PLUGIN_SEEN_SKILLS to CLAUDE_ENV_FILE",
-      "Verify CLAUDE_ENV_FILE exists and is writable",
-      {
-        attempted: "append_seen_skills_export",
-        envFile,
-        seenSkills,
-        state: "skill_injection_completed",
-        error: String(error)
-      }
-    );
-  }
 }
 function formatEmptyOutput(platform, env) {
   if (platform === "cursor") {
@@ -548,12 +518,8 @@ function run() {
   let outputEnv;
   const envFile = nonEmptyString(process.env.CLAUDE_ENV_FILE);
   const seenSkills = getSeenSkillsEnv();
-  if (loaded.length > 0 && seenSkills !== "") {
-    if (envFile) {
-      appendSeenSkillsEnvFile(envFile, seenSkills, log);
-    } else if (platform === "cursor") {
-      outputEnv = { [ENV_SEEN_SKILLS_KEY]: seenSkills };
-    }
+  if (loaded.length > 0 && seenSkills !== "" && !envFile && platform === "cursor") {
+    outputEnv = { [ENV_SEEN_SKILLS_KEY]: seenSkills };
   }
   const promptMatchReasons = {};
   for (const skill of loaded) {
