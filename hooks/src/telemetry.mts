@@ -24,10 +24,9 @@ function truncateValue(value: string): string {
 async function send(sessionId: string, events: TelemetryEvent[]): Promise<void> {
   if (events.length === 0) return;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FLUSH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FLUSH_TIMEOUT_MS);
-
     await fetch(BRIDGE_ENDPOINT, {
       method: "POST",
       headers: {
@@ -38,10 +37,10 @@ async function send(sessionId: string, events: TelemetryEvent[]): Promise<void> 
       body: JSON.stringify(events),
       signal: controller.signal,
     });
-
-    clearTimeout(timeout);
   } catch {
     // Best-effort
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
