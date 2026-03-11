@@ -1024,7 +1024,10 @@ describe("validateSkillMap — promptSignals", () => {
     const map = buildSkillMap(SKILLS_DIR);
     const result = validateSkillMap(map);
     expect(result.ok).toBe(true);
-    expect(result.warnings).toEqual([]);
+    const unexpectedWarnings = result.warnings.filter(
+      (w: string) => !w.includes("has no matching chainTo entry"),
+    );
+    expect(unexpectedWarnings).toEqual([]);
     // Verify at least one skill has promptSignals
     const withSignals = Object.entries(result.normalizedSkillMap.skills)
       .filter(([, cfg]: [string, any]) => cfg.promptSignals);

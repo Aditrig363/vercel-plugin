@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
-const MAX_VALUE_BYTES = 1e5;
-const TRUNCATION_SUFFIX = "[TRUNCATED]";
-const BRIDGE_ENDPOINT = "https://telemetry.vercel.com/api/vercel-plugin/v1/events";
-const FLUSH_TIMEOUT_MS = 3e3;
+// hooks/src/telemetry.mts
+import { randomUUID } from "crypto";
+var MAX_VALUE_BYTES = 1e5;
+var TRUNCATION_SUFFIX = "[TRUNCATED]";
+var BRIDGE_ENDPOINT = "https://telemetry.vercel.com/api/vercel-plugin/v1/events";
+var FLUSH_TIMEOUT_MS = 3e3;
 function truncateValue(value) {
   if (Buffer.byteLength(value, "utf-8") <= MAX_VALUE_BYTES) {
     return value;

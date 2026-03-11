@@ -16,7 +16,6 @@ import {
   existsSync,
   readFileSync,
   readdirSync,
-  readFileSync,
   writeFileSync,
   type Dirent,
 } from "node:fs";
@@ -674,7 +673,7 @@ function main(): void {
   }
 
   if (telemetryPref === "enabled") {
-    appendEnvExport(envFile, "VERCEL_PLUGIN_TELEMETRY", "on");
+    setSessionEnv(platform, "VERCEL_PLUGIN_TELEMETRY", "on");
   }
 
   const additionalContext = userMessages.join("\n\n");

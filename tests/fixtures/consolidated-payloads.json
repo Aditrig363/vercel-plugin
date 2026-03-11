@@ -51,8 +51,7 @@
           "toolTarget": "/Users/me/project/next.config.ts",
           "matchedSkills": [
             "nextjs",
-            "turbopack"
-          ],
+            "turbopack"],
           "injectedSkills": [
             "nextjs",
             "turbopack"
@@ -107,16 +106,14 @@
             "ai-sdk",
             "chat-sdk",
             "nextjs",
-            "vercel-functions"
-          ],
+            "vercel-functions"],
           "injectedSkills": [
             "ai-sdk",
             "chat-sdk",
             "vercel-functions"
           ],
           "droppedByCap": [
-            "nextjs"
-          ],
+            "nextjs"],
           "droppedByBudget": []
         }
       }
@@ -139,16 +136,14 @@
             "ai-sdk",
             "chat-sdk",
             "nextjs",
-            "vercel-functions"
-          ],
+            "vercel-functions"],
           "injectedSkills": [
             "ai-sdk",
             "chat-sdk",
             "vercel-functions"
           ],
           "droppedByCap": [
-            "nextjs"
-          ],
+            "nextjs"],
           "droppedByBudget": []
         }
       }
@@ -170,8 +165,7 @@
           "matchedSkills": [
             "routing-middleware",
             "auth",
-            "investigation-mode"
-          ],
+            "investigation-mode"],
           "injectedSkills": [
             "investigation-mode",
             "auth",
@@ -203,9 +197,9 @@
             "workflow"
           ],
           "injectedSkills": [
-            "observability",
             "workflow",
-            "ai-sdk"
+            "ai-sdk",
+            "observability"
           ],
           "droppedByCap": [
             "vercel-flags"

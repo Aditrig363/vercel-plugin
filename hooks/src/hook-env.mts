@@ -205,6 +205,53 @@ export function removeSessionClaimDir(sessionId: string, kind: string, scopeId?:
   }
 }
 
+/**
+ * Remove **all** session-scoped dedup artifacts for a given session, including
+ * agent-scoped claim dirs and session files.  Uses the same prefix-glob
+ * strategy as `session-end-cleanup.mts` so that scoped entries
+ * (`vercel-plugin-<session>-<scopeId>-seen-skills.{d,txt}`) are also cleared.
+ */
+export interface RemoveArtifactsResult {
+  removedFiles: number;
+  removedDirs: number;
+}
+
+export function removeAllSessionDedupArtifacts(sessionId: string): RemoveArtifactsResult {
+  const result: RemoveArtifactsResult = { removedFiles: 0, removedDirs: 0 };
+  const tempRoot = resolve(tmpdir());
+  const prefix = `vercel-plugin-${dedupSessionIdSegment(sessionId)}-`;
+
+  let entries: string[];
+  try {
+    entries = readdirSync(tempRoot).filter(
+      (name) => name.startsWith(prefix) && (name.endsWith("-seen-skills.d") || name.endsWith("-seen-skills.txt")),
+    );
+  } catch {
+    return result;
+  }
+
+  for (const entry of entries) {
+    const fullPath = join(tempRoot, entry);
+    if (entry.endsWith(".d")) {
+      try {
+        rmSync(fullPath, { recursive: true, force: true });
+        result.removedDirs++;
+      } catch (error) {
+        logCaughtError(log, "hook-env:remove-all-session-dedup-artifacts-dir", error, { fullPath });
+      }
+    } else {
+      try {
+        rmSync(fullPath);
+        result.removedFiles++;
+      } catch (error) {
+        logCaughtError(log, "hook-env:remove-all-session-dedup-artifacts-file", error, { fullPath });
+      }
+    }
+  }
+
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Profile cache helpers
 // ---------------------------------------------------------------------------

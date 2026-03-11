@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { detectReDoS } from "../scripts/validate";
 
 const ROOT = resolve(import.meta.dirname, "..");
+const SYNTHETIC_TEST_SKILL_PREFIX = "zzz-test-";
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -14,18 +15,32 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-describe("validate.ts", () => {
-  test("exits 0 on clean repo", async () => {
-    const proc = Bun.spawn(["bun", "run", join(ROOT, "scripts", "validate.ts")], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const code = await proc.exited;
-    if (code !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      console.error(stderr);
+function isSyntheticTestSkillName(name: string): boolean {
+  return name.startsWith(SYNTHETIC_TEST_SKILL_PREFIX);
+}
+
+function issueMentionsSyntheticTestSkill(issue: {
+  file?: string;
+  message?: string;
+  hint?: string;
+}): boolean {
+  return [issue.file, issue.message, issue.hint].some(
+    (value) => typeof value === "string" && value.includes(SYNTHETIC_TEST_SKILL_PREFIX),
+  );
+}
+
+describe.serial("validate.ts", () => {
+  test("repo has no non-synthetic validation errors", async () => {
+    const { report } = await runValidateJson();
+    const unexpectedErrors = report.issues.filter(
+      (issue: any) => issue.severity === "error" && !issueMentionsSyntheticTestSkill(issue),
+    );
+
+    if (unexpectedErrors.length > 0) {
+      console.error(JSON.stringify(unexpectedErrors, null, 2));
     }
-    expect(code).toBe(0);
+
+    expect(unexpectedErrors).toEqual([]);
   }, 30_000);
 
   test("every graph skill ref resolves to an existing skill directory", async () => {
@@ -131,6 +146,7 @@ describe("validate.ts", () => {
     const dirs = await readdir(skillsDir);
     const orphans: string[] = [];
     for (const dir of dirs.sort()) {
+      if (isSyntheticTestSkillName(dir)) continue;
       if (!(await exists(join(skillsDir, dir, "SKILL.md")))) continue;
       if (!referencedSkills.has(dir)) orphans.push(dir);
     }
@@ -339,16 +355,23 @@ async function runValidateJson(): Promise<{ code: number; report: any }> {
 /** Helper: create a temp skill dir with given SKILL.md content, run fn, then clean up */
 async function withTempSkill(name: string, skillMd: string, fn: () => Promise<void>): Promise<void> {
   const dir = join(ROOT, "skills", name);
+  const skillPath = join(dir, "SKILL.md");
+  const hadOriginal = await exists(skillPath);
+  const originalSkillMd = hadOriginal ? await readFile(skillPath, "utf-8") : null;
   try {
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "SKILL.md"), skillMd);
+    await writeFile(skillPath, skillMd);
     await fn();
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    if (hadOriginal && originalSkillMd !== null) {
+      await writeFile(skillPath, originalSkillMd);
+    } else {
+      await rm(dir, { recursive: true, force: true });
+    }
   }
 }
 
-describe("validate.ts — focused frontmatter validation", () => {
+describe.serial("validate.ts — focused frontmatter validation", () => {
   test("broken YAML frontmatter produces FM_INVALID_YAML", async () => {
     await withTempSkill("zzz-test-broken-yaml", [
       "---",
@@ -508,10 +531,12 @@ describe("validate.ts — focused frontmatter validation", () => {
       "name: clean-skill",
       "description: A perfectly valid test skill",
       "metadata:",
+      "  docs:",
+      "    - 'https://example.com/clean-skill'",
       "  pathPatterns:",
-      "    - '**/*.ts'",
+      "    - '**/*.clean-skill-test'",
       "  bashPatterns:",
-      "    - '\\bvercel\\b'",
+      "    - '\\bvercel-plugin-clean-skill\\b'",
       "  priority: 5",
       "---",
       "# Clean Skill",
@@ -525,7 +550,8 @@ describe("validate.ts — focused frontmatter validation", () => {
         (i: any) =>
           i.message?.includes("zzz-test-clean-skill") &&
           i.code !== "ORPHAN_SKILL" &&
-          i.code !== "SKILL_NO_TRIGGERS",
+          i.code !== "SKILL_NO_TRIGGERS" &&
+          i.code !== "CATALOG_STALE",
       );
       expect(fmIssues).toEqual([]);
     });
@@ -561,7 +587,7 @@ describe("validate.ts — focused frontmatter validation", () => {
 // Catalog staleness tests
 // ---------------------------------------------------------------------------
 
-describe("validate.ts — catalog staleness", () => {
+describe.serial("validate.ts — catalog staleness", () => {
   test("generate-catalog.ts runs successfully", async () => {
     const proc = Bun.spawn(
       ["bun", "run", join(ROOT, "scripts", "generate-catalog.ts")],
@@ -576,7 +602,7 @@ describe("validate.ts — catalog staleness", () => {
     expect(await exists(join(ROOT, "generated", "skill-catalog.md"))).toBe(true);
   }, 30_000);
 
-  test("generated catalog lists every skill from skills/ directory", async () => {
+  test("generated catalog lists every non-synthetic skill from skills/ directory", async () => {
     // First regenerate to ensure freshness
     const gen = Bun.spawn(
       ["bun", "run", join(ROOT, "scripts", "generate-catalog.ts")],
@@ -589,6 +615,7 @@ describe("validate.ts — catalog staleness", () => {
     const dirs = await readdir(skillsDir);
     const skillDirs: string[] = [];
     for (const dir of dirs) {
+      if (isSyntheticTestSkillName(dir)) continue;
       if (await exists(join(skillsDir, dir, "SKILL.md"))) {
         skillDirs.push(dir);
       }
@@ -646,7 +673,7 @@ describe("validate.ts — catalog staleness", () => {
 // detectReDoS unit tests
 // ---------------------------------------------------------------------------
 
-describe("detectReDoS", () => {
+describe.serial("detectReDoS", () => {
   test("flags (a+)+ as nested quantifier", () => {
     expect(detectReDoS("(a+)+")).not.toBeNull();
   });

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+
+// hooks/src/posttooluse-telemetry.mts
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { isTelemetryEnabled, trackEvents } from "./telemetry.mjs";
 function parseStdin() {
   try {

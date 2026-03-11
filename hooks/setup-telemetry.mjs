@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-const PREF_PATH = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
+
+// hooks/src/setup-telemetry.mts
+import { readFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
+var PREF_PATH = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
 function main() {
   let existing = null;
   try {

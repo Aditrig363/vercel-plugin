@@ -1679,7 +1679,7 @@ function run(): string {
         telemetryEntries.push(
           { key: "skill:injected", value: skill },
           { key: "skill:hook", value: "PreToolUse" },
-          { key: "skill:priority", value: String(reason?.effectivePriority ?? 0) },
+          { key: "skill:priority", value: "0" },
           { key: "skill:match_type", value: reason?.matchType ?? "unknown" },
           { key: "skill:tool_name", value: toolName },
         );

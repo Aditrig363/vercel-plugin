@@ -3,10 +3,11 @@ import {
   accessSync,
   constants as fsConstants,
   existsSync,
-  readdirSync,
   readFileSync,
+  readdirSync,
   writeFileSync
 } from "fs";
+import { homedir } from "os";
 import { delimiter, join, resolve } from "path";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
@@ -17,6 +18,7 @@ import {
 } from "./compat.mjs";
 import { profileCachePath, safeReadJson, writeSessionFile } from "./hook-env.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
+import { isTelemetryEnabled, trackEvents } from "./telemetry.mjs";
 var FILE_MARKERS = [
   { file: "next.config.js", skills: ["nextjs", "turbopack"] },
   { file: "next.config.mjs", skills: ["nextjs", "turbopack"] },
@@ -432,6 +434,15 @@ function main() {
       envVarCount: Object.keys(envVars).length
     });
   }
+  const telemetryPrefPath = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
+  let telemetryPref = null;
+  try {
+    telemetryPref = readFileSync(telemetryPrefPath, "utf-8").trim();
+  } catch {
+  }
+  if (telemetryPref === "enabled") {
+    setSessionEnv(platform, "VERCEL_PLUGIN_TELEMETRY", "on");
+  }
   const additionalContext = userMessages.join("\n\n");
   if (platform === "claude-code" && additionalContext) {
     process.stdout.write(`${additionalContext}
@@ -457,6 +468,16 @@ function main() {
         projectRoot
       });
     }
+  }
+  if (isTelemetryEnabled() && sessionId) {
+    trackEvents(sessionId, [
+      { key: "session:platform", value: process.platform },
+      { key: "session:likely_skills", value: likelySkills.join(",") },
+      { key: "session:greenfield", value: String(greenfield !== null) },
+      { key: "session:vercel_cli_installed", value: String(cliStatus.installed) },
+      { key: "session:vercel_cli_version", value: cliStatus.currentVersion || "" }
+    ]).catch(() => {
+    });
   }
   if (cursorOutput) {
     process.stdout.write(cursorOutput);

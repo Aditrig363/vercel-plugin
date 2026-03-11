@@ -161,7 +161,7 @@ function buildManifest(skillsDir: string): { manifest: Manifest; warnings: strin
     synthesizeChainToFromValidate(normalizedSkills, allSlugs);
   allWarnings.push(...synthWarnings);
   if (synthCount > 0) {
-    console.log(`  ⤳ Synthesized ${synthCount} chainTo rule(s) from upgradeToSkill validate rules`);
+    console.error(`  ⤳ Synthesized ${synthCount} chainTo rule(s) from upgradeToSkill validate rules`);
   }
 
   const skills: Record<string, ManifestSkillWithBody> = {};

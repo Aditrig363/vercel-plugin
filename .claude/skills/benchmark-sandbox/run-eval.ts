@@ -302,7 +302,27 @@ export function evaluateBuildWaitState(input: BuildWaitInput): BuildWaitState {
 
 function buildVerificationPrompt(userStories: string[]): string {
   const stories = userStories.map((s, i) => `${i + 1}. ${s}`).join("\n");
-  return `First, make sure the dev server is running. Check if http://localhost:3000 responds. If not, run \`npx next dev --port 3000\` in the background and wait for it to be ready.
+  return `BEFORE anything else, fix the AI authentication to use OIDC (not API keys):
+
+1. Check if the project has a .env.local with VERCEL_OIDC_TOKEN. If yes, OIDC is available.
+2. Find ALL files that create an Anthropic provider (search for \`createAnthropic\` or \`@ai-sdk/anthropic\`).
+3. Update each one to use OIDC auth with the AI Gateway instead of ANTHROPIC_API_KEY:
+
+\`\`\`ts
+import { createAnthropic } from "@ai-sdk/anthropic";
+const anthropic = createAnthropic({
+  baseURL: process.env.ANTHROPIC_BASE_URL || "https://ai-gateway.vercel.sh/v1",
+  headers: {
+    "Authorization": \`Bearer \${process.env.VERCEL_OIDC_TOKEN}\`,
+  },
+  apiKey: "unused", // required by SDK but OIDC auth takes precedence via headers
+});
+\`\`\`
+
+4. Make sure EVERY route that calls the AI uses this pattern. Do NOT use process.env.ANTHROPIC_API_KEY.
+5. Log whether OIDC auth was configured: \`console.log("AI auth: OIDC=" + !!process.env.VERCEL_OIDC_TOKEN)\`
+
+Then make sure the dev server is running. Check if http://localhost:3000 responds. If not, run \`npx next dev --port 3000\` in the background and wait for it to be ready.
 
 Then use agent-browser to verify these user stories:
 
@@ -853,12 +873,17 @@ async function runScenario(
         console.log(`  [${scenario.slug}] Vercel link/env pull failed: ${e.message?.slice(0, 80)} (${elapsed(t0)})`);
       }
     }
-    // Append AI credentials to .env.local (in case env pull didn't include them)
+    // Ensure ANTHROPIC_BASE_URL has /v1 suffix for the app's AI SDK (@ai-sdk/anthropic appends /messages)
+    // Don't write the vck_* API key — the app should use the OIDC token from vercel env pull
     try {
       const existing = await sh(sandbox, `cat ${projectDir}/.env.local 2>/dev/null`);
-      const lines = existing.trim() ? existing.trim() + "\n" : "";
-      const envWithCreds = lines + `ANTHROPIC_API_KEY=${apiKey}\nANTHROPIC_BASE_URL=${baseUrl}\n`;
-      await sandbox.writeFiles([{ path: `${projectDir}/.env.local`, content: Buffer.from(envWithCreds) }]);
+      const appBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+      if (!existing.includes("ANTHROPIC_BASE_URL") || !existing.includes("/v1")) {
+        const lines = existing.trim() ? existing.trim() + "\n" : "";
+        const envWithBaseUrl = lines + `ANTHROPIC_BASE_URL=${appBaseUrl}\n`;
+        await sandbox.writeFiles([{ path: `${projectDir}/.env.local`, content: Buffer.from(envWithBaseUrl) }]);
+        console.log(`  [${scenario.slug}] Ensured ANTHROPIC_BASE_URL=${appBaseUrl} in .env.local (${elapsed(t0)})`);
+      }
     } catch {}
 
     // 8. Phase 2: Verification with agent-browser

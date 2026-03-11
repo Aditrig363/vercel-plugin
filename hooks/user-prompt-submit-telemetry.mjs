@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-const PREF_PATH = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
+
+// hooks/src/user-prompt-submit-telemetry.mts
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { homedir, tmpdir } from "os";
+import { join, dirname } from "path";
+var PREF_PATH = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
 function parseStdin() {
   try {
     const raw = readFileSync(0, "utf-8").trim();

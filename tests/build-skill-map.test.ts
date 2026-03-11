@@ -278,6 +278,7 @@ This is test content.
       "logger.mjs",
       "hook-env.mjs",
       "compat.mjs",
+      "telemetry.mjs",
     ];
     for (const f of hookFiles) {
       const src = join(ROOT, "hooks", f);

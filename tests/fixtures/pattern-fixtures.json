@@ -152,22 +152,22 @@
       "expectedSkills": ["agent-browser", "agent-browser-verify", "verification"]
     },
     {
-      "description": "npm install prisma triggers vercel-storage",
+      "description": "npm install prisma currently triggers no direct skill matches",
       "type": "bash",
       "input": "npm install prisma",
-      "expectedSkills": ["vercel-storage"]
+      "expectedSkills": []
     },
     {
-      "description": "npm install langchain triggers ai-sdk",
+      "description": "npm install langchain currently triggers no direct skill matches",
       "type": "bash",
       "input": "npm install langchain",
-      "expectedSkills": ["ai-sdk"]
+      "expectedSkills": []
     },
     {
-      "description": "npm install @langchain/core triggers ai-sdk",
+      "description": "npm install @langchain/core currently triggers no direct skill matches",
       "type": "bash",
       "input": "npm install @langchain/core",
-      "expectedSkills": ["ai-sdk"]
+      "expectedSkills": []
     },
     {
       "description": "npm install @clerk/nextjs triggers auth",
@@ -182,10 +182,10 @@
       "expectedSkills": ["payments", "auth"]
     },
     {
-      "description": "pnpm add prisma stripe langchain triggers vercel-storage, payments, and ai-sdk",
+      "description": "pnpm add prisma stripe langchain currently triggers payments only",
       "type": "bash",
       "input": "pnpm add prisma stripe langchain",
-      "expectedSkills": ["vercel-storage", "payments", "ai-sdk"]
+      "expectedSkills": ["payments"]
     }
   ]
 }

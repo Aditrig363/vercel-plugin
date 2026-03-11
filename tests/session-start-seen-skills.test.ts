@@ -6,6 +6,7 @@ import { join, resolve, sep } from "node:path";
 import {
   dedupClaimDirPath,
   dedupFilePath,
+  removeAllSessionDedupArtifacts,
   removeSessionClaimDir,
   tryClaimSessionKey,
 } from "../hooks/src/hook-env.mts";
@@ -161,6 +162,98 @@ describe("session-start-seen-skills hook", () => {
     } finally {
       rmSync(dedupClaimDirPath(sessionId, "seen-skills"), { recursive: true, force: true });
       try { rmSync(dedupFilePath(sessionId, "seen-skills")); } catch {}
+    }
+  });
+
+  test("test_clear_event_allows_reinjection_of_previously_claimed_skill", async () => {
+    const sessionId = `test-reinject-clear-${Date.now()}`;
+
+    try {
+      // 1. Seed a claim — skill is now "seen"
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "nextjs")).toBe(true);
+      writeFileSync(dedupFilePath(sessionId, "seen-skills"), "nextjs", "utf-8");
+
+      // 2. Verify the claim is deduped (second claim returns false)
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "nextjs")).toBe(false);
+
+      // 3. Fire "clear" event via session-start hook
+      const result = await runSessionStart(
+        { CLAUDE_ENV_FILE: undefined },
+        JSON.stringify({ session_id: sessionId, hook_event_name: "clear" }),
+      );
+      expect(result.code).toBe(0);
+
+      // 4. The same skill can now be claimed again (reinjection works)
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "nextjs")).toBe(true);
+    } finally {
+      rmSync(dedupClaimDirPath(sessionId, "seen-skills"), { recursive: true, force: true });
+      try { rmSync(dedupFilePath(sessionId, "seen-skills")); } catch {}
+    }
+  });
+
+  test("test_compact_event_allows_reinjection_of_previously_claimed_skill", async () => {
+    const sessionId = `test-reinject-compact-${Date.now()}`;
+
+    try {
+      // 1. Seed a claim — skill is now "seen"
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "ai-sdk")).toBe(true);
+      writeFileSync(dedupFilePath(sessionId, "seen-skills"), "ai-sdk", "utf-8");
+
+      // 2. Verify the claim is deduped
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "ai-sdk")).toBe(false);
+
+      // 3. Fire "compact" event via session-start hook
+      const result = await runSessionStart(
+        { CLAUDE_ENV_FILE: undefined },
+        JSON.stringify({ session_id: sessionId, hook_event_name: "compact" }),
+      );
+      expect(result.code).toBe(0);
+
+      // 4. The same skill can now be claimed again
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "ai-sdk")).toBe(true);
+    } finally {
+      rmSync(dedupClaimDirPath(sessionId, "seen-skills"), { recursive: true, force: true });
+      try { rmSync(dedupFilePath(sessionId, "seen-skills")); } catch {}
+    }
+  });
+
+  test("test_clear_event_removes_scoped_claim_dirs", async () => {
+    const sessionId = `test-scoped-clear-${Date.now()}`;
+    const scopeId = "subagent-abc";
+
+    try {
+      // Seed both unscoped and scoped dedup state
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "nextjs")).toBe(true);
+      writeFileSync(dedupFilePath(sessionId, "seen-skills"), "nextjs", "utf-8");
+
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "ai-sdk", scopeId)).toBe(true);
+      writeFileSync(dedupFilePath(sessionId, "seen-skills", scopeId), "ai-sdk", "utf-8");
+
+      // Verify both exist
+      expect(existsSync(dedupClaimDirPath(sessionId, "seen-skills"))).toBe(true);
+      expect(existsSync(dedupClaimDirPath(sessionId, "seen-skills", scopeId))).toBe(true);
+      expect(existsSync(dedupFilePath(sessionId, "seen-skills", scopeId))).toBe(true);
+
+      // Fire "clear" event
+      const result = await runSessionStart(
+        { CLAUDE_ENV_FILE: undefined },
+        JSON.stringify({ session_id: sessionId, hook_event_name: "clear" }),
+      );
+      expect(result.code).toBe(0);
+
+      // Both unscoped and scoped artifacts should be gone
+      expect(existsSync(dedupClaimDirPath(sessionId, "seen-skills"))).toBe(false);
+      expect(existsSync(dedupFilePath(sessionId, "seen-skills"))).toBe(false);
+      expect(existsSync(dedupClaimDirPath(sessionId, "seen-skills", scopeId))).toBe(false);
+      expect(existsSync(dedupFilePath(sessionId, "seen-skills", scopeId))).toBe(false);
+
+      // Scoped skill can be reclaimed after clear
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "ai-sdk", scopeId)).toBe(true);
+    } finally {
+      rmSync(dedupClaimDirPath(sessionId, "seen-skills"), { recursive: true, force: true });
+      rmSync(dedupClaimDirPath(sessionId, "seen-skills", scopeId), { recursive: true, force: true });
+      try { rmSync(dedupFilePath(sessionId, "seen-skills")); } catch {}
+      try { rmSync(dedupFilePath(sessionId, "seen-skills", scopeId)); } catch {}
     }
   });
 

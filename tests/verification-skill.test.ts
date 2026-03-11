@@ -1,5 +1,7 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { writeFileSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import {
   normalizePromptText,
   compilePromptSignals,
@@ -13,8 +15,29 @@ const PROMPT_HOOK = join(ROOT, "hooks", "user-prompt-submit-skill-inject.mjs");
 const UNLIMITED_BUDGET = "999999";
 
 let testSession: string;
+
+function seedSeenSkills(skills: string[]): void {
+  const seenFile = join(tmpdir(), `vercel-plugin-${testSession}-seen-skills.txt`);
+  writeFileSync(seenFile, skills.join(","), "utf-8");
+}
+
+function cleanupSessionDedup(): void {
+  const prefix = `vercel-plugin-${testSession}-`;
+  try {
+    for (const entry of readdirSync(tmpdir())) {
+      if (entry.startsWith(prefix)) {
+        rmSync(join(tmpdir(), entry), { recursive: true, force: true });
+      }
+    }
+  } catch {}
+}
+
 beforeEach(() => {
   testSession = `test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+});
+
+afterEach(() => {
+  cleanupSessionDedup();
 });
 
 // ---------------------------------------------------------------------------
@@ -40,7 +63,6 @@ async function runPreToolUseHook(
     env: {
       ...process.env,
       VERCEL_PLUGIN_INJECTION_BUDGET: UNLIMITED_BUDGET,
-      VERCEL_PLUGIN_SEEN_SKILLS: "",
       VERCEL_PLUGIN_DEV_VERIFY_COUNT: "0",
       VERCEL_PLUGIN_AGENT_BROWSER_AVAILABLE: "1",
       ...env,
@@ -412,15 +434,15 @@ describe("Verification noneOf suppression", () => {
 // ---------------------------------------------------------------------------
 
 describe("Dedup prevents double verification injection", () => {
-  test("verification not re-injected when already in SEEN_SKILLS (non-dev-server)", async () => {
+  test("verification not re-injected when already in seen-skills (non-dev-server)", async () => {
     // When triggered via bashPatterns (not dev-server co-injection),
     // dedup should prevent re-injection
+    seedSeenSkills(["verification"]);
     const { parsed } = await runPreToolUseHook(
       {
         tool_name: "Read",
         tool_input: { file_path: "/project/next.config.ts" },
       },
-      { VERCEL_PLUGIN_SEEN_SKILLS: "verification" },
     );
 
     if (parsed?.hookSpecificOutput) {
@@ -431,17 +453,15 @@ describe("Dedup prevents double verification injection", () => {
     }
   });
 
-  test("verification re-injected via dev-server companion even when in SEEN_SKILLS", async () => {
+  test("verification re-injected via dev-server companion even when in seen-skills", async () => {
     // Dev server companion injection uses dedup bypass (like agent-browser-verify)
+    seedSeenSkills(["verification", "agent-browser-verify"]);
     const { parsed } = await runPreToolUseHook(
       {
         tool_name: "Bash",
         tool_input: { command: "npm run dev" },
       },
-      {
-        VERCEL_PLUGIN_SEEN_SKILLS: "verification,agent-browser-verify",
-        VERCEL_PLUGIN_DEV_VERIFY_COUNT: "0",
-      },
+      { VERCEL_PLUGIN_DEV_VERIFY_COUNT: "0" },
     );
 
     expect(parsed).not.toBeNull();
@@ -453,9 +473,9 @@ describe("Dedup prevents double verification injection", () => {
   });
 
   test("prompt hook respects dedup for verification", async () => {
+    seedSeenSkills(["verification"]);
     const { parsed } = await runPromptHook(
       "verify the flow end to end please",
-      { VERCEL_PLUGIN_SEEN_SKILLS: "verification" },
     );
 
     // Should not re-inject verification since it's already seen

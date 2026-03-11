@@ -19,10 +19,10 @@ import {
   type HookPlatform,
 } from "./compat.mjs";
 import {
-  dedupFilePath,
-  removeSessionClaimDir,
+  removeAllSessionDedupArtifacts,
+  type RemoveArtifactsResult,
 } from "./hook-env.mjs";
-import { unlinkSync } from "node:fs";
+import { createLogger } from "./logger.mjs";
 
 interface SessionStartSeenSkillsInput {
   session_id?: string;
@@ -65,20 +65,16 @@ export function formatSessionStartSeenSkillsCursorOutput(): string {
 
 /**
  * On context-clearing events, wipe the file-based dedup state so skills can be
- * re-injected. Without this, the claim dir survives the clear and the injection
- * hooks treat every previously-seen skill as already present.
+ * re-injected. Removes both the main (unscoped) claim dir / session file AND
+ * any agent-scoped variants (e.g. subagent claim dirs) using a prefix-glob
+ * approach, mirroring session-end-cleanup.
  */
-export function resetDedupStateForSession(sessionId: string): void {
-  removeSessionClaimDir(sessionId, "seen-skills");
-
-  try {
-    unlinkSync(dedupFilePath(sessionId, "seen-skills"));
-  } catch {
-    // File may not exist — that's fine.
-  }
+export function resetDedupStateForSession(sessionId: string): RemoveArtifactsResult {
+  return removeAllSessionDedupArtifacts(sessionId);
 }
 
 function main(): void {
+  const log = createLogger();
   const input = parseSessionStartSeenSkillsInput(readFileSync(0, "utf8"));
   const platform = detectSessionStartSeenSkillsPlatform(input);
 
@@ -90,10 +86,24 @@ function main(): void {
   // Claude Code: reset dedup state on clear/compact so skills get re-injected.
   const hookEvent = input?.hook_event_name ?? "";
   const sessionId = input?.session_id ?? "";
+  const resetTriggered = CONTEXT_CLEARING_EVENTS.has(hookEvent) && !!sessionId;
 
-  if (CONTEXT_CLEARING_EVENTS.has(hookEvent) && sessionId) {
-    resetDedupStateForSession(sessionId);
+  let removedFiles = 0;
+  let removedDirs = 0;
+
+  if (resetTriggered) {
+    const result = resetDedupStateForSession(sessionId);
+    removedFiles = result.removedFiles;
+    removedDirs = result.removedDirs;
   }
+
+  log.debug("session-start-seen-skills:decision", {
+    event: hookEvent || "unknown",
+    sessionId: sessionId || "none",
+    resetTriggered,
+    removedFiles,
+    removedDirs,
+  });
 }
 
 const SESSION_START_SEEN_SKILLS_ENTRYPOINT = fileURLToPath(import.meta.url);
