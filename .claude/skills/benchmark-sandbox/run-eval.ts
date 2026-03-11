@@ -50,8 +50,9 @@ const KEEP_ALIVE = args.includes("--keep-alive");
 const KEEP_ALIVE_HOURS = getArg("keep-hours", 8);
 const SKIP_VERIFY = args.includes("--skip-verify");
 const SKIP_DEPLOY = args.includes("--skip-deploy");
-const BUILD_STATUS_INTERVAL_MS = 20_000;
-const BUILD_WAIT_POLL_MS = 15_000;
+const BUILD_STATUS_INTERVAL_MS = 10_000;
+const BUILD_WAIT_POLL_MS = 10_000;
+const BUILD_STALE_THRESHOLD_MS = 120_000; // If no new debug log line for 2 min, consider build done
 const SCENARIO_FILTER = args.includes("--scenarios")
   ? args[args.indexOf("--scenarios") + 1]?.split(",").map(s => s.trim()) ?? []
   : [];
@@ -100,10 +101,9 @@ After building all files, start the dev server on port 3000 with \`npx next dev 
 - Create a flags.ts with the review mode flag using \`flag()\`
 - Add /api/cron/stats route for tracking review statistics (mock implementation)
 - Add structured observability logging in all API routes (JSON with timestamp, level, message, duration)
-- Use edge runtime for a /api/health route
 - Link the project to my vercel-labs team
 After building all files, start the dev server on port 3000 with \`npx next dev --port 3000\`.`,
-    expectedSkills: ["ai-sdk", "vercel-flags", "shadcn", "cron-jobs", "observability", "edge-runtime", "nextjs", "vercel-functions"],
+    expectedSkills: ["ai-sdk", "vercel-flags", "shadcn", "cron-jobs", "observability", "nextjs", "vercel-functions"],
     userStories: [
       "As a user, I can see a code input area where I can paste code for review",
       "As a user, I can click a Review button and see AI-generated code review comments appear",
@@ -143,7 +143,7 @@ After building all files, start the dev server on port 3000 with \`npx next dev 
 - Use Vercel Functions for all other API routes
 - Link the project to my vercel-labs team
 After building all files, start the dev server on port 3000 with \`npx next dev --port 3000\`.`,
-    expectedSkills: ["ai-sdk", "satori", "shadcn", "routing-middleware", "edge-runtime", "nextjs", "vercel-functions"],
+    expectedSkills: ["ai-sdk", "satori", "shadcn", "routing-middleware", "nextjs", "vercel-functions"],
     userStories: [
       "As a user, I can paste meeting notes into a text area and click Summarize",
       "As a user, I can see an AI-generated summary with key points streamed to the page",
@@ -161,10 +161,9 @@ After building all files, start the dev server on port 3000 with \`npx next dev 
 - Add /api/cron/health-check route that returns a health status JSON
 - Add vercel.json with crons config for the health check
 - Add structured observability logging (JSON with timestamp, level, message) in every API route
-- Use edge runtime for the health-check cron route
 - Link the project to my vercel-labs team
 After building all files, start the dev server on port 3000 with \`npx next dev --port 3000\`.`,
-    expectedSkills: ["ai-sdk", "vercel-flags", "shadcn", "cron-jobs", "observability", "edge-runtime", "nextjs", "vercel-functions"],
+    expectedSkills: ["ai-sdk", "vercel-flags", "shadcn", "cron-jobs", "observability", "nextjs", "vercel-functions"],
     userStories: [
       "As a user, I can see a table of deployments with status badges showing health",
       "As a user, I can click an Analyze button and see AI-generated health insights appear",
@@ -263,24 +262,31 @@ type BuildWaitInput = {
   debugLine: string;
   elapsedMs: number;
   timeoutMs: number;
+  lastDebugLineChanged?: boolean; // true if debug line differs from previous poll
+  msSinceLastDebugChange?: number; // ms since debug log last had a new line
 };
 
 export type BuildWaitState = {
   claudeRunning: boolean;
   sessionEnded: boolean;
   timedOut: boolean;
+  stale: boolean; // debug log hasn't changed in BUILD_STALE_THRESHOLD_MS
   shouldKeepPolling: boolean;
 };
 
 export function evaluateBuildWaitState(input: BuildWaitInput): BuildWaitState {
-  const claudeRunning = normalizeShellOutput(input.claudeProbe).length > 0;
+  const probe = normalizeShellOutput(input.claudeProbe);
+  // Exit file contains a number when done, "RUNNING" when still going, empty on error
+  const claudeRunning = probe === "RUNNING" || probe === "";
   const sessionEnded = /\bSessionEnd\b/.test(normalizeShellOutput(input.debugLine));
   const timedOut = input.elapsedMs >= input.timeoutMs;
+  const stale = (input.msSinceLastDebugChange ?? 0) >= BUILD_STALE_THRESHOLD_MS;
   return {
     claudeRunning,
     sessionEnded,
     timedOut,
-    shouldKeepPolling: !timedOut && claudeRunning && !sessionEnded,
+    stale,
+    shouldKeepPolling: !timedOut && !stale && claudeRunning && !sessionEnded,
   };
 }
 
@@ -424,6 +430,7 @@ interface ArtifactManifestEntry {
 interface ScenarioResult {
   slug: string;
   sandboxId: string;
+  snapshotId?: string;
   success: boolean;
   durationMs: number;
   claimedSkills: string[];
@@ -602,6 +609,9 @@ async function runScenario(
     const errFile = "/tmp/claude-build-round-1.err";
     const exitFile = "/tmp/claude-build-round-1.exit";
 
+    let lastDebugLine = "";
+    let lastDebugChangeAt = Date.now();
+
     async function pollBuildProgress(includeProcessState = false): Promise<BuildWaitState | null> {
       try {
         const [skillsRaw, fileCountRaw, port3000Raw, claudeProbeRaw, debugLineRaw] = await Promise.all([
@@ -609,7 +619,7 @@ async function runScenario(
           sh(sandbox!, `find ${projectDir} -maxdepth 3 -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/.next/*' -not -path '*/.claude/*' -newer /tmp/prompt.txt -type f 2>/dev/null | wc -l`),
           sh(sandbox!, "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000 2>/dev/null || echo 'down'"),
           includeProcessState
-            ? sh(sandbox!, "pgrep -f claude 2>/dev/null || true")
+            ? sh(sandbox!, `cat ${exitFile} 2>/dev/null || echo "RUNNING"`)
             : Promise.resolve(""),
           includeProcessState
             ? sh(sandbox!, "ls -t ~/.claude/debug/*.txt 2>/dev/null | head -1 | xargs tail -1 2>/dev/null || true")
@@ -622,17 +632,31 @@ async function runScenario(
           try { appUrl = sandbox!.domain(3000); } catch {}
         }
         pollHistory.push({ elapsed: elapsed(t0), skills, files: fileCount });
+
+        // Track debug log staleness
+        const debugLine = normalizeShellOutput(debugLineRaw);
+        if (debugLine && debugLine !== lastDebugLine) {
+          lastDebugLine = debugLine;
+          lastDebugChangeAt = Date.now();
+        }
+        const msSinceLastDebugChange = Date.now() - lastDebugChangeAt;
+
         const waitState = includeProcessState
           ? evaluateBuildWaitState({
             claudeProbe: claudeProbeRaw,
             debugLine: debugLineRaw,
             elapsedMs: Date.now() - buildStartedAt,
             timeoutMs: TIMEOUT_MS,
+            lastDebugLineChanged: debugLine !== lastDebugLine,
+            msSinceLastDebugChange,
           })
           : null;
-        const debugLine = normalizeShellOutput(debugLineRaw);
+        const staleSuffix = waitState?.stale ? ` | STALE(${Math.round(msSinceLastDebugChange / 1000)}s)` : "";
+        const claudeStatus = waitState
+          ? (waitState.claudeRunning ? "running" : `exited(${normalizeShellOutput(claudeProbeRaw)})`)
+          : "";
         const waitSuffix = waitState
-          ? ` | claude=${waitState.claudeRunning ? "running" : "exited"} | sessionEnd=${waitState.sessionEnded ? "yes" : "no"}${waitState.timedOut ? " | wait=timeout" : ""}${debugLine ? ` | debug=${debugLine.slice(-120)}` : ""}`
+          ? ` | claude=${claudeStatus} | sessionEnd=${waitState.sessionEnded ? "yes" : "no"}${waitState.timedOut ? " | wait=timeout" : ""}${staleSuffix}${debugLine ? ` | debug=${debugLine.slice(-120)}` : ""}`
           : "";
         console.log(`  [${scenario.slug}] ${elapsed(t0)} | skills: ${skills.join(", ") || "(none)"} | files: ${fileCount} | :3000=${port3000}${waitSuffix}`);
         return waitState;
@@ -641,9 +665,9 @@ async function runScenario(
       }
     }
 
-    async function readBuildExitCode(): Promise<number | null> {
+    async function readClaudeExitCode(exitPath: string, logPath: string): Promise<number | null> {
       for (let attempt = 1; attempt <= 3; attempt++) {
-        const exitRaw = await sh(sandbox!, `cat ${exitFile} 2>/dev/null || grep -o 'EXIT:[0-9]\\+' ${logFile} 2>/dev/null | tail -1`);
+        const exitRaw = await sh(sandbox!, `cat ${exitPath} 2>/dev/null || grep -o 'EXIT:[0-9]\\+' ${logPath} 2>/dev/null | tail -1`);
         const parsed = parseBuildExitCode(exitRaw);
         if (parsed !== null) return parsed;
         await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -696,8 +720,12 @@ async function runScenario(
           if (waitState.timedOut) {
             buildExit = 124;
             console.log(`  [${scenario.slug}] Build wait reached phase timeout (${TIMEOUT_MS / 1000}s) (${elapsed(t0)})`);
+          } else if (waitState.stale) {
+            const exitCode = await readClaudeExitCode(exitFile, logFile);
+            if (exitCode !== null) buildExit = exitCode;
+            console.log(`  [${scenario.slug}] Build stale — no new debug log activity for ${BUILD_STALE_THRESHOLD_MS / 1000}s, treating as done | exit=${exitCode ?? "unknown"} (${elapsed(t0)})`);
           } else {
-            const exitCode = await readBuildExitCode();
+            const exitCode = await readClaudeExitCode(exitFile, logFile);
             if (exitCode !== null) buildExit = exitCode;
             console.log(`  [${scenario.slug}] Build process finished | claude=${waitState.claudeRunning ? "running" : "exited"} | sessionEnd=${waitState.sessionEnded ? "yes" : "no"} | exit=${exitCode ?? "unknown"} (${elapsed(t0)})`);
           }
@@ -720,8 +748,38 @@ async function runScenario(
     }
 
     // Extract artifacts after build
-    const claimedSkills = (await sh(sandbox, "ls /tmp/vercel-plugin-*-seen-skills.d/ 2>/dev/null")).split("\n").filter(Boolean);
     const projectFilesList = (await sh(sandbox, `find ${projectDir} -maxdepth 3 -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/.next/*' -not -path '*/.claude/*' -type f 2>/dev/null | head -40`)).split("\n").filter(Boolean);
+
+    // 5b. Snapshot the sandbox after build (safety net — stops source sandbox, creates restore point)
+    let snapshotId: string | undefined;
+    if (projectFilesList.length > 1) {
+      try {
+        console.log(`  [${scenario.slug}] Snapshotting after build... (${elapsed(t0)})`);
+        const snap = await sandbox.snapshot({ expiration: 4 * 3600_000 }); // 4 hour expiry
+        snapshotId = snap.snapshotId;
+        console.log(`  [${scenario.slug}] Snapshot created: ${snapshotId} (${elapsed(t0)})`);
+
+        // Snapshotting stopped the old sandbox — create a new one from the snapshot
+        sandbox = await Sandbox.create({
+          runtime: "node24",
+          ports: [3000],
+          env: {
+            ANTHROPIC_API_KEY: apiKey,
+            ANTHROPIC_BASE_URL: baseUrl,
+            VERCEL_PLUGIN_LOG_LEVEL: "trace",
+            ...(vercelToken ? { VERCEL_TOKEN: vercelToken } : {}),
+          },
+          timeout: TIMEOUT_MS + 300_000,
+          source: { type: "snapshot", snapshotId },
+        } as any);
+        try { appUrl = sandbox.domain(3000); } catch {}
+        console.log(`  [${scenario.slug}] Restored from snapshot: ${sandbox.sandboxId}${appUrl ? ` | ${appUrl}` : ""} (${elapsed(t0)})`);
+      } catch (e: any) {
+        console.log(`  [${scenario.slug}] Snapshot failed (continuing with original sandbox): ${e.message?.slice(0, 100)} (${elapsed(t0)})`);
+      }
+    }
+
+    const claimedSkills = (await sh(sandbox, "ls /tmp/vercel-plugin-*-seen-skills.d/ 2>/dev/null")).split("\n").filter(Boolean);
     console.log(`  [${scenario.slug}] Build done (exit=${buildExit}) | skills=${claimedSkills.length} | files=${projectFilesList.length} (${elapsed(t0)})`);
 
     // Score build completeness with haiku
@@ -836,8 +894,9 @@ async function runScenario(
     let deployScore: HaikuScore | null = null;
     if (!SKIP_DEPLOY && vercelToken && projectFilesList.length > 3) {
       console.log(`  [${scenario.slug}] Phase 3: DEPLOY (${elapsed(t0)})`);
+      const deployStartedAt = Date.now();
       timing.deployStartMs = captureRelativeMs(t0);
-      const ts = new Date().toISOString().slice(0, 10).replace(/-/g, ""); // YYYYMMDD
+      const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12); // YYYYMMDDHHMI
       const projectName = `${scenario.slug}-${ts}`.toLowerCase();
 
       const deployPrompt = `Deploy this app to Vercel. Follow these steps:
@@ -853,21 +912,93 @@ Important:
 
       await sandbox.writeFiles([{ path: "/tmp/deploy.txt", content: Buffer.from(deployPrompt) }]);
       const deployCmd = `cd ${projectDir} && unset VERCEL_TOKEN && ${claudeBin} --dangerously-skip-permissions --debug --settings ${settingsPath} "$(cat /tmp/deploy.txt)"`;
+      const deployLogFile = "/tmp/claude-deploy.log";
+      const deployErrFile = "/tmp/claude-deploy.err";
+      const deployExitFile = "/tmp/claude-deploy.exit";
+      const wrappedDeployCmd = `${deployCmd} > ${deployLogFile} 2> ${deployErrFile}; status=$?; echo "EXIT:$status" >> ${deployLogFile}; printf '%s' "$status" > ${deployExitFile}`;
+      let lastDeployDebugLine = "";
+      let lastDeployDebugChangeAt = Date.now();
+
+      async function pollDeployProgress(): Promise<BuildWaitState | null> {
+        try {
+          const [claudeProbeRaw, debugLineRaw] = await Promise.all([
+            sh(sandbox!, `cat ${deployExitFile} 2>/dev/null || echo "RUNNING"`),
+            sh(sandbox!, "ls -t ~/.claude/debug/*.txt 2>/dev/null | head -1 | xargs tail -1 2>/dev/null || true"),
+          ]);
+          const debugLine = normalizeShellOutput(debugLineRaw);
+          if (debugLine && debugLine !== lastDeployDebugLine) {
+            lastDeployDebugLine = debugLine;
+            lastDeployDebugChangeAt = Date.now();
+          }
+          const msSinceLastDebugChange = Date.now() - lastDeployDebugChangeAt;
+          const waitState = evaluateBuildWaitState({
+            claudeProbe: claudeProbeRaw,
+            debugLine: debugLineRaw,
+            elapsedMs: Date.now() - deployStartedAt,
+            timeoutMs: TIMEOUT_MS,
+            lastDebugLineChanged: debugLine !== lastDeployDebugLine,
+            msSinceLastDebugChange,
+          });
+          const staleSuffix = waitState.stale ? ` | STALE(${Math.round(msSinceLastDebugChange / 1000)}s)` : "";
+          const claudeStatus = waitState.claudeRunning ? "running" : `exited(${normalizeShellOutput(claudeProbeRaw)})`;
+          console.log(`  [${scenario.slug}] Deploy wait | claude=${claudeStatus} | sessionEnd=${waitState.sessionEnded ? "yes" : "no"}${waitState.timedOut ? " | wait=timeout" : ""}${staleSuffix}${debugLine ? ` | debug=${debugLine.slice(-120)}` : ""} (${elapsed(t0)})`);
+          return waitState;
+        } catch {
+          return null;
+        }
+      }
 
       let deployExit = -1;
       let deployOut = "";
+      let deployLaunchTimedOut = false;
       try {
-        const dr = await sandbox.runCommand("sh", ["-c", deployCmd], { signal: AbortSignal.timeout(TIMEOUT_MS) });
+        const dr = await sandbox.runCommand("sh", ["-c", wrappedDeployCmd]);
         deployExit = (dr as any).exitCode ?? 0;
-        deployOut = (await dr.stdout()).trim();
       } catch (e: any) {
-        if (e.message?.includes("timed out")) {
+        if (isExpectedRunCommandTimeout(e)) {
+          deployLaunchTimedOut = true;
           deployExit = 124;
-          console.log(`  [${scenario.slug}] Deploy timed out (${elapsed(t0)})`);
+          console.log(`  [${scenario.slug}] Deploy launch hit the expected 300s API timeout; waiting on sandbox process state (${elapsed(t0)})`);
+        } else {
+          deployExit = 1;
+          console.log(`  [${scenario.slug}] Deploy launch failed | attempt=runCommand | state=launching | error=${e.message?.slice(0, 200)} (${elapsed(t0)})`);
         }
-      } finally {
-        timing.deployEndMs = captureRelativeMs(t0);
       }
+
+      if (deployLaunchTimedOut) {
+        while (true) {
+          const waitState = await pollDeployProgress();
+          if (!waitState) {
+            if (Date.now() - deployStartedAt >= TIMEOUT_MS) {
+              deployExit = 124;
+              console.log(`  [${scenario.slug}] Deploy wait probe stalled past phase timeout (${TIMEOUT_MS / 1000}s) (${elapsed(t0)})`);
+              break;
+            }
+            console.log(`  [${scenario.slug}] Deploy wait probe failed; retrying in ${BUILD_WAIT_POLL_MS / 1000}s (${elapsed(t0)})`);
+            await new Promise((resolve) => setTimeout(resolve, BUILD_WAIT_POLL_MS));
+            continue;
+          }
+          if (!waitState.shouldKeepPolling) {
+            if (waitState.timedOut) {
+              deployExit = 124;
+              console.log(`  [${scenario.slug}] Deploy wait reached phase timeout (${TIMEOUT_MS / 1000}s) (${elapsed(t0)})`);
+            } else if (waitState.stale) {
+              const exitCode = await readClaudeExitCode(deployExitFile, deployLogFile);
+              if (exitCode !== null) deployExit = exitCode;
+              console.log(`  [${scenario.slug}] Deploy stale — no new debug log activity for ${BUILD_STALE_THRESHOLD_MS / 1000}s, treating as done | exit=${exitCode ?? "unknown"} (${elapsed(t0)})`);
+            } else {
+              const exitCode = await readClaudeExitCode(deployExitFile, deployLogFile);
+              if (exitCode !== null) deployExit = exitCode;
+              console.log(`  [${scenario.slug}] Deploy process finished | claude=${waitState.claudeRunning ? "running" : "exited"} | sessionEnd=${waitState.sessionEnded ? "yes" : "no"} | exit=${exitCode ?? "unknown"} (${elapsed(t0)})`);
+            }
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, BUILD_WAIT_POLL_MS));
+        }
+      }
+
+      deployOut = await sh(sandbox, `cat ${deployLogFile} 2>/dev/null`);
+      timing.deployEndMs = captureRelativeMs(t0);
 
       // Extract deploy URL from output (scan for any vercel.app URL)
       const urlMatch = deployOut.match(/(https:\/\/[^\s]+\.vercel\.app)/);
@@ -1051,9 +1182,20 @@ Important:
 
     console.log(`  [${scenario.slug}] DONE (${elapsed(t0)}) | skills=${claimedSkills.length} | files=${projectFilesList.length}${deployUrl ? ` | ${deployUrl}` : appUrl ? ` | ${appUrl}` : ""}`);
 
+    // Clean up snapshot (it has a 4h expiry but be tidy)
+    if (snapshotId) {
+      try {
+        const { Snapshot } = await import("@vercel/sandbox");
+        const snap = await Snapshot.get({ snapshotId });
+        await snap.delete();
+        console.log(`  [${scenario.slug}] Snapshot ${snapshotId} cleaned up (${elapsed(t0)})`);
+      } catch {}
+    }
+
     return {
       slug: scenario.slug,
       sandboxId: sandbox.sandboxId,
+      snapshotId,
       success: buildExit === 0 || buildExit === 124,
       durationMs: performance.now() - t0,
       claimedSkills,

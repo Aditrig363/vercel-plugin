@@ -44,10 +44,11 @@ describe("evaluateBuildWaitState", () => {
       elapsedMs: 45_000,
       timeoutMs: 300_000,
     })).toEqual({
-      claudeRunning: true,
+      claudeRunning: false,
       sessionEnded: false,
+      stale: false,
       timedOut: false,
-      shouldKeepPolling: true,
+      shouldKeepPolling: false,
     });
   });
 
@@ -58,8 +59,9 @@ describe("evaluateBuildWaitState", () => {
       elapsedMs: 60_000,
       timeoutMs: 300_000,
     })).toEqual({
-      claudeRunning: true,
+      claudeRunning: false,
       sessionEnded: true,
+      stale: false,
       timedOut: false,
       shouldKeepPolling: false,
     });
@@ -72,10 +74,11 @@ describe("evaluateBuildWaitState", () => {
       elapsedMs: 60_000,
       timeoutMs: 300_000,
     })).toEqual({
-      claudeRunning: false,
+      claudeRunning: true,
       sessionEnded: false,
+      stale: false,
       timedOut: false,
-      shouldKeepPolling: false,
+      shouldKeepPolling: true,
     });
   });
 
@@ -86,9 +89,26 @@ describe("evaluateBuildWaitState", () => {
       elapsedMs: 301_000,
       timeoutMs: 300_000,
     })).toEqual({
+      claudeRunning: false,
+      sessionEnded: false,
+      stale: false,
+      timedOut: true,
+      shouldKeepPolling: false,
+    });
+  });
+
+  test("stops polling when the debug log has been stale past the threshold", () => {
+    expect(evaluateBuildWaitState({
+      claudeProbe: "RUNNING",
+      debugLine: "2026-03-11T00:00:00Z Tool call finished",
+      elapsedMs: 60_000,
+      timeoutMs: 300_000,
+      msSinceLastDebugChange: 120_000,
+    })).toEqual({
       claudeRunning: true,
       sessionEnded: false,
-      timedOut: true,
+      stale: true,
+      timedOut: false,
       shouldKeepPolling: false,
     });
   });
