@@ -80,6 +80,10 @@ const FILE_MARKERS: FileMarker[] = [
   { file: "components.json", skills: ["shadcn"] },
   { file: ".env.local", skills: ["env-vars"] },
   { file: "pnpm-workspace.yaml", skills: ["turborepo"] },
+  { file: "backend/pyproject.toml", skills: ["vercel-services"] },
+  { file: "backend/main.py", skills: ["vercel-services"] },
+  { file: "backend/go.mod", skills: ["vercel-services"] },
+  { file: "backend/main.go", skills: ["vercel-services"] },
 ];
 
 /**
@@ -206,6 +210,7 @@ export function profileProject(projectRoot: string): string[] {
       skills.add("routing-middleware");
     }
     if (vercelConfig.functions) skills.add("vercel-functions");
+    if (vercelConfig.experimentalServices) skills.add("vercel-services");
   }
 
   return [...skills].sort();
