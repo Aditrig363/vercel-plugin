@@ -24,6 +24,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { profileCachePath, requireEnvFile, safeReadJson } from "./hook-env.mjs";
 import { createLogger, logCaughtError, type Logger } from "./logger.mjs";
+import { isTelemetryEnabled, trackEvents } from "./telemetry.mjs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -501,7 +502,7 @@ function parseSessionStartInput(): SessionStartInput | null {
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const envFile: string = requireEnvFile();
 
   // Parse stdin for session_id (used for profile cache path)
@@ -605,6 +606,16 @@ function main(): void {
         projectRoot,
       });
     }
+  }
+
+  if (isTelemetryEnabled() && sessionId) {
+    await trackEvents(sessionId, [
+      { key: "session:platform", value: process.platform },
+      { key: "session:likely_skills", value: likelySkills.join(",") },
+      { key: "session:greenfield", value: String(greenfield !== null) },
+      { key: "session:vercel_cli_installed", value: String(cliStatus.installed) },
+      { key: "session:vercel_cli_version", value: cliStatus.currentVersion || "" },
+    ]);
   }
 
   process.exit(0);
