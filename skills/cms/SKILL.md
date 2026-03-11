@@ -70,6 +70,17 @@ retrieval:
     - Storyblok
     - Visual Editing
     - revalidation
+chainTo:
+  -
+    pattern: 'getStaticProps|getServerSideProps|getInitialProps'
+    targetSkill: nextjs
+    message: 'Pages Router data-fetching pattern detected — loading Next.js guidance for App Router migration with Server Components and async request APIs.'
+    skipIfFileContains: 'app/.*page\.(tsx|ts|jsx|js)|generateStaticParams|use cache'
+  -
+    pattern: 'revalidatePath\s*\(|revalidateTag\s*\('
+    targetSkill: runtime-cache
+    message: 'Revalidation call detected — loading Runtime Cache guidance for tag-based invalidation, per-region caching, and cache coordination patterns.'
+    skipIfFileContains: 'cacheTag\s*\(|unstable_cache|use cache'
 
 ---
 

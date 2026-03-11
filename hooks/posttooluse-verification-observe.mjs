@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/posttooluse-verification-observe.mts
+import { readFileSync, realpathSync } from "fs";
+import { resolve } from "path";
+import { fileURLToPath } from "url";
 import { generateVerificationId } from "./hook-env.mjs";
 import { createLogger } from "./logger.mjs";
 function isVerificationReport(value) {
@@ -11,7 +13,7 @@ function isVerificationReport(value) {
     (b) => typeof b === "object" && b !== null && b.event === "verification.boundary_observed"
   );
 }
-const BOUNDARY_PATTERNS = [
+var BOUNDARY_PATTERNS = [
   // uiRender: browser/screenshot/playwright/puppeteer commands
   { boundary: "uiRender", pattern: /\b(open|launch|browse|screenshot|puppeteer|playwright|chromium|firefox|webkit)\b/i, label: "browser-tool" },
   { boundary: "uiRender", pattern: /\bopen\s+https?:/i, label: "open-url" },
@@ -40,8 +42,8 @@ function classifyBoundary(command) {
   }
   return { boundary: "unknown", matchedPattern: "none" };
 }
-const ROUTE_REGEX = /\b(?:app|pages|src\/pages|src\/app)\/([\w[\].-]+(?:\/[\w[\].-]+)*)/;
-const URL_ROUTE_REGEX = /https?:\/\/[^/\s]+(\/([\w-]+(?:\/[\w-]+)*))/;
+var ROUTE_REGEX = /\b(?:app|pages|src\/pages|src\/app)\/([\w[\].-]+(?:\/[\w[\].-]+)*)/;
+var URL_ROUTE_REGEX = /https?:\/\/[^/\s]+(\/([\w-]+(?:\/[\w-]+)*))/;
 function inferRoute(command, recentEdits) {
   if (recentEdits) {
     const paths = recentEdits.split(",").map((p) => p.trim()).filter(Boolean);

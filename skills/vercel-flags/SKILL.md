@@ -57,6 +57,15 @@ retrieval:
     - A/B test
     - rollout
     - provider adapter
+chainTo:
+  -
+    pattern: 'process\.env\.(FEATURE_|FLAG_|ENABLE_|DISABLE_)\w+'
+    targetSkill: vercel-storage
+    message: 'Environment variable feature flags detected — loading Vercel Storage guidance for Edge Config, which provides ultra-low-latency flag reads at the edge.'
+  -
+    pattern: 'from\s+[''""]launchdarkly-node-server-sdk[''""]|from\s+[''""]@launchdarkly/'
+    targetSkill: vercel-flags
+    message: 'Direct LaunchDarkly SDK detected — Vercel Flags provides a unified adapter layer. Reloading Flags guidance for provider integration.'
 
 ---
 

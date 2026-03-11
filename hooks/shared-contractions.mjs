@@ -1,4 +1,5 @@
-const CONTRACTIONS = {
+// hooks/src/shared-contractions.mts
+var CONTRACTIONS = {
   // apostrophe forms
   "it's": "it is",
   "what's": "what is",

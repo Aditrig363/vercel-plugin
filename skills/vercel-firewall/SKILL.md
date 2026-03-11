@@ -36,6 +36,15 @@ retrieval:
     - IP block
     - OWASP
     - Attack Challenge Mode
+chainTo:
+  -
+    pattern: 'from\s+[''""]express-rate-limit[''""]|from\s+[''""]rate-limiter-flexible[''""]'
+    targetSkill: routing-middleware
+    message: 'Application-level rate limiting detected — Vercel Firewall provides platform-level rate limiting without code. Loading Routing Middleware for request interception patterns.'
+  -
+    pattern: 'req\.ip|request\.headers\.get\([''"]x-forwarded-for[''"]\).*block|ipBlock|denyList'
+    targetSkill: routing-middleware
+    message: 'Manual IP blocking in application code detected — Vercel Firewall handles IP blocking at the edge. Loading Routing Middleware guidance for proper request interception.'
 
 ---
 

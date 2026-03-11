@@ -81,7 +81,7 @@ const PROJECTS: BenchmarkProject[] = [
     slug: "07-feature-rollout",
     prompt:
       "Build a feature rollout system with audience targeting, gradual percentage releases, and rollback controls with experiment tracking. Link the project to my vercel-labs team so we can deploy it later.",
-    expectedSkills: ["vercel-flags", "edge-runtime", "observability"],
+    expectedSkills: ["vercel-flags", "observability"],
   },
   {
     slug: "08-event-driven-crm",

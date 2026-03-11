@@ -16,6 +16,15 @@ metadata:
     - 'components/message*.tsx'
     - 'src/components/message*.tsx'
   bashPatterns: []
+chainTo:
+  -
+    pattern: 'message\.content\b|tool-invocation'
+    targetSkill: ai-sdk
+    message: 'Deprecated UIMessage v5 rendering pattern (message.content / tool-invocation) — loading AI SDK v6 guidance for message.parts migration.'
+  -
+    pattern: 'react-markdown|ReactMarkdown|dangerouslySetInnerHTML'
+    targetSkill: ai-elements
+    message: 'Manual markdown rendering of AI content detected — loading AI Elements for streaming-aware, safe AI message rendering.'
 retrieval:
   aliases:
     - chat rendering

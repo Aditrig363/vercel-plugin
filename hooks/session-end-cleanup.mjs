@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-const SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
+
+// hooks/src/session-end-cleanup.mts
+import { createHash } from "crypto";
+import { readdirSync, readFileSync, rmSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join, resolve } from "path";
+import { fileURLToPath } from "url";
+var SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
 function tempSessionIdSegment(sessionId) {
   if (SAFE_SESSION_ID_RE.test(sessionId)) {
     return sessionId;
@@ -61,8 +63,8 @@ function main() {
   }
   process.exit(0);
 }
-const SESSION_END_CLEANUP_ENTRYPOINT = fileURLToPath(import.meta.url);
-const isSessionEndCleanupEntrypoint = process.argv[1] ? resolve(process.argv[1]) === SESSION_END_CLEANUP_ENTRYPOINT : false;
+var SESSION_END_CLEANUP_ENTRYPOINT = fileURLToPath(import.meta.url);
+var isSessionEndCleanupEntrypoint = process.argv[1] ? resolve(process.argv[1]) === SESSION_END_CLEANUP_ENTRYPOINT : false;
 if (isSessionEndCleanupEntrypoint) {
   main();
 }

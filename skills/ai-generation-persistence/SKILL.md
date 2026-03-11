@@ -93,6 +93,17 @@ retrieval:
     - addressable URL
     - cost tracking
     - LLM generation
+chainTo:
+  -
+    pattern: 'streamText\s*\(|generateText\s*\('
+    targetSkill: ai-gateway
+    message: 'AI generation call without cost tracking — loading AI Gateway guidance for OIDC auth, usage attribution, and per-generation cost visibility.'
+    skipIfFileContains: 'gateway\(|@ai-sdk/gateway|ai-gateway|providerOptions.*gateway|usage.*cost|trackUsage'
+  -
+    pattern: 'from\s+[''"]@vercel/blob[''""]'
+    targetSkill: vercel-storage
+    message: 'Vercel Blob import detected for generation persistence — loading Storage guidance for blob upload patterns, ETags, and client upload helpers.'
+    skipIfFileContains: 'put\(\s*.*\{.*access|del\(\s*.*url'
 
 ---
 

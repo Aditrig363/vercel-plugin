@@ -38,6 +38,21 @@ retrieval:
     - v0 CLI
     - v0 SDK
     - AI code generation
+chainTo:
+  -
+    pattern: 'from\s+[''"]@/components/ui/|npx\s+shadcn|@shadcn/'
+    targetSkill: shadcn
+    message: 'shadcn/ui components detected in v0 output — loading shadcn guidance for theming, registry, and component customization.'
+  -
+    pattern: 'useChat\s*\(|streamText\s*\(|generateText\s*\(|from\s+[''"]ai[''"]'
+    targetSkill: ai-sdk
+    message: 'AI SDK usage detected in v0-generated code — loading AI SDK v6 guidance for proper streaming, transport, and gateway patterns.'
+    skipIfFileContains: 'convertToModelMessages|toUIMessageStreamResponse'
+  -
+    pattern: 'from\s+[''"]next/image[''"]|from\s+[''"]next/font[''"]|from\s+[''"]next/link[''"]'
+    targetSkill: nextjs
+    message: 'Next.js imports in v0 output — loading Next.js 16 guidance for App Router patterns, async APIs, and proxy.ts.'
+    skipIfFileContains: 'generateStaticParams|generateMetadata'
 
 ---
 

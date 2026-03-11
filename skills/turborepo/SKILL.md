@@ -16,8 +16,11 @@ metadata:
 validate:
   -
     pattern: '"pipeline"\s*:'
-    message: 'turbo.json "pipeline" was renamed to "tasks" in Turborepo v2 — update to "tasks" key'
+    message: 'turbo.json "pipeline" was renamed to "tasks" in Turborepo v2 — update to "tasks" key. Run `npx @turbo/codemod migrate` for automatic migration.'
     severity: error
+    upgradeToSkill: turborepo
+    upgradeWhy: 'Reload Turborepo skill for v2 migration guidance — "pipeline" → "tasks" rename and other breaking changes.'
+    skipIfFileContains: '"tasks"\s*:'
 retrieval:
   aliases:
     - monorepo
@@ -35,6 +38,11 @@ retrieval:
     - remote caching
     - --affected
     - pipeline
+chainTo:
+  -
+    pattern: 'from\s+[''""]@vercel/(postgres|kv)[''""]'
+    targetSkill: vercel-storage
+    message: '@vercel/postgres and @vercel/kv are sunset — loading Vercel Storage guidance for Neon and Upstash migration.'
 
 ---
 

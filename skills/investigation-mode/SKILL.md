@@ -179,6 +179,20 @@ retrieval:
     - workflow status
     - browser verify
     - triage
+chainTo:
+  -
+    pattern: 'createWorkflow|use workflow|use step|@workflow/'
+    targetSkill: workflow
+    message: 'Workflow code detected during investigation — loading Workflow DevKit guidance for debugging durable execution, step replay, and hook state.'
+  -
+    pattern: 'VERCEL_URL|DEPLOYMENT_ID|vercel\.app|VERCEL_ENV'
+    targetSkill: deployments-cicd
+    message: 'Deployment context detected — loading Deployments guidance for inspecting builds, preview URLs, and production promotion.'
+    skipIfFileContains: 'vercel\s+inspect|vercel\s+logs'
+  -
+    pattern: '@vercel/analytics|@vercel/speed-insights|otel|OpenTelemetry|instrumentation\.(ts|js)'
+    targetSkill: observability
+    message: 'Observability instrumentation detected — loading Observability guidance for log queries, tracing, and monitoring setup.'
 
 ---
 

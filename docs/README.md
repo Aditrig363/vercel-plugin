@@ -106,7 +106,6 @@ mindmap
       turborepo
       ncc
       next-forge
-      edge-runtime
       micro
     AI & LLM Services
       ai-sdk

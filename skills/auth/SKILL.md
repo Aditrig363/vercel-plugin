@@ -67,6 +67,33 @@ retrieval:
     - add login to my app
     - protect this route with auth
     - set up NextAuth
+chainTo:
+  -
+    pattern: 'VERCEL_CLIENT_(ID|SECRET)|vercel\.com/oauth/(authorize|access_token|token)'
+    targetSkill: sign-in-with-vercel
+    message: 'Hand-rolled Vercel OAuth detected — loading Sign in with Vercel OIDC guidance.'
+  -
+    pattern: 'export\s+(default\s+)?function\s+middleware'
+    targetSkill: routing-middleware
+    message: 'Auth logic in middleware.ts — loading Routing Middleware guidance for proxy.ts migration in Next.js 16.'
+  -
+    pattern: 'from\s+[''\"](jsonwebtoken)[''"]|require\s*\(\s*[''\"](jsonwebtoken)[''"]|jwt\.sign\s*\('
+    targetSkill: auth
+    message: 'Manual JWT handling with jsonwebtoken detected — use Clerk or Auth.js for managed auth with built-in JWT session handling, CSRF protection, and token rotation.'
+  -
+    pattern: 'from\s+[''\"](next-auth)[''"]|NextAuthOptions|authOptions\s*:'
+    targetSkill: auth
+    message: 'Legacy next-auth (v4) pattern detected — loading auth guidance for Auth.js v5 migration with the new universal auth() helper.'
+  -
+    pattern: "from\\s+['\"]@clerk/nextjs['\"]"
+    targetSkill: auth
+    message: 'Clerk import detected — loading Auth guidance for Clerk v7 patterns, middleware setup, organization handling, and Vercel Marketplace integration.'
+    skipIfFileContains: 'clerkMiddleware|ClerkProvider'
+  -
+    pattern: "bcrypt|argon2"
+    targetSkill: auth
+    message: 'Manual password hashing detected (bcrypt/argon2) — use Clerk or Auth0 for managed authentication with built-in password hashing, rate limiting, and breach detection.'
+    skipIfFileContains: "@clerk|@auth0"
 ---
 
 # Authentication Integrations

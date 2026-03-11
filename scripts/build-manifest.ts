@@ -14,9 +14,10 @@ import { writeFileSync, mkdirSync } from "node:fs";
 // Import the canonical skill-map builder (ESM)
 import { globToRegex, importPatternToRegex } from "../hooks/patterns.mjs";
 import type { SkillEntry, ManifestSkill } from "../hooks/patterns.mjs";
+import type { ChainToRule, ValidationRule } from "../hooks/skill-map-frontmatter.mjs";
 import { loadValidatedSkillMap } from "../src/shared/skill-map-loader.ts";
 
-export { buildManifest, writeManifestFile };
+export { buildManifest, writeManifestFile, synthesizeChainToFromValidate };
 
 const ROOT = resolve(import.meta.dir, "..");
 const SKILLS_DIR = join(ROOT, "skills");
@@ -82,6 +83,62 @@ function compileRegexSources(config: SkillEntry) {
 }
 
 /**
+ * Auto-synthesize chainTo entries from validate rules that have upgradeToSkill
+ * with severity "error" or "recommended", unless a matching chainTo already
+ * exists for that targetSkill in the same skill.
+ *
+ * Returns the number of synthesized entries added.
+ */
+function synthesizeChainToFromValidate(
+  skills: Record<string, SkillEntry>,
+  allSlugs: Set<string>,
+): { count: number; warnings: string[] } {
+  let count = 0;
+  const warnings: string[] = [];
+
+  for (const [slug, config] of Object.entries(skills)) {
+    if (!config.validate?.length) continue;
+
+    // Collect existing chainTo targets for this skill
+    const existingTargets = new Set(
+      (config.chainTo ?? []).map((c: ChainToRule) => c.targetSkill),
+    );
+
+    for (const rule of config.validate as ValidationRule[]) {
+      if (!rule.upgradeToSkill) continue;
+      if (rule.severity !== "error" && rule.severity !== "recommended") continue;
+      if (existingTargets.has(rule.upgradeToSkill)) continue;
+      if (!allSlugs.has(rule.upgradeToSkill)) {
+        warnings.push(
+          `skill "${slug}": cannot synthesize chainTo for upgradeToSkill "${rule.upgradeToSkill}" — target skill does not exist`,
+        );
+        continue;
+      }
+
+      const message =
+        rule.upgradeWhy ||
+        `${rule.message} — loading ${rule.upgradeToSkill} guidance.`;
+
+      const synthesized: ChainToRule = {
+        pattern: rule.pattern,
+        targetSkill: rule.upgradeToSkill,
+        message,
+        synthesized: true,
+      };
+
+      if (!config.chainTo) {
+        config.chainTo = [];
+      }
+      config.chainTo.push(synthesized);
+      existingTargets.add(rule.upgradeToSkill);
+      count++;
+    }
+  }
+
+  return { count, warnings };
+}
+
+/**
  * Build the skill manifest object from the skills directory.
  * Exported so validate.ts can reuse this without duplicating logic.
  */
@@ -97,8 +154,18 @@ function buildManifest(skillsDir: string): { manifest: Manifest; warnings: strin
     allWarnings.push(...validation.warnings);
   }
 
+  // Auto-synthesize chainTo from upgradeToSkill validate rules
+  const normalizedSkills = validation.normalizedSkillMap.skills as Record<string, SkillEntry>;
+  const allSlugs = new Set(Object.keys(normalizedSkills));
+  const { count: synthCount, warnings: synthWarnings } =
+    synthesizeChainToFromValidate(normalizedSkills, allSlugs);
+  allWarnings.push(...synthWarnings);
+  if (synthCount > 0) {
+    console.log(`  ⤳ Synthesized ${synthCount} chainTo rule(s) from upgradeToSkill validate rules`);
+  }
+
   const skills: Record<string, ManifestSkillWithBody> = {};
-  for (const [slug, config] of Object.entries(validation.normalizedSkillMap.skills) as [string, SkillEntry][]) {
+  for (const [slug, config] of Object.entries(normalizedSkills) as [string, SkillEntry][]) {
     const { pathPatterns, pathRegexSources, bashPatterns, bashRegexSources, importPatterns, importRegexSources } = compileRegexSources(config);
     skills[slug] = {
       priority: config.priority,
@@ -113,6 +180,7 @@ function buildManifest(skillsDir: string): { manifest: Manifest; warnings: strin
       bashRegexSources,
       importRegexSources,
       ...(config.validate?.length ? { validate: config.validate } : {}),
+      ...(config.chainTo?.length ? { chainTo: config.chainTo } : {}),
       ...(config.promptSignals ? { promptSignals: config.promptSignals } : {}),
       ...(config.retrieval ? { retrieval: config.retrieval } : {}),
     };

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/posttooluse-validate.mts
+import { createHash } from "crypto";
+import { readFileSync, realpathSync } from "fs";
+import { join, resolve } from "path";
+import { fileURLToPath } from "url";
 import { detectPlatform } from "./compat.mjs";
 import { pluginRoot as resolvePluginRoot, readSessionFile, safeReadFile, writeSessionFile, tryClaimSessionKey, syncSessionFileFromClaims } from "./hook-env.mjs";
 import { buildSkillMap, extractFrontmatter } from "./skill-map-frontmatter.mjs";
@@ -12,11 +14,11 @@ import {
   matchImportWithReason
 } from "./patterns.mjs";
 import { createLogger } from "./logger.mjs";
-const PLUGIN_ROOT = resolvePluginRoot();
-const SUPPORTED_TOOLS = ["Write", "Edit"];
-const VALIDATED_FILES_ENV_KEY = "VERCEL_PLUGIN_VALIDATED_FILES";
-const CHAIN_BUDGET_BYTES = 18e3;
-const DEFAULT_CHAIN_CAP = 2;
+var PLUGIN_ROOT = resolvePluginRoot();
+var SUPPORTED_TOOLS = ["Write", "Edit"];
+var VALIDATED_FILES_ENV_KEY = "VERCEL_PLUGIN_VALIDATED_FILES";
+var CHAIN_BUDGET_BYTES = 18e3;
+var DEFAULT_CHAIN_CAP = 2;
 function resolveSessionId(input) {
   const sessionId = input.session_id ?? input.conversation_id;
   return typeof sessionId === "string" && sessionId.trim() !== "" ? sessionId : null;
@@ -47,7 +49,7 @@ function formatPlatformOutput(platform, additionalContext, env) {
   };
   return JSON.stringify(output);
 }
-const log = createLogger();
+var log = createLogger();
 function parseInput(raw, logger, env = process.env) {
   const l = logger || log;
   const trimmed = (raw || "").trim();

@@ -148,8 +148,7 @@ describe("golden payload snapshots", () => {
 
       // Verify additionalContext contains skill markers for each injected skill
       for (const skill of expected.injectedSkills) {
-        expect(additionalContext).toContain(`<!-- skill:${skill} -->`);
-        expect(additionalContext).toContain(`<!-- /skill:${skill} -->`);
+        expect(additionalContext).toContain(`Skill(${skill})`);
       }
     });
   }

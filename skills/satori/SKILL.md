@@ -54,6 +54,15 @@ retrieval:
     - OG image
     - SVG
     - open graph
+chainTo:
+  -
+    pattern: 'from\s+[''""]puppeteer[''""]|from\s+[''""]playwright[''""]|launch\(\s*\{.*headless'
+    targetSkill: vercel-functions
+    message: 'Headless browser for OG image generation detected — Satori generates OG images without a browser. Loading Functions guidance for lightweight serverless deployment.'
+  -
+    pattern: 'from\s+[''""]canvas[''""]|createCanvas\('
+    targetSkill: vercel-functions
+    message: 'Node canvas for image generation detected — Satori uses JSX-to-SVG without native dependencies. Loading Functions guidance for serverless-compatible OG images.'
 
 ---
 

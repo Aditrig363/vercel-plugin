@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+// hooks/src/hook-env.mts
+import { createHash, randomUUID } from "crypto";
 import {
   appendFileSync,
   closeSync,
@@ -8,12 +9,12 @@ import {
   readdirSync,
   rmSync,
   writeFileSync
-} from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+} from "fs";
+import { homedir, tmpdir } from "os";
+import { dirname, join, resolve, sep } from "path";
+import { fileURLToPath } from "url";
 import { createLogger, logCaughtError } from "./logger.mjs";
-const log = createLogger();
+var log = createLogger();
 function pluginRoot(metaUrl) {
   const base = metaUrl ?? import.meta.url;
   return resolve(dirname(fileURLToPath(base)), "..");
@@ -49,7 +50,7 @@ function getDedupScopeId(payload) {
   }
   return "main";
 }
-const SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
+var SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
 function dedupSessionIdSegment(sessionId) {
   if (SAFE_SESSION_ID_RE.test(sessionId)) {
     return sessionId;

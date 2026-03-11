@@ -82,12 +82,6 @@
       "tags": ["exact"]
     },
     {
-      "id": 14,
-      "prompt": "configure the edge runtime for this serverless function",
-      "expectedSkills": ["edge-runtime"],
-      "tags": ["exact"]
-    },
-    {
       "id": 15,
       "prompt": "set up OpenTelemetry instrumentation for my app",
       "expectedSkills": ["observability"],

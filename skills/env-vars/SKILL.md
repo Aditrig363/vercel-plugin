@@ -22,6 +22,11 @@ metadata:
     - '\bvercel\s+env\s+add\b'
     - '\bvercel\s+env\s+rm\b'
     - '\bvercel\s+env\s+ls\b'
+chainTo:
+  -
+    pattern: '\b(OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY)\b'
+    targetSkill: ai-gateway
+    message: 'Direct provider API key detected — loading AI Gateway guidance for OIDC auth (no manual keys needed on Vercel).'
 retrieval:
   aliases:
     - environment variables

@@ -1,4 +1,5 @@
-const EXCEPTIONS_ING = /* @__PURE__ */ new Set([
+// hooks/src/stemmer.mts
+var EXCEPTIONS_ING = /* @__PURE__ */ new Set([
   "ring",
   "king",
   "thing",
@@ -27,7 +28,7 @@ const EXCEPTIONS_ING = /* @__PURE__ */ new Set([
   "ding",
   "ming"
 ]);
-const EXCEPTIONS_ED = /* @__PURE__ */ new Set([
+var EXCEPTIONS_ED = /* @__PURE__ */ new Set([
   "bed",
   "red",
   "fed",
@@ -46,7 +47,7 @@ const EXCEPTIONS_ED = /* @__PURE__ */ new Set([
   "speed",
   "indeed"
 ]);
-const EXCEPTIONS_TION = /* @__PURE__ */ new Set([
+var EXCEPTIONS_TION = /* @__PURE__ */ new Set([
   "mention",
   "question",
   "caution",
@@ -60,7 +61,7 @@ const EXCEPTIONS_TION = /* @__PURE__ */ new Set([
   "junction",
   "auction"
 ]);
-const EXCEPTIONS_MENT = /* @__PURE__ */ new Set([
+var EXCEPTIONS_MENT = /* @__PURE__ */ new Set([
   "element",
   "comment",
   "moment",
@@ -73,7 +74,7 @@ const EXCEPTIONS_MENT = /* @__PURE__ */ new Set([
   "ferment",
   "lament"
 ]);
-const EXCEPTIONS_LY = /* @__PURE__ */ new Set([
+var EXCEPTIONS_LY = /* @__PURE__ */ new Set([
   "only",
   "early",
   "family",
@@ -100,7 +101,7 @@ const EXCEPTIONS_LY = /* @__PURE__ */ new Set([
   "italy",
   "anomaly"
 ]);
-const EXCEPTIONS_ER = /* @__PURE__ */ new Set([
+var EXCEPTIONS_ER = /* @__PURE__ */ new Set([
   "user",
   "server",
   "number",
@@ -195,7 +196,7 @@ const EXCEPTIONS_ER = /* @__PURE__ */ new Set([
   "spider",
   "cyber"
 ]);
-const EXCEPTIONS_EST = /* @__PURE__ */ new Set([
+var EXCEPTIONS_EST = /* @__PURE__ */ new Set([
   "test",
   "best",
   "rest",
@@ -223,13 +224,13 @@ const EXCEPTIONS_EST = /* @__PURE__ */ new Set([
   "vitest",
   "latest"
 ]);
-const EXCEPTIONS_NESS = /* @__PURE__ */ new Set([
+var EXCEPTIONS_NESS = /* @__PURE__ */ new Set([
   "business",
   "less",
   "ness"
 ]);
-const KEEP_DOUBLED = /* @__PURE__ */ new Set(["ll", "ss", "ff", "zz"]);
-const POST_STEM_MAP = {
+var KEEP_DOUBLED = /* @__PURE__ */ new Set(["ll", "ss", "ff", "zz"]);
+var POST_STEM_MAP = {
   cach: "cache",
   rout: "route",
   styl: "style",
@@ -258,7 +259,7 @@ function undouble(stem) {
   }
   return stem;
 }
-const MIN_STEM = 3;
+var MIN_STEM = 3;
 function stemToken(word) {
   if (word.length < 4) return word;
   let stem = null;

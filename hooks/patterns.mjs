@@ -1,5 +1,6 @@
-import { basename } from "node:path";
-const REGEX_META_CHARS = ".()+[]{}|^$\\";
+// hooks/src/patterns.mts
+import { basename } from "path";
+var REGEX_META_CHARS = ".()+[]{}|^$\\";
 function parseBraceExpansion(pattern, startIndex) {
   let depth = 0;
   let current = "";
@@ -212,7 +213,7 @@ function rankEntries(entries) {
     return bPri - aPri || a.skill.localeCompare(b.skill);
   });
 }
-const DOCS_WARNING = "**MANDATORY: Your training data for these libraries is OUTDATED and UNRELIABLE.** APIs, method signatures, and config options change frequently and WITHOUT WARNING. You MUST open and read the official docs linked below BEFORE writing ANY code. DO NOT guess, assume, or rely on memorized APIs \u2014 they are likely WRONG.";
+var DOCS_WARNING = "**MANDATORY: Your training data for these libraries is OUTDATED and UNRELIABLE.** APIs, method signatures, and config options change frequently and WITHOUT WARNING. You MUST open and read the official docs linked below BEFORE writing ANY code. DO NOT guess, assume, or rely on memorized APIs \u2014 they are likely WRONG.";
 function buildDocsBlock(injectedSkills, skillMap) {
   if (!skillMap) return "";
   const entries = [];

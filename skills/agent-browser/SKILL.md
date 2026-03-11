@@ -47,6 +47,15 @@ retrieval:
     - screenshot
     - browser
     - headless
+chainTo:
+  -
+    pattern: 'localhost:\d+|127\.0\.0\.1:\d+'
+    targetSkill: agent-browser-verify
+    message: 'Dev server URL detected — loading browser verification skill to run a visual gut-check (page loads, console errors, key UI elements).'
+  -
+    pattern: 'playwright\.config|cypress\.config|\.spec\.(ts|js)|\.test\.(ts|js).*browser'
+    targetSkill: nextjs
+    message: 'End-to-end test configuration detected — loading Next.js guidance for framework-aware test setup and dev server integration.'
 
 ---
 

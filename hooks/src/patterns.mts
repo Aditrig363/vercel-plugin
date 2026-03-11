@@ -23,6 +23,13 @@ export interface RetrievalMetadata {
   examples?: string[];
 }
 
+export interface ChainToRule {
+  pattern: string;
+  targetSkill: string;
+  message?: string;
+  skipIfFileContains?: string;
+}
+
 export interface SkillEntry {
   priority: number;
   summary?: string;
@@ -31,6 +38,7 @@ export interface SkillEntry {
   bashPatterns: string[];
   importPatterns: string[];
   validate?: ValidationRule[];
+  chainTo?: ChainToRule[];
   retrieval?: RetrievalMetadata;
 }
 

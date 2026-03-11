@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/inject-claude-md.mts
+import { readFileSync } from "fs";
+import { join, resolve } from "path";
+import { fileURLToPath } from "url";
 import { formatOutput } from "./compat.mjs";
 import { pluginRoot, safeReadFile } from "./hook-env.mjs";
-const GREENFIELD_CONTEXT = `<!-- vercel-plugin:greenfield-execution -->
+var GREENFIELD_CONTEXT = `<!-- vercel-plugin:greenfield-execution -->
 ## Greenfield execution mode
 
 This directory is empty.
@@ -52,8 +54,8 @@ function main() {
   }
   process.stdout.write(formatInjectClaudeMdOutput(platform, parts.join("\n\n")));
 }
-const INJECT_CLAUDE_MD_ENTRYPOINT = fileURLToPath(import.meta.url);
-const isInjectClaudeMdEntrypoint = process.argv[1] ? resolve(process.argv[1]) === INJECT_CLAUDE_MD_ENTRYPOINT : false;
+var INJECT_CLAUDE_MD_ENTRYPOINT = fileURLToPath(import.meta.url);
+var isInjectClaudeMdEntrypoint = process.argv[1] ? resolve(process.argv[1]) === INJECT_CLAUDE_MD_ENTRYPOINT : false;
 if (isInjectClaudeMdEntrypoint) {
   main();
 }

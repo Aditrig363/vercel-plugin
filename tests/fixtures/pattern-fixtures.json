@@ -17,7 +17,7 @@
       "description": "middleware.ts triggers routing-middleware, auth, and investigation-mode",
       "type": "path",
       "input": "middleware.ts",
-      "expectedSkills": ["routing-middleware", "auth", "investigation-mode", "edge-runtime"]
+      "expectedSkills": ["routing-middleware", "auth", "investigation-mode"]
     },
     {
       "description": ".env.local triggers env-vars",
@@ -150,6 +150,42 @@
       "type": "bash",
       "input": "vite",
       "expectedSkills": ["agent-browser", "agent-browser-verify", "verification"]
+    },
+    {
+      "description": "npm install prisma triggers vercel-storage",
+      "type": "bash",
+      "input": "npm install prisma",
+      "expectedSkills": ["vercel-storage"]
+    },
+    {
+      "description": "npm install langchain triggers ai-sdk",
+      "type": "bash",
+      "input": "npm install langchain",
+      "expectedSkills": ["ai-sdk"]
+    },
+    {
+      "description": "npm install @langchain/core triggers ai-sdk",
+      "type": "bash",
+      "input": "npm install @langchain/core",
+      "expectedSkills": ["ai-sdk"]
+    },
+    {
+      "description": "npm install @clerk/nextjs triggers auth",
+      "type": "bash",
+      "input": "npm install @clerk/nextjs",
+      "expectedSkills": ["auth"]
+    },
+    {
+      "description": "yarn add stripe @clerk/nextjs triggers payments and auth",
+      "type": "bash",
+      "input": "yarn add stripe @clerk/nextjs",
+      "expectedSkills": ["payments", "auth"]
+    },
+    {
+      "description": "pnpm add prisma stripe langchain triggers vercel-storage, payments, and ai-sdk",
+      "type": "bash",
+      "input": "pnpm add prisma stripe langchain",
+      "expectedSkills": ["vercel-storage", "payments", "ai-sdk"]
     }
   ]
 }

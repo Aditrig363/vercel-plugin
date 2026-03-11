@@ -101,7 +101,7 @@ Describe **products and features**, never name specific technologies. Let the pl
 | AI chat app | ai-sdk, ai-gateway, nextjs, ai-elements |
 | Durable workflow | workflow, ai-sdk, vercel-queues |
 | Monorepo | turborepo, turbopack, nextjs |
-| Edge auth + routing | routing-middleware, auth, sign-in-with-vercel, edge-runtime |
+| Edge auth + routing | routing-middleware, auth, sign-in-with-vercel |
 | Chat bot (multi-platform) | chat-sdk, ai-sdk, vercel-storage |
 | Feature flags + CRM | vercel-flags, vercel-queues, ai-sdk |
 | Email pipeline | email, satori, ai-sdk, vercel-storage |
@@ -117,7 +117,6 @@ These need explicit technology references in the prompt because agents don't nat
 - `vercel-firewall` — say "use Vercel Firewall for rate limiting"
 - `marketplace` — say "publish to the Vercel Marketplace"
 - `geist` — say "install the geist font package"
-- `edge-runtime` — say "use the edge-runtime package"
 - `json-render` — name files `components/chat-*.tsx`
 
 ## Coverage Report

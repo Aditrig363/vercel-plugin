@@ -1,3 +1,4 @@
+// hooks/src/session-start-profiler.mts
 import {
   accessSync,
   constants as fsConstants,
@@ -5,10 +6,10 @@ import {
   readdirSync,
   readFileSync,
   writeFileSync
-} from "node:fs";
-import { delimiter, join, resolve } from "node:path";
-import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+} from "fs";
+import { delimiter, join, resolve } from "path";
+import { execFileSync } from "child_process";
+import { fileURLToPath } from "url";
 import {
   formatOutput,
   normalizeInput,
@@ -16,7 +17,7 @@ import {
 } from "./compat.mjs";
 import { profileCachePath, safeReadJson, writeSessionFile } from "./hook-env.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
-const FILE_MARKERS = [
+var FILE_MARKERS = [
   { file: "next.config.js", skills: ["nextjs", "turbopack"] },
   { file: "next.config.mjs", skills: ["nextjs", "turbopack"] },
   { file: "next.config.ts", skills: ["nextjs", "turbopack"] },
@@ -30,7 +31,7 @@ const FILE_MARKERS = [
   { file: ".env.local", skills: ["env-vars"] },
   { file: "pnpm-workspace.yaml", skills: ["turborepo"] }
 ];
-const PACKAGE_MARKERS = {
+var PACKAGE_MARKERS = {
   "next": ["nextjs"],
   "ai": ["ai-sdk", "ai-elements"],
   "ai-elements": ["ai-elements"],
@@ -56,44 +57,44 @@ const PACKAGE_MARKERS = {
   "@repo/payments": ["next-forge"],
   "@t3-oss/env-nextjs": ["next-forge"]
 };
-const SETUP_ENV_TEMPLATE_FILES = [
+var SETUP_ENV_TEMPLATE_FILES = [
   ".env.example",
   ".env.sample",
   ".env.template"
 ];
-const SETUP_DB_SCRIPT_MARKERS = [
+var SETUP_DB_SCRIPT_MARKERS = [
   "db:push",
   "db:seed",
   "db:migrate",
   "db:generate"
 ];
-const SETUP_AUTH_DEPENDENCIES = /* @__PURE__ */ new Set([
+var SETUP_AUTH_DEPENDENCIES = /* @__PURE__ */ new Set([
   "next-auth",
   "@auth/core",
   "better-auth"
 ]);
-const SETUP_RESOURCE_DEPENDENCIES = {
+var SETUP_RESOURCE_DEPENDENCIES = {
   "@neondatabase/serverless": "postgres",
   "drizzle-orm": "postgres",
   "@upstash/redis": "redis",
   "@vercel/blob": "blob",
   "@vercel/edge-config": "edge-config"
 };
-const SETUP_MODE_THRESHOLD = 3;
-const GREENFIELD_DEFAULT_SKILLS = [
+var SETUP_MODE_THRESHOLD = 3;
+var GREENFIELD_DEFAULT_SKILLS = [
   "nextjs",
   "ai-sdk",
   "vercel-cli",
   "env-vars"
 ];
-const GREENFIELD_SETUP_SIGNALS = {
+var GREENFIELD_SETUP_SIGNALS = {
   bootstrapHints: ["greenfield"],
   resourceHints: [],
   setupMode: true
 };
-const SESSION_GREENFIELD_KIND = "greenfield";
-const SESSION_LIKELY_SKILLS_KIND = "likely-skills";
-const log = createLogger();
+var SESSION_GREENFIELD_KIND = "greenfield";
+var SESSION_LIKELY_SKILLS_KIND = "likely-skills";
+var log = createLogger();
 function readPackageJson(projectRoot) {
   return safeReadJson(join(projectRoot, "package.json"));
 }
@@ -197,12 +198,12 @@ function checkGreenfield(projectRoot) {
   }
   return null;
 }
-const VERCEL_VERSION_ARGS = "--version".split(" ");
-const NPM_VIEW_ARGS = "view vercel version".split(" ");
-const SPAWN_STDIO = "ignore pipe ignore".split(" ");
-const EXEC_SYNC_TIMEOUT_MS = 3e3;
-const NUMERIC_VERSION_RE = /\d+(?:\.\d+)*/;
-const WINDOWS_EXECUTABLE_EXTENSIONS = (process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean);
+var VERCEL_VERSION_ARGS = "--version".split(" ");
+var NPM_VIEW_ARGS = "view vercel version".split(" ");
+var SPAWN_STDIO = "ignore pipe ignore".split(" ");
+var EXEC_SYNC_TIMEOUT_MS = 3e3;
+var NUMERIC_VERSION_RE = /\d+(?:\.\d+)*/;
+var WINDOWS_EXECUTABLE_EXTENSIONS = (process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean);
 function getBinaryPathCandidates(binaryName) {
   if (process.platform !== "win32") {
     return [binaryName];
@@ -305,7 +306,7 @@ function checkVercelCli() {
   const needsUpdate = versionComparison === null ? !!(currentVersion && latestVersion && currentVersion !== latestVersion) : versionComparison < 0;
   return { installed: true, currentVersion, latestVersion, needsUpdate };
 }
-const AGENT_BROWSER_BINARY = "agent-browser";
+var AGENT_BROWSER_BINARY = "agent-browser";
 function checkAgentBrowser() {
   return resolveBinaryFromPath(AGENT_BROWSER_BINARY) !== null;
 }
@@ -462,8 +463,8 @@ function main() {
   }
   process.exit(0);
 }
-const SESSION_START_PROFILER_ENTRYPOINT = fileURLToPath(import.meta.url);
-const isSessionStartProfilerEntrypoint = process.argv[1] ? resolve(process.argv[1]) === SESSION_START_PROFILER_ENTRYPOINT : false;
+var SESSION_START_PROFILER_ENTRYPOINT = fileURLToPath(import.meta.url);
+var isSessionStartProfilerEntrypoint = process.argv[1] ? resolve(process.argv[1]) === SESSION_START_PROFILER_ENTRYPOINT : false;
 if (isSessionStartProfilerEntrypoint) {
   main();
 }

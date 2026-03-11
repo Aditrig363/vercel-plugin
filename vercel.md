@@ -503,15 +503,6 @@ MICRO (HTTP Microservices)                 ⤳ skill: micro  📖 docs: https://
 │
 └── Use When: Minimal HTTP services, single-purpose API endpoints
 
-EDGE RUNTIME                               ⤳ skill: edge-runtime  📖 docs: https://github.com/vercel/edge-runtime
-├── Purpose: Lightweight JavaScript runtime for Vercel Edge Functions and Middleware
-│   ⊃ Web Standards APIs (fetch, Request, Response, Streams)
-│   ⊃ @edge-runtime/cookies, @edge-runtime/primitives, @edge-runtime/vm
-│   ⊃ Local development and testing of edge behavior
-│   ⊃ Sub-millisecond cold starts
-│
-└── Use When: Edge functions, middleware, testing edge runtime behavior locally
-
 GEIST (Font Family)                        ⤳ skill: geist  📖 docs: https://github.com/vercel/geist-font
 ├── Purpose: Vercel's open-source font family for Next.js
 │   ⊃ Geist Sans (modern sans-serif for UI)
@@ -521,6 +512,16 @@ GEIST (Font Family)                        ⤳ skill: geist  📖 docs: https://
 │   ⊃ Variable font (all weights 100–900)
 │
 └── Use When: Typography setup in Next.js, Vercel design system styling
+
+GEISTDOCS (Documentation Template)         ⤳ skill: geistdocs  📖 docs: https://preview.geistdocs.com/docs
+├── Purpose: Production-ready documentation template for Vercel microsites
+│   ⊃ Next.js 16 + Fumadocs framework
+│   ⊃ MDX authoring with auto-routing (content/docs/)
+│   ⊃ AI-powered chat (Ask AI, llms.txt, Open in Chat)
+│   ⊃ i18n, feedback widget, RSS, Edit on GitHub
+│   ⊃ geistdocs.tsx config (Logo, nav, title, prompt, translations)
+│
+└── Use When: Building documentation sites, docs microsites, developer docs
 
 ---
 

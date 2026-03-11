@@ -160,8 +160,8 @@ describe("Dev server co-injection of verification skill", () => {
       expect(parsed.hookSpecificOutput).toBeDefined();
       const ctx = parsed.hookSpecificOutput.additionalContext;
       // Both skills should be present
-      expect(ctx).toContain("skill:agent-browser-verify");
-      expect(ctx).toContain("skill:verification");
+      expect(ctx).toContain("Skill(agent-browser-verify)");
+      expect(ctx).toContain("Skill(verification)");
 
       const meta = extractSkillInjection(parsed.hookSpecificOutput);
       expect(meta).toBeDefined();
@@ -193,7 +193,7 @@ describe("Dev server co-injection of verification skill", () => {
 
     if (parsed?.hookSpecificOutput) {
       const ctx = parsed.hookSpecificOutput.additionalContext || "";
-      expect(ctx).not.toContain("skill:verification");
+      expect(ctx).not.toContain("Skill(verification)");
     }
   });
 
@@ -229,7 +229,7 @@ describe("Dev server co-injection of verification skill", () => {
     // Loop guard blocks agent-browser-verify synthetic injection
     expect(ctx).not.toContain("<!-- marker:dev-server-verify");
     // But verification is exempt from the iteration cap
-    expect(ctx).toContain("skill:verification");
+    expect(ctx).toContain("Skill(verification)");
   });
 
   test("verification injected on 3rd dev-server detection (count=2)", async () => {
@@ -245,9 +245,9 @@ describe("Dev server co-injection of verification skill", () => {
     expect(parsed.hookSpecificOutput).toBeDefined();
     const ctx = parsed.hookSpecificOutput.additionalContext || "";
     // verification survives past iteration cap
-    expect(ctx).toContain("skill:verification");
+    expect(ctx).toContain("Skill(verification)");
     // agent-browser-verify is still blocked by loop guard
-    expect(ctx).not.toContain("skill:agent-browser-verify");
+    expect(ctx).not.toContain("Skill(agent-browser-verify)");
 
     const meta = extractSkillInjection(parsed.hookSpecificOutput);
     if (meta) {
@@ -268,8 +268,8 @@ describe("Dev server co-injection of verification skill", () => {
     expect(parsed).not.toBeNull();
     expect(parsed.hookSpecificOutput).toBeDefined();
     const ctx = parsed.hookSpecificOutput.additionalContext || "";
-    expect(ctx).toContain("skill:verification");
-    expect(ctx).not.toContain("skill:agent-browser-verify");
+    expect(ctx).toContain("Skill(verification)");
+    expect(ctx).not.toContain("Skill(agent-browser-verify)");
   });
 });
 
@@ -448,8 +448,8 @@ describe("Dedup prevents double verification injection", () => {
     expect(parsed.hookSpecificOutput).toBeDefined();
     const ctx = parsed.hookSpecificOutput.additionalContext;
     // Companion bypass: verification should be re-injected
-    expect(ctx).toContain("skill:verification");
-    expect(ctx).toContain("skill:agent-browser-verify");
+    expect(ctx).toContain("Skill(verification)");
+    expect(ctx).toContain("Skill(agent-browser-verify)");
   });
 
   test("prompt hook respects dedup for verification", async () => {

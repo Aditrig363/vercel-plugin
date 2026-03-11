@@ -5,7 +5,7 @@ import { describe, test, expect, beforeEach } from "bun:test";
  * realistic file content using the exported unit functions from the
  * posttooluse-validate hook. These tests cover:
  *
- * - Per-skill rule accuracy (ai-sdk, ai-gateway, nextjs, vercel-functions, edge-runtime)
+ * - Per-skill rule accuracy (ai-sdk, ai-gateway, nextjs, vercel-functions)
  * - Multi-skill overlap (file matching 2+ skills runs both rule sets)
  * - No false positives on clean files
  * - Warn-severity suppression at default log level
@@ -106,9 +106,9 @@ describe("ai-sdk validation rules", () => {
       ["ai-sdk"],
       data!.rulesMap,
     );
-    const errors = violations.filter((v) => v.severity === "error");
-    expect(errors.length).toBeGreaterThanOrEqual(1);
-    expect(errors.some((v) => v.message.includes("toUIMessageStreamResponse"))).toBe(true);
+    const matching = violations.filter((v) => v.severity === "recommended");
+    expect(matching.length).toBeGreaterThanOrEqual(1);
+    expect(matching.some((v) => v.message.includes("toUIMessageStreamResponse"))).toBe(true);
   });
 
   test("does not flag toUIMessageStreamResponse", () => {
@@ -129,8 +129,8 @@ describe("ai-sdk validation rules", () => {
       ["ai-sdk"],
       data!.rulesMap,
     );
-    const errors = violations.filter((v) => v.severity === "error");
-    expect(errors.some((v) => v.message.includes("stopWhen"))).toBe(true);
+    const matching = violations.filter((v) => v.severity === "recommended");
+    expect(matching.some((v) => v.message.includes("stopWhen"))).toBe(true);
   });
 
   test("does not flag stopWhen: stepCountIs", () => {
@@ -1022,141 +1022,6 @@ describe("nextjs validation rules", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// edge-runtime skill rules
-// ---------------------------------------------------------------------------
-
-describe("edge-runtime validation rules", () => {
-  test("flags fs import (via from pattern)", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `import { readFileSync } from 'node:fs';\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.some((v) => v.message.includes("not available in Edge Runtime"))).toBe(true);
-  });
-
-  test("flags bare fs import", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `import { readFile } from 'fs';\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.some((v) => v.message.includes("fs module"))).toBe(true);
-  });
-
-  test("flags child_process import", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `import { exec } from 'child_process';\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.some((v) => v.message.includes("child_process"))).toBe(true);
-  });
-
-  test("flags node:child_process import", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `import { spawn } from 'node:child_process';\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.some((v) => v.message.includes("child_process"))).toBe(true);
-  });
-
-  test("flags net/dns imports", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `import { createServer } from 'node:net';\nimport { resolve } from 'node:dns';\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.filter((v) => v.message.includes("not available in Edge Runtime")).length).toBeGreaterThanOrEqual(2);
-  });
-
-  test("flags require() call", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `const fs = require('fs');\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.some((v) => v.message.includes("require()"))).toBe(true);
-  });
-
-  test("flags require() with node: prefix", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `const path = require('node:path');\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.some((v) => v.message.includes("require()"))).toBe(true);
-  });
-
-  test("flags eval() call", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `const result = eval('1 + 2');\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.some((v) => v.message.includes("eval()"))).toBe(true);
-  });
-
-  test("flags new Function() call", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `const fn = new Function('a', 'b', 'return a + b');\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.some((v) => v.message.includes("new Function()"))).toBe(true);
-  });
-
-  test("does not flag new Function in comments", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `// avoid new Function() in edge runtime\nconst fn = (a: number) => a + 1;\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    // Comments are plain text — regex rules can't distinguish comments from code,
-    // so the rule WILL fire on the comment text. This is acceptable behavior.
-    // The important thing is it fires when actual code uses new Function().
-    expect(violations.some((v) => v.message.includes("new Function()"))).toBe(true);
-  });
-
-  test("passes clean edge-compatible code", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      [
-        `export const runtime = 'edge';`,
-        `export async function GET(req: Request) {`,
-        `  const data = await fetch('https://api.example.com/data');`,
-        `  return new Response(JSON.stringify(await data.json()));`,
-        `}`,
-      ].join("\n"),
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    const errors = violations.filter((v) => v.severity === "error");
-    expect(errors.length).toBe(0);
-  });
-
-  test("does not flag import statements as require()", () => {
-    const data = loadRealRules();
-    const violations = runValidation(
-      `import { cookies } from '@edge-runtime/cookies';\n`,
-      ["edge-runtime"],
-      data!.rulesMap,
-    );
-    expect(violations.some((v) => v.message.includes("require()"))).toBe(false);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // vercel-functions skill rules
@@ -2231,5 +2096,794 @@ describe("runValidation edge cases", () => {
     expect(violations[0].line).toBe(1);
     expect(violations[1].line).toBe(2);
     expect(violations[2].line).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upgradeToSkill tests: verify rules emit upgradeToSkill metadata
+// ---------------------------------------------------------------------------
+
+describe("upgradeToSkill rules: vercel-functions", () => {
+  test("direct openai SDK flags upgradeToSkill: ai-sdk", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import OpenAI from 'openai';\nconst client = new OpenAI();\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "ai-sdk");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("direct openai SDK upgradeToSkill is suppressed when @ai-sdk is present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { openai } from '@ai-sdk/openai';\nimport OpenAI from 'openai';\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "ai-sdk"
+      && v.matchedText.includes("openai"));
+    expect(match).toBeUndefined();
+  });
+
+  test("setTimeout in route handler flags upgradeToSkill: workflow", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `export async function POST(req: Request) {\n  setTimeout(() => doWork(), 5000);\n}\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "workflow");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("setTimeout upgradeToSkill is suppressed when 'use workflow' present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `'use workflow';\nsetTimeout(() => doWork(), 5000);\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "workflow"
+      && v.matchedText.includes("setTimeout"));
+    expect(match).toBeUndefined();
+  });
+
+  test("writeFileSync flags upgradeToSkill: vercel-storage (error)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { writeFileSync } from 'node:fs';\nwriteFileSync('/tmp/data.json', data);\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "vercel-storage");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("writeFile upgradeToSkill is suppressed when @vercel/blob present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { put } from '@vercel/blob';\nimport { writeFileSync } from 'fs';\nwriteFileSync('/tmp/x', data);\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "vercel-storage"
+      && v.matchedText.includes("writeFile"));
+    expect(match).toBeUndefined();
+  });
+
+  test("lru-cache flags upgradeToSkill: runtime-cache", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { LRUCache } from 'lru-cache';\nconst cache = new LRUCache({ max: 100 });\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "runtime-cache");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("lru-cache upgradeToSkill is suppressed when @vercel/functions present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { getCache } from '@vercel/functions';\nimport { LRUCache } from 'lru-cache';\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "runtime-cache"
+      && v.matchedText.includes("lru-cache"));
+    expect(match).toBeUndefined();
+  });
+
+  test("manual retry loop flags upgradeToSkill: workflow", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `let retryCount = 0;\nwhile (retryCount < 3) { try { await doWork(); break; } catch { retryCount++; } }\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "workflow"
+      && v.matchedText.includes("retry"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("manual retry upgradeToSkill is suppressed when workflow import present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { step } from 'workflow';\nlet retryCount = 0;\n`,
+      ["vercel-functions"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-functions" && v.upgradeToSkill === "workflow"
+      && v.matchedText.includes("retry"));
+    expect(match).toBeUndefined();
+  });
+});
+
+describe("upgradeToSkill rules: nextjs", () => {
+  test("next/head import flags upgradeToSkill: nextjs", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import Head from 'next/head';\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "nextjs"
+      && v.matchedText.includes("next/head"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("next/head upgradeToSkill is suppressed when metadata export present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import Head from 'next/head';\nexport const metadata = { title: 'Home' };\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "nextjs"
+      && v.matchedText.includes("next/head"));
+    expect(match).toBeUndefined();
+  });
+
+  test("middleware export flags upgradeToSkill: routing-middleware", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `export function middleware(req) { return NextResponse.next(); }\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "routing-middleware");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("NextApiRequest flags upgradeToSkill: vercel-functions", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import type { NextApiRequest, NextApiResponse } from 'next';\nexport default function handler(req: NextApiRequest, res: NextApiResponse) {}\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "vercel-functions");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("NextApiRequest upgradeToSkill is suppressed when App Router exports present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `export async function GET(req: Request) { return Response.json({}); }\nimport type { NextApiRequest } from 'next';\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "vercel-functions"
+      && v.matchedText.includes("NextApiRequest"));
+    expect(match).toBeUndefined();
+  });
+
+  test("lru-cache flags upgradeToSkill: runtime-cache", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { LRUCache } from 'lru-cache';\nconst cache = new LRUCache({ max: 500 });\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "runtime-cache");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("express import flags upgradeToSkill: routing-middleware", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import express from 'express';\nconst app = express();\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "routing-middleware"
+      && v.matchedText.includes("express"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("express upgradeToSkill is suppressed when next/server present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { NextResponse } from 'next/server';\nimport express from 'express';\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "routing-middleware"
+      && v.matchedText.includes("express"));
+    expect(match).toBeUndefined();
+  });
+
+  test("typeorm import flags upgradeToSkill: vercel-storage", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { Entity, Column } from 'typeorm';\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "vercel-storage"
+      && v.matchedText.includes("typeorm"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("typeorm upgradeToSkill is suppressed when drizzle-orm present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { drizzle } from 'drizzle-orm';\nimport { Entity } from 'typeorm';\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "vercel-storage"
+      && v.matchedText.includes("typeorm"));
+    expect(match).toBeUndefined();
+  });
+
+  test("next-auth import flags upgradeToSkill: auth", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import NextAuth from 'next-auth';\nconst handler = NextAuth(authOptions);\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "auth");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("next-auth upgradeToSkill is suppressed when @clerk present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { clerkMiddleware } from '@clerk/nextjs/server';\nimport NextAuth from 'next-auth';\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "auth"
+      && v.matchedText.includes("next-auth"));
+    expect(match).toBeUndefined();
+  });
+});
+
+describe("upgradeToSkill rules: react-best-practices", () => {
+  test("axios import flags upgradeToSkill: swr", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import axios from 'axios';\naxios.get('/api/users');\n`,
+      ["react-best-practices"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "react-best-practices" && v.upgradeToSkill === "swr");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("axios upgradeToSkill is suppressed when useSWR present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import useSWR from 'swr';\nimport axios from 'axios';\naxios.get('/api/old');\n`,
+      ["react-best-practices"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "react-best-practices" && v.upgradeToSkill === "swr"
+      && v.matchedText.includes("axios"));
+    expect(match).toBeUndefined();
+  });
+
+  test("styled-components import flags upgradeToSkill: shadcn (warn)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import styled from 'styled-components';\nconst Box = styled.div\`\`;\n`,
+      ["react-best-practices"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "react-best-practices" && v.upgradeToSkill === "shadcn");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("warn");
+  });
+
+  test("styled-components upgradeToSkill is suppressed when shadcn present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { Button } from '@/components/ui/button';\nimport styled from 'styled-components';\n`,
+      ["react-best-practices"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "react-best-practices" && v.upgradeToSkill === "shadcn"
+      && v.matchedText.includes("styled-components"));
+    expect(match).toBeUndefined();
+  });
+});
+
+describe("upgradeToSkill rules: routing-middleware", () => {
+  test("IP blocklist flags upgradeToSkill: vercel-firewall", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const blockedIps = ['1.2.3.4', '5.6.7.8'];\n`,
+      ["routing-middleware"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "routing-middleware" && v.upgradeToSkill === "vercel-firewall");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("NextResponse import flags upgradeToSkill: nextjs", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { NextResponse } from 'next/server';\n`,
+      ["routing-middleware"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "routing-middleware" && v.upgradeToSkill === "nextjs");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("NextResponse upgradeToSkill is suppressed in proxy.ts context (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `// proxy.ts\nimport { NextResponse } from 'next/server';\nexport const runtime = 'nodejs';\n`,
+      ["routing-middleware"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "routing-middleware" && v.upgradeToSkill === "nextjs"
+      && v.matchedText.includes("NextResponse"));
+    expect(match).toBeUndefined();
+  });
+});
+
+describe("upgradeToSkill rules: vercel-storage", () => {
+  test("@vercel/kv import flags upgradeToSkill: vercel-storage (error)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { kv } from '@vercel/kv';\n`,
+      ["vercel-storage"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-storage" && v.upgradeToSkill === "vercel-storage"
+      && v.matchedText.includes("@vercel/kv"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("@vercel/kv upgradeToSkill is suppressed when @upstash/redis present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { Redis } from '@upstash/redis';\nimport { kv } from '@vercel/kv';\n`,
+      ["vercel-storage"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-storage" && v.upgradeToSkill === "vercel-storage"
+      && v.matchedText.includes("@vercel/kv"));
+    expect(match).toBeUndefined();
+  });
+
+  test("@vercel/postgres import flags upgradeToSkill: vercel-storage (error)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { sql } from '@vercel/postgres';\n`,
+      ["vercel-storage"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-storage" && v.upgradeToSkill === "vercel-storage"
+      && v.matchedText.includes("@vercel/postgres"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("@vercel/postgres upgradeToSkill is suppressed when @neondatabase present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { neon } from '@neondatabase/serverless';\nimport { sql } from '@vercel/postgres';\n`,
+      ["vercel-storage"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "vercel-storage" && v.upgradeToSkill === "vercel-storage"
+      && v.matchedText.includes("@vercel/postgres"));
+    expect(match).toBeUndefined();
+  });
+});
+
+describe("upgradeToSkill rules: turborepo", () => {
+  test("pipeline key flags upgradeToSkill: turborepo (error)", () => {
+    const data = loadRealRules();
+    const content = JSON.stringify({ "$schema": "https://turbo.build/schema.json", "pipeline": { "build": {} } }, null, 2);
+    const violations = runValidation(content, ["turborepo"], data!.rulesMap);
+    const match = violations.find((v) => v.skill === "turborepo" && v.upgradeToSkill === "turborepo");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+    expect(match!.message).toContain("tasks");
+  });
+
+  test("pipeline upgradeToSkill is suppressed when tasks key present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const content = JSON.stringify({ "$schema": "https://turbo.build/schema.json", "tasks": { "build": {} }, "pipeline": {} }, null, 2);
+    const violations = runValidation(content, ["turborepo"], data!.rulesMap);
+    const match = violations.find((v) => v.skill === "turborepo" && v.upgradeToSkill === "turborepo"
+      && v.matchedText.includes("pipeline"));
+    expect(match).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upgradeToSkill tests: nextjs deprecated patterns with upgrade paths
+// ---------------------------------------------------------------------------
+
+describe("upgradeToSkill rules: nextjs deprecated patterns", () => {
+  test("getServerSideProps flags upgradeToSkill: nextjs", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `export async function getServerSideProps() { return { props: {} } }\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "nextjs"
+      && v.message.includes("getServerSideProps"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("next/router flags upgradeToSkill: nextjs", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { useRouter } from 'next/router';\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "nextjs"
+      && v.message.includes("next/navigation"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("revalidateTag single-arg flags upgradeToSkill: nextjs", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `revalidateTag('products')\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "nextjs"
+      && v.message.includes("revalidateTag"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("cacheHandler singular flags upgradeToSkill: nextjs", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const nextConfig = { cacheHandler: require.resolve('./handler.mjs') };\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "nextjs"
+      && v.message.includes("cacheHandlers"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("next export flags upgradeToSkill: nextjs", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `next export\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "nextjs"
+      && v.message.includes("output"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("fonts.googleapis flags upgradeToSkill: nextjs", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `<link href="https://fonts.googleapis.com/css2?family=Inter" rel="stylesheet" />\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "nextjs"
+      && v.message.includes("next/font"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("fonts.googleapis upgradeToSkill is suppressed when next/font present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { Inter } from 'next/font/google';\n<link href="https://fonts.googleapis.com/css" />\n`,
+      ["nextjs"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "nextjs" && v.upgradeToSkill === "nextjs"
+      && v.message.includes("next/font"));
+    expect(match).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upgradeToSkill tests: ai-sdk deprecated patterns with upgrade paths
+// ---------------------------------------------------------------------------
+
+describe("upgradeToSkill rules: ai-sdk deprecated patterns", () => {
+  test("direct openai import flags upgradeToSkill: ai-gateway", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import OpenAI from 'openai';\n`,
+      ["ai-sdk"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "ai-sdk" && v.upgradeToSkill === "ai-gateway"
+      && v.message.includes("openai"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("direct openai import upgradeToSkill suppressed when @ai-sdk/openai present", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { openai } from '@ai-sdk/openai';\nimport OpenAI from 'openai';\n`,
+      ["ai-sdk"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "ai-sdk" && v.upgradeToSkill === "ai-gateway"
+      && v.message.includes("@ai-sdk/openai"));
+    expect(match).toBeUndefined();
+  });
+
+  test("direct anthropic import flags upgradeToSkill: ai-gateway", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import Anthropic from 'anthropic';\n`,
+      ["ai-sdk"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "ai-sdk" && v.upgradeToSkill === "ai-gateway"
+      && v.message.includes("@ai-sdk/anthropic"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("agent.generateText flags upgradeToSkill: ai-sdk", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const result = await agent.generateText({ prompt: 'hi' });\n`,
+      ["ai-sdk"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "ai-sdk" && v.upgradeToSkill === "ai-sdk"
+      && v.message.includes("agent.generate()"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("agent.streamText flags upgradeToSkill: ai-sdk", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const result = await agent.streamText({ prompt: 'hi' });\n`,
+      ["ai-sdk"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "ai-sdk" && v.upgradeToSkill === "ai-sdk"
+      && v.message.includes("agent.stream()"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("tool-invocation flags upgradeToSkill: ai-sdk", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `if (part.type === 'tool-invocation') { renderTool(part); }\n`,
+      ["ai-sdk"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "ai-sdk" && v.upgradeToSkill === "ai-sdk"
+      && v.message.includes("tool-<toolName>"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("gemini-2.0-flash-exp-image-generation flags upgradeToSkill: ai-gateway", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const model = 'gemini-2.0-flash-exp-image-generation';\n`,
+      ["ai-sdk"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "ai-sdk" && v.upgradeToSkill === "ai-gateway"
+      && v.message.includes("gemini-3.1"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upgradeToSkill tests: workflow deprecated patterns
+// ---------------------------------------------------------------------------
+
+describe("upgradeToSkill rules: workflow deprecated patterns", () => {
+  test("experimental_createWorkflow flags upgradeToSkill: workflow", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { experimental_createWorkflow } from '@vercel/workflow';\n`,
+      ["workflow"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "workflow" && v.upgradeToSkill === "workflow");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+    expect(match!.upgradeWhy).toBeDefined();
+  });
+
+  test("context.run flags upgradeToSkill: workflow", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const result = await context.run('step1', async () => { return 42; });\n`,
+      ["workflow"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "workflow" && v.upgradeToSkill === "workflow"
+      && v.message.includes("use step"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("createWorkflow flags upgradeToSkill: workflow", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const workflow = createWorkflow({ name: 'my-workflow' });\n`,
+      ["workflow"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "workflow" && v.upgradeToSkill === "workflow"
+      && v.message.includes("use workflow"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("streamObject in workflow flags upgradeToSkill: ai-sdk", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const result = await streamObject({ model, schema });\n`,
+      ["workflow"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "workflow" && v.upgradeToSkill === "ai-sdk");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upgradeToSkill tests: ai-elements deprecated patterns
+// ---------------------------------------------------------------------------
+
+describe("upgradeToSkill rules: ai-elements deprecated patterns", () => {
+  test("dangerouslySetInnerHTML flags upgradeToSkill: ai-elements", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `<div dangerouslySetInnerHTML={{ __html: aiResponse }} />\n`,
+      ["ai-elements"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "ai-elements" && v.upgradeToSkill === "ai-elements"
+      && v.message.includes("MessageResponse"));
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("error");
+  });
+
+  test("dangerouslySetInnerHTML upgradeToSkill suppressed when ai-elements present", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { MessageResponse } from '@/components/ai-elements/message';\n<div dangerouslySetInnerHTML={{ __html: x }} />\n`,
+      ["ai-elements"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "ai-elements" && v.upgradeToSkill === "ai-elements"
+      && v.message.includes("MessageResponse"));
+    expect(match).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upgradeToSkill tests: auth deprecated patterns with upgrade paths
+// ---------------------------------------------------------------------------
+
+describe("upgradeToSkill rules: auth", () => {
+  test("VERCEL_CLIENT_ID flags upgradeToSkill: sign-in-with-vercel (recommended)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const clientId = process.env.VERCEL_CLIENT_ID;\n`,
+      ["auth"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "auth" && v.upgradeToSkill === "sign-in-with-vercel");
+    expect(match).toBeDefined();
+    expect(match!.severity).toBe("recommended");
+  });
+
+  test("VERCEL_CLIENT_SECRET flags upgradeToSkill: sign-in-with-vercel", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const secret = process.env.VERCEL_CLIENT_SECRET;\n`,
+      ["auth"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "auth" && v.upgradeToSkill === "sign-in-with-vercel");
+    expect(match).toBeDefined();
+  });
+
+  test("vercel.com/oauth URL flags upgradeToSkill: sign-in-with-vercel", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `const authUrl = 'https://vercel.com/oauth/authorize?client_id=xxx';\n`,
+      ["auth"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "auth" && v.upgradeToSkill === "sign-in-with-vercel");
+    expect(match).toBeDefined();
+  });
+
+  test("VERCEL_CLIENT_ID upgradeToSkill is suppressed when signInWithVercel present (skipIfFileContains)", () => {
+    const data = loadRealRules();
+    const violations = runValidation(
+      `import { signInWithVercel } from '@vercel/auth';\nconst clientId = process.env.VERCEL_CLIENT_ID;\n`,
+      ["auth"],
+      data!.rulesMap,
+    );
+    const match = violations.find((v) => v.skill === "auth" && v.upgradeToSkill === "sign-in-with-vercel"
+      && v.matchedText.includes("VERCEL_CLIENT"));
+    expect(match).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upgradeToSkill invariant: every rule with upgradeToSkill must have upgradeWhy
+// ---------------------------------------------------------------------------
+
+describe("upgradeToSkill invariant", () => {
+  test("no rule has upgradeToSkill without upgradeWhy", () => {
+    const data = loadRealRules();
+    expect(data).not.toBeNull();
+    const missing: string[] = [];
+    for (const [skill, rules] of data!.rulesMap) {
+      for (const rule of rules) {
+        if (rule.upgradeToSkill && !rule.upgradeWhy) {
+          missing.push(`${skill}: pattern="${rule.pattern}" has upgradeToSkill="${rule.upgradeToSkill}" but no upgradeWhy`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
   });
 });

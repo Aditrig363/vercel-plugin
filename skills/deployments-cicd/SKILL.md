@@ -48,6 +48,11 @@ retrieval:
     - rollback
     - promote
     - CI workflow
+chainTo:
+  -
+    pattern: 'cron:\s*[''"]|from\s+[''\"](node-cron)[''"]|cron\.schedule\('
+    targetSkill: cron-jobs
+    message: 'Manual cron scheduling detected — loading Vercel Cron Jobs guidance for platform-native scheduling.'
 
 ---
 

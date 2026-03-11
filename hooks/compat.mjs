@@ -1,6 +1,7 @@
-import { appendFileSync } from "node:fs";
-const cursorSessionEnv = /* @__PURE__ */ new Map();
-let currentHookEventName;
+// hooks/src/compat.mts
+import { appendFileSync } from "fs";
+var cursorSessionEnv = /* @__PURE__ */ new Map();
+var currentHookEventName;
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

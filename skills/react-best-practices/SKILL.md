@@ -51,6 +51,20 @@ retrieval:
     - React
     - TSX
     - component
+chainTo:
+  -
+    pattern: 'from\s+[''\"](axios)[''"]|axios\.(get|post|put|delete)\('
+    targetSkill: swr
+    message: 'Client-side axios detected — loading SWR guidance for React data fetching with caching and revalidation.'
+  -
+    pattern: 'from\s+[''\"](styled-components|@emotion/styled|@emotion/react|@mui/material|@chakra-ui/react)[''"]|styled\.'
+    targetSkill: shadcn
+    message: 'Legacy CSS-in-JS or component library detected — loading shadcn/ui guidance for modern Vercel-native UI.'
+  -
+    pattern: 'fetch\s*\([^)]*\)\s*\.then\s*\(|\.then\s*\(\s*(res|response)\s*=>'
+    targetSkill: swr
+    message: 'Manual fetch().then() in component — loading SWR guidance for declarative data fetching with caching and revalidation.'
+    skipIfFileContains: 'useSWR|from\s+[''""](swr)[''""]|useQuery|@tanstack/react-query'
 
 ---
 

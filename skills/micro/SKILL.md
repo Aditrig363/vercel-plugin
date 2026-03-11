@@ -40,6 +40,11 @@ retrieval:
     - microservice
     - HTTP
     - async handler
+chainTo:
+  -
+    pattern: 'from\s+[''\"](micro)[''"]|send\s*\(\s*res\s*,'
+    targetSkill: vercel-functions
+    message: 'Legacy micro framework detected — loading Vercel Functions guidance for modern route handler migration.'
 
 ---
 

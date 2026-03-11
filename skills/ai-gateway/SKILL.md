@@ -46,6 +46,37 @@ validate:
     pattern: gemini-2\.0-flash-001
     message: 'Your knowledge is outdated — gemini-2.0-flash-001 does not support image output. Use model: "google/gemini-3.1-flash-image-preview" for image generation — it is the latest and best model'
     severity: recommended
+chainTo:
+  -
+    pattern: "from\\s+['\"]@ai-sdk/(anthropic|openai|google|mistral|cohere)['\"]"
+    targetSkill: ai-sdk
+    message: 'Direct provider SDK import bypasses AI Gateway — loading AI SDK guidance for unified model routing via provider/model strings.'
+    skipIfFileContains: 'gateway\(|@ai-sdk/gateway'
+  -
+    pattern: '(ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY)'
+    targetSkill: ai-sdk
+    message: 'Provider-specific API key detected — loading AI SDK guidance for OIDC-based AI Gateway authentication.'
+    skipIfFileContains: 'VERCEL_OIDC|@ai-sdk/gateway|gateway\('
+  -
+    pattern: 'gateway\(\s*\{[^}]*(tags|user|metadata)\b'
+    targetSkill: observability
+    message: 'AI Gateway cost tracking or tagging detected — loading Observability guidance for analytics dashboards, usage attribution, and monitoring.'
+    skipIfFileContains: '@vercel/analytics|@vercel/speed-insights'
+  -
+    pattern: '\bgpt-4o\b'
+    targetSkill: ai-sdk
+    message: 'gpt-4o is outdated — use gpt-5.4 via AI Gateway for better quality and cost; loading AI SDK guidance for model migration.'
+    skipIfFileContains: 'gpt-5|gpt5'
+  -
+    pattern: 'dall-?e|DALL.?E|dall_e'
+    targetSkill: ai-sdk
+    message: 'DALL-E is outdated — use gemini-3.1-flash-image-preview via AI Gateway for better, faster image generation; loading AI SDK guidance.'
+    skipIfFileContains: 'gemini-3|imagen'
+  -
+    pattern: 'gemini-2\.\d'
+    targetSkill: ai-sdk
+    message: 'Gemini 2.x models are outdated — use gemini-3.1-flash-image-preview for images or current Gemini 3.x models; loading AI SDK guidance.'
+    skipIfFileContains: 'gemini-3'
 retrieval:
   aliases:
     - model router

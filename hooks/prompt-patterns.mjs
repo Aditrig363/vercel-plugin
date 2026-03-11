@@ -1,5 +1,6 @@
+// hooks/src/prompt-patterns.mts
 import { searchSkills } from "./lexical-index.mjs";
-const CONTRACTIONS = {
+var CONTRACTIONS = {
   "it's": "it is",
   "what's": "what is",
   "where's": "where is",
@@ -22,7 +23,7 @@ const CONTRACTIONS = {
   "hasn't": "has not",
   "haven't": "have not"
 };
-const CONTRACTION_ENTRIES = Object.entries(CONTRACTIONS);
+var CONTRACTION_ENTRIES = Object.entries(CONTRACTIONS);
 function expandContractions(text) {
   let t = text.replace(/[\u2018\u2019\u2032]/g, "'");
   for (const [contraction, expansion] of CONTRACTION_ENTRIES) {
@@ -159,10 +160,10 @@ function scorePromptWithLexical(prompt, skillSlug, compiled, lexicalHits) {
     boostTier: tier
   };
 }
-const FLOW_VERIFICATION_RE = /\b(?:loads?\s+but|submits?\s+but|redirects?\s+but|works?\s+(?:locally\s+)?but|saves?\s+but|sends?\s+but|returns?\s+but|fetches?\s+but|connects?\s+but|renders?\s+but|deploys?\s+but|builds?\s+but)\b/;
-const STUCK_INVESTIGATION_RE = /\b(?:stuck|hung|frozen|tim(?:ed?|ing)\s*out|timeout|hanging|not\s+responding|no\s+response|spinning\s+forever|still\s+waiting|nothing\s+happened|nothing\s+is\s+happening|just\s+sits?\s+there)\b/;
-const BROWSER_ONLY_RE = /\b(?:blank\s+page|white\s+screen|screen\s+is\s+(?:blank|white)|console\s+errors?|browser\s+errors?|nothing\s+(?:render(?:s|ed|ing)?|show(?:s|ing|n)?)|page\s+(?:is\s+)?(?:broken|empty)|ui\s+is\s+broken)\b/;
-const TEST_FRAMEWORK_RE = /\b(?:jest|vitest|playwright\s+test|cypress\s+test|mocha|karma|testing\s+library)\b/;
+var FLOW_VERIFICATION_RE = /\b(?:loads?\s+but|submits?\s+but|redirects?\s+but|works?\s+(?:locally\s+)?but|saves?\s+but|sends?\s+but|returns?\s+but|fetches?\s+but|connects?\s+but|renders?\s+but|deploys?\s+but|builds?\s+but)\b/;
+var STUCK_INVESTIGATION_RE = /\b(?:stuck|hung|frozen|tim(?:ed?|ing)\s*out|timeout|hanging|not\s+responding|no\s+response|spinning\s+forever|still\s+waiting|nothing\s+happened|nothing\s+is\s+happening|just\s+sits?\s+there)\b/;
+var BROWSER_ONLY_RE = /\b(?:blank\s+page|white\s+screen|screen\s+is\s+(?:blank|white)|console\s+errors?|browser\s+errors?|nothing\s+(?:render(?:s|ed|ing)?|show(?:s|ing|n)?)|page\s+(?:is\s+)?(?:broken|empty)|ui\s+is\s+broken)\b/;
+var TEST_FRAMEWORK_RE = /\b(?:jest|vitest|playwright\s+test|cypress\s+test|mocha|karma|testing\s+library)\b/;
 function classifyTroubleshootingIntent(normalizedPrompt) {
   if (!normalizedPrompt) {
     return { intent: null, skills: [], reason: "empty prompt" };

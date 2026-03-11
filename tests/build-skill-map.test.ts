@@ -9,6 +9,9 @@ const SKILLS_DIR = join(ROOT, "skills");
 const MANIFEST_PATH = join(ROOT, "generated", "skill-manifest.json");
 const HOOK_SCRIPT = join(ROOT, "hooks", "pretooluse-skill-inject.mjs");
 
+// Import synthesis function for unit tests
+const { synthesizeChainToFromValidate } = await import("../scripts/build-manifest.ts");
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -274,6 +277,7 @@ This is test content.
       "vercel-config.mjs",
       "logger.mjs",
       "hook-env.mjs",
+      "compat.mjs",
     ];
     for (const f of hookFiles) {
       const src = join(ROOT, "hooks", f);
@@ -341,5 +345,336 @@ This is test content.
     const result = mod.loadSkills(TMP);
     expect(result).not.toBeNull();
     expect(result.usedManifest).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// synthesizeChainToFromValidate tests
+// ---------------------------------------------------------------------------
+
+describe("synthesizeChainToFromValidate", () => {
+  test("synthesizes chainTo from upgradeToSkill with severity error", () => {
+    const skills: Record<string, any> = {
+      "skill-a": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [
+          {
+            pattern: "badImport",
+            message: "Bad import detected",
+            severity: "error",
+            upgradeToSkill: "skill-b",
+            upgradeWhy: "Use skill-b instead for modern patterns.",
+          },
+        ],
+      },
+      "skill-b": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [],
+      },
+    };
+    const allSlugs = new Set(Object.keys(skills));
+    const { count, warnings } = synthesizeChainToFromValidate(skills, allSlugs);
+
+    expect(count).toBe(1);
+    expect(warnings).toHaveLength(0);
+    expect(skills["skill-a"].chainTo).toHaveLength(1);
+    expect(skills["skill-a"].chainTo[0]).toEqual({
+      pattern: "badImport",
+      targetSkill: "skill-b",
+      message: "Use skill-b instead for modern patterns.",
+      synthesized: true,
+    });
+  });
+
+  test("synthesizes chainTo from upgradeToSkill with severity recommended", () => {
+    const skills: Record<string, any> = {
+      "skill-a": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [
+          {
+            pattern: "oldPattern",
+            message: "Old pattern detected",
+            severity: "recommended",
+            upgradeToSkill: "skill-b",
+          },
+        ],
+      },
+      "skill-b": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [],
+      },
+    };
+    const allSlugs = new Set(Object.keys(skills));
+    const { count } = synthesizeChainToFromValidate(skills, allSlugs);
+
+    expect(count).toBe(1);
+    expect(skills["skill-a"].chainTo[0].targetSkill).toBe("skill-b");
+    // Should use message fallback when no upgradeWhy
+    expect(skills["skill-a"].chainTo[0].message).toContain("loading skill-b guidance");
+  });
+
+  test("does NOT synthesize for severity warn", () => {
+    const skills: Record<string, any> = {
+      "skill-a": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [
+          {
+            pattern: "warnPattern",
+            message: "Mild warning",
+            severity: "warn",
+            upgradeToSkill: "skill-b",
+          },
+        ],
+      },
+      "skill-b": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [],
+      },
+    };
+    const allSlugs = new Set(Object.keys(skills));
+    const { count } = synthesizeChainToFromValidate(skills, allSlugs);
+
+    expect(count).toBe(0);
+    expect(skills["skill-a"].chainTo).toBeUndefined();
+  });
+
+  test("does NOT synthesize when chainTo already exists for that target", () => {
+    const skills: Record<string, any> = {
+      "skill-a": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [
+          {
+            pattern: "somePattern",
+            message: "Issue found",
+            severity: "error",
+            upgradeToSkill: "skill-b",
+          },
+        ],
+        chainTo: [
+          {
+            pattern: "existingPattern",
+            targetSkill: "skill-b",
+            message: "Already chained",
+          },
+        ],
+      },
+      "skill-b": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [],
+      },
+    };
+    const allSlugs = new Set(Object.keys(skills));
+    const { count } = synthesizeChainToFromValidate(skills, allSlugs);
+
+    expect(count).toBe(0);
+    // Original chainTo should be unchanged
+    expect(skills["skill-a"].chainTo).toHaveLength(1);
+    expect(skills["skill-a"].chainTo[0].message).toBe("Already chained");
+  });
+
+  test("warns when upgradeToSkill target does not exist", () => {
+    const skills: Record<string, any> = {
+      "skill-a": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [
+          {
+            pattern: "brokenRef",
+            message: "Points to missing skill",
+            severity: "error",
+            upgradeToSkill: "nonexistent-skill",
+          },
+        ],
+      },
+    };
+    const allSlugs = new Set(Object.keys(skills));
+    const { count, warnings } = synthesizeChainToFromValidate(skills, allSlugs);
+
+    expect(count).toBe(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("nonexistent-skill");
+    expect(warnings[0]).toContain("does not exist");
+  });
+
+  test("synthesizes multiple chainTo entries for different targets", () => {
+    const skills: Record<string, any> = {
+      "skill-a": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [
+          {
+            pattern: "pattern1",
+            message: "Issue 1",
+            severity: "error",
+            upgradeToSkill: "skill-b",
+            upgradeWhy: "Reason for B",
+          },
+          {
+            pattern: "pattern2",
+            message: "Issue 2",
+            severity: "recommended",
+            upgradeToSkill: "skill-c",
+            upgradeWhy: "Reason for C",
+          },
+        ],
+      },
+      "skill-b": { priority: 5, pathPatterns: [], bashPatterns: [], importPatterns: [], validate: [] },
+      "skill-c": { priority: 5, pathPatterns: [], bashPatterns: [], importPatterns: [], validate: [] },
+    };
+    const allSlugs = new Set(Object.keys(skills));
+    const { count } = synthesizeChainToFromValidate(skills, allSlugs);
+
+    expect(count).toBe(2);
+    expect(skills["skill-a"].chainTo).toHaveLength(2);
+    expect(skills["skill-a"].chainTo[0].targetSkill).toBe("skill-b");
+    expect(skills["skill-a"].chainTo[1].targetSkill).toBe("skill-c");
+  });
+
+  test("deduplicates: only first upgradeToSkill for same target gets synthesized", () => {
+    const skills: Record<string, any> = {
+      "skill-a": {
+        priority: 5,
+        pathPatterns: [],
+        bashPatterns: [],
+        importPatterns: [],
+        validate: [
+          {
+            pattern: "pattern1",
+            message: "First rule",
+            severity: "error",
+            upgradeToSkill: "skill-b",
+            upgradeWhy: "First reason",
+          },
+          {
+            pattern: "pattern2",
+            message: "Second rule",
+            severity: "error",
+            upgradeToSkill: "skill-b",
+            upgradeWhy: "Second reason",
+          },
+        ],
+      },
+      "skill-b": { priority: 5, pathPatterns: [], bashPatterns: [], importPatterns: [], validate: [] },
+    };
+    const allSlugs = new Set(Object.keys(skills));
+    const { count } = synthesizeChainToFromValidate(skills, allSlugs);
+
+    expect(count).toBe(1);
+    expect(skills["skill-a"].chainTo).toHaveLength(1);
+    expect(skills["skill-a"].chainTo[0].message).toBe("First reason");
+  });
+});
+
+describe("manifest includes synthesized chainTo entries", () => {
+  test("build succeeds and all chainTo entries have valid structure", async () => {
+    const { code } = await runBuild();
+    expect(code).toBe(0);
+
+    const manifest = readManifest();
+
+    // All chainTo entries (whether manual or synthesized) must have required fields
+    for (const [_slug, config] of Object.entries(manifest.skills) as [string, any][]) {
+      if (config.chainTo) {
+        for (const chain of config.chainTo) {
+          expect(typeof chain.pattern).toBe("string");
+          expect(typeof chain.targetSkill).toBe("string");
+          // Synthesized entries are marked with synthesized: true
+          if (chain.synthesized !== undefined) {
+            expect(chain.synthesized).toBe(true);
+            expect(typeof chain.message).toBe("string");
+          }
+        }
+      }
+    }
+  });
+
+  test("synthesis fills gaps when upgradeToSkill has no matching chainTo", async () => {
+    // Use a temp directory with a deliberate gap
+    const tmpDir = join(tmpdir(), `synth-test-${Date.now()}`);
+    const skillsDir = join(tmpDir, "skills");
+    mkdirSync(join(skillsDir, "source-skill"), { recursive: true });
+    mkdirSync(join(skillsDir, "target-skill"), { recursive: true });
+
+    writeFileSync(
+      join(skillsDir, "source-skill", "SKILL.md"),
+      `---
+name: source-skill
+description: Source skill with upgradeToSkill but no chainTo
+metadata:
+  priority: 5
+  pathPatterns:
+    - "src/**/*.ts"
+validate:
+  -
+    pattern: 'oldApi\\('
+    message: 'Old API detected'
+    severity: error
+    upgradeToSkill: target-skill
+    upgradeWhy: 'Use target-skill for modern API.'
+---
+# Source Skill
+Content here.
+`,
+    );
+
+    writeFileSync(
+      join(skillsDir, "target-skill", "SKILL.md"),
+      `---
+name: target-skill
+description: Target skill
+metadata:
+  priority: 5
+  pathPatterns:
+    - "target/**/*.ts"
+---
+# Target Skill
+Content here.
+`,
+    );
+
+    const { buildManifest } = await import("../scripts/build-manifest.ts");
+    const { manifest, errors } = buildManifest(skillsDir);
+    expect(errors).toHaveLength(0);
+
+    const sourceSkill = manifest.skills["source-skill"];
+    expect(sourceSkill.chainTo).toBeDefined();
+    expect(sourceSkill.chainTo!.length).toBeGreaterThanOrEqual(1);
+
+    const synthesized = sourceSkill.chainTo!.find(
+      (c: any) => c.synthesized === true && c.targetSkill === "target-skill",
+    );
+    expect(synthesized).toBeDefined();
+    expect(synthesized!.pattern).toBe("oldApi\\(");
+    expect(synthesized!.message).toBe("Use target-skill for modern API.");
+
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });

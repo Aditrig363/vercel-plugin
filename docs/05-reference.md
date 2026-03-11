@@ -334,7 +334,6 @@ All 45 skills, sorted by priority (highest first). Each skill lives in `skills/<
 | `vercel-firewall` | 5 | Firewall and security — DDoS, WAF, rate limiting, bot filtering, OWASP | path, bash, prompt |
 | `vercel-queues` | 5 | Queues (public beta) — durable event streaming, topics, consumer groups | path, bash, import |
 | `cms` | 4 | Headless CMS — Sanity, Contentful, DatoCMS, Storyblok, Builder.io | path, bash |
-| `edge-runtime` | 4 | Edge Runtime — lightweight JS runtime for Edge Functions and Middleware | path, bash, import, prompt |
 | `email` | 4 | Email — Resend with React Email templates | path, bash |
 | `geist` | 4 | Geist typography — Sans, Mono, Pixel font configuration | path, bash, import |
 | `json-render` | 4 | AI chat response rendering — UIMessage parts, tool calls, streaming states | path |

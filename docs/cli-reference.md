@@ -102,10 +102,6 @@ Injected: 2 | Summary-only: 1
           priority: 6
           pattern:  **/*.{ts,tsx} (suffix)
           reason:   injected #2 (3713B, total 8234B / 12000B)
-  [SUMMARY] edge-runtime (6200 bytes)
-          priority: 5
-          pattern:  middleware.* (full)
-          reason:   full body (6200B) exceeds budget; using summary (312B)
 ```
 
 ### JSON output
@@ -136,7 +132,7 @@ When multiple skills share the same effective priority, `explain` reports a coll
 
 ```
 Collisions:
-  - edge-runtime, vercel-functions: 2 skills share effective priority 5; tie-broken alphabetically
+  - vercel-functions, routing-middleware: 2 skills share effective priority 5; tie-broken alphabetically
 ```
 
 ---

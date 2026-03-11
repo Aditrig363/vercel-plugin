@@ -76,6 +76,21 @@ retrieval:
     - data flow
     - end-to-end
     - verification
+chainTo:
+  -
+    pattern: 'process\.env\.\w+|NEXT_PUBLIC_\w+'
+    targetSkill: env-vars
+    message: 'Environment variable references detected during verification — loading Env Vars guidance for proper configuration, vercel env pull, and branch scoping.'
+    skipIfFileContains: 'vercel\s+env\s+pull|\.env\.local'
+  -
+    pattern: 'middleware\.(ts|js)|proxy\.(ts|js)|clerkMiddleware|NextResponse\.redirect'
+    targetSkill: routing-middleware
+    message: 'Middleware/proxy detected during verification — loading Routing Middleware guidance for request interception, auth checks, and proxy.ts migration.'
+  -
+    pattern: 'streamText\s*\(|generateText\s*\(|useChat\s*\('
+    targetSkill: ai-sdk
+    message: 'AI SDK calls detected during verification — loading AI SDK v6 guidance for streaming, transport, and error handling patterns.'
+    skipIfFileContains: 'toUIMessageStreamResponse|DefaultChatTransport'
 
 ---
 

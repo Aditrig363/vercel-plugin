@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+// hooks/src/subagent-state.mts
+import { createHash } from "crypto";
 import {
   appendFileSync,
   closeSync,
@@ -9,17 +10,17 @@ import {
   rmSync,
   statSync,
   writeFileSync
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+} from "fs";
+import { tmpdir } from "os";
+import { dirname, join, resolve } from "path";
 import * as hookEnvNs from "./hook-env.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
-const PENDING_LAUNCH_TTL_MS = 6e4;
-const LOCK_WAIT_TIMEOUT_MS = 2e3;
-const LOCK_WAIT_INTERVAL_MS = 10;
-const LOCK_STALE_MS = 5e3;
-const hookEnv = hookEnvNs;
-const log = createLogger();
+var PENDING_LAUNCH_TTL_MS = 6e4;
+var LOCK_WAIT_TIMEOUT_MS = 2e3;
+var LOCK_WAIT_INTERVAL_MS = 10;
+var LOCK_STALE_MS = 5e3;
+var hookEnv = hookEnvNs;
+var log = createLogger();
 function isNodeErrorCode(error, code) {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }

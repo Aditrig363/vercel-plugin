@@ -841,6 +841,26 @@ async function runScenario(
       }
     }
 
+    // 7b. Link project to Vercel + pull env (OIDC credentials for AI Gateway during verify)
+    const vercelProjectName = `${scenario.slug}-${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12)}`.toLowerCase();
+    if (vercelToken) {
+      try {
+        const linkOut = await sh(sandbox, `cd ${projectDir} && unset VERCEL_TOKEN && vercel link --yes --scope vercel-labs --project ${vercelProjectName} 2>&1 | tail -3`);
+        console.log(`  [${scenario.slug}] Linked to vercel-labs/${vercelProjectName}: ${linkOut.split("\n").pop()} (${elapsed(t0)})`);
+        const envOut = await sh(sandbox, `cd ${projectDir} && unset VERCEL_TOKEN && vercel env pull .env.local --yes 2>&1 | tail -3`);
+        console.log(`  [${scenario.slug}] Pulled env: ${envOut.split("\n").pop()} (${elapsed(t0)})`);
+      } catch (e: any) {
+        console.log(`  [${scenario.slug}] Vercel link/env pull failed: ${e.message?.slice(0, 80)} (${elapsed(t0)})`);
+      }
+    }
+    // Append AI credentials to .env.local (in case env pull didn't include them)
+    try {
+      const existing = await sh(sandbox, `cat ${projectDir}/.env.local 2>/dev/null`);
+      const lines = existing.trim() ? existing.trim() + "\n" : "";
+      const envWithCreds = lines + `ANTHROPIC_API_KEY=${apiKey}\nANTHROPIC_BASE_URL=${baseUrl}\n`;
+      await sandbox.writeFiles([{ path: `${projectDir}/.env.local`, content: Buffer.from(envWithCreds) }]);
+    } catch {}
+
     // 8. Phase 2: Verification with agent-browser
     let verification: VerificationResult | undefined;
     if (!SKIP_VERIFY && projectFilesList.length > 1) {
@@ -849,21 +869,58 @@ async function runScenario(
       const verifyPrompt = buildVerificationPrompt(scenario.userStories);
       await sandbox.writeFiles([{ path: "/tmp/verify.txt", content: Buffer.from(verifyPrompt) }]);
 
+      const verifyLogFile = "/tmp/claude-verify.log";
+      const verifyErrFile = "/tmp/claude-verify.err";
+      const verifyExitFile = "/tmp/claude-verify.exit";
       const verifyCmd = `cd ${projectDir} && ${claudeBin} --dangerously-skip-permissions --debug --settings ${settingsPath} "$(cat /tmp/verify.txt)"`;
+      const wrappedVerifyCmd = `${verifyCmd} > ${verifyLogFile} 2> ${verifyErrFile}; status=$?; echo "EXIT:$status" >> ${verifyLogFile}; printf '%s' "$status" > ${verifyExitFile}`;
       let verifyExit = -1;
       let verifyOut = "";
+
+      // Fire-and-forget: launch verify, catch the 300s API timeout, then poll for exit
       try {
-        const vr = await sandbox.runCommand("sh", ["-c", verifyCmd], { signal: AbortSignal.timeout(1_200_000) }); // 20 min
+        const vr = await sandbox.runCommand("sh", ["-c", wrappedVerifyCmd]);
         verifyExit = (vr as any).exitCode ?? 0;
-        verifyOut = (await vr.stdout()).trim();
       } catch (e: any) {
-        if (e.message?.includes("timed out")) {
-          verifyExit = 124;
-          console.log(`  [${scenario.slug}] Verify timed out (${elapsed(t0)})`);
+        if (isExpectedRunCommandTimeout(e)) {
+          console.log(`  [${scenario.slug}] Verify hit 300s API timeout; polling for completion (${elapsed(t0)})`);
+          // Poll for verify exit
+          const verifyStartedAt = Date.now();
+          while (Date.now() - verifyStartedAt < 1_200_000) { // 20 min max
+            await new Promise(r => setTimeout(r, BUILD_WAIT_POLL_MS));
+            const exitRaw = await sh(sandbox, `cat ${verifyExitFile} 2>/dev/null || echo RUNNING`);
+            const probe = normalizeShellOutput(exitRaw);
+            if (probe !== "RUNNING" && probe !== "") {
+              verifyExit = parseInt(probe, 10) || 0;
+              console.log(`  [${scenario.slug}] Verify exited(${verifyExit}) (${elapsed(t0)})`);
+              break;
+            }
+            // Log progress
+            const tail = await sh(sandbox, `tail -1 ${verifyLogFile} 2>/dev/null`);
+            console.log(`  [${scenario.slug}] Verify polling... | ${elapsed(t0)} | ${normalizeShellOutput(tail).slice(-100)}`);
+          }
+          if (verifyExit === -1) {
+            verifyExit = 124;
+            console.log(`  [${scenario.slug}] Verify timed out after 20min (${elapsed(t0)})`);
+          }
+        } else {
+          verifyExit = 1;
+          console.log(`  [${scenario.slug}] Verify launch failed: ${e.message?.slice(0, 100)} (${elapsed(t0)})`);
         }
       } finally {
         timing.verifyEndMs = captureRelativeMs(t0);
       }
+
+      // Always capture verify stdout — this is the critical data we've been missing
+      try {
+        verifyOut = await sh(sandbox, `cat ${verifyLogFile} 2>/dev/null`);
+        const verifyErr = await sh(sandbox, `cat ${verifyErrFile} 2>/dev/null`);
+        const outLines = normalizeShellOutput(verifyOut).split("\n");
+        console.log(`  [${scenario.slug}] Verify stdout: ${outLines.length} lines, last: ${outLines.slice(-3).join(" | ").slice(-200)}`);
+        if (normalizeShellOutput(verifyErr)) {
+          console.log(`  [${scenario.slug}] Verify stderr (last 3 lines): ${normalizeShellOutput(verifyErr).split("\n").slice(-3).join(" | ").slice(-200)}`);
+        }
+      } catch {}
 
       // Re-extract skills after verify phase (agent-browser + fixes trigger more)
       const postVerifySkills = (await sh(sandbox, "ls /tmp/vercel-plugin-*-seen-skills.d/ 2>/dev/null")).split("\n").filter(Boolean);
@@ -910,12 +967,10 @@ async function runScenario(
       console.log(`  [${scenario.slug}] Phase 3: DEPLOY (${elapsed(t0)})`);
       const deployStartedAt = Date.now();
       timing.deployStartMs = captureRelativeMs(t0);
-      const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12); // YYYYMMDDHHMI
-      const projectName = `${scenario.slug}-${ts}`.toLowerCase();
 
       const deployPrompt = `Deploy this app to Vercel. Follow these steps:
 
-1. Run: vercel link --yes --scope vercel-labs --project ${projectName}
+1. Run: vercel link --yes --scope vercel-labs --project ${vercelProjectName}
 2. Run: vercel deploy --yes
 3. If the deploy fails with a build error, fix the code and try again (up to 3 attempts).
 
@@ -1079,12 +1134,12 @@ Important:
       console.log(`  [${scenario.slug}] Artifact extract failed | artifact=debug-logs.tar.gz | attempted=tar-debug-logs | error=${e.message?.slice(0, 160)}`);
     }
 
-    // Extract Claude Code stdout/stderr from all build rounds
+    // Extract Claude Code stdout/stderr from build + verify + deploy phases
     try {
-      await sh(sandbox, "tar czf /tmp/claude-output.tar.gz /tmp/claude-build-round-*.log /tmp/claude-build-round-*.err 2>/dev/null");
+      await sh(sandbox, "tar czf /tmp/claude-output.tar.gz /tmp/claude-build-round-*.log /tmp/claude-build-round-*.err /tmp/claude-verify.log /tmp/claude-verify.err /tmp/claude-deploy.log /tmp/claude-deploy.err 2>/dev/null");
       const claudeOutputBuffer = await readSandboxFileBuffer(sandbox, "/tmp/claude-output.tar.gz");
       if (!claudeOutputBuffer) throw new Error("sandbox file /tmp/claude-output.tar.gz missing");
-      await trackArtifact("claude-output.tar.gz", "Claude build stdout/stderr logs captured from /tmp.", claudeOutputBuffer);
+      await trackArtifact("claude-output.tar.gz", "Claude build/verify/deploy stdout/stderr logs.", claudeOutputBuffer);
     } catch (e: any) {
       console.log(`  [${scenario.slug}] Artifact extract failed | artifact=claude-output.tar.gz | attempted=tar-claude-output | error=${e.message?.slice(0, 160)}`);
     }

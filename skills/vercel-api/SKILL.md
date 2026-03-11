@@ -33,6 +33,15 @@ retrieval:
     - vercel api
     - deployments
     - domains
+chainTo:
+  -
+    pattern: 'vercel\.deployments\.(create|list)|vercel\.projects\.(create|update)'
+    targetSkill: deployments-cicd
+    message: 'Vercel SDK deployment/project operations detected — loading CI/CD guidance for deployment workflows, preview URLs, and promotion strategies.'
+  -
+    pattern: 'mcp\.vercel\.com|claude\s+mcp\s+add.*vercel'
+    targetSkill: ai-sdk
+    message: 'Vercel MCP server configuration detected — loading AI SDK guidance for MCP client integration and tool calling patterns.'
 
 ---
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/posttooluse-bash-chain.mts
+import { readFileSync, realpathSync } from "fs";
+import { join, resolve } from "path";
+import { fileURLToPath } from "url";
 import { detectPlatform } from "./compat.mjs";
 import {
   pluginRoot as resolvePluginRoot,
@@ -12,10 +14,10 @@ import {
 } from "./hook-env.mjs";
 import { extractFrontmatter } from "./skill-map-frontmatter.mjs";
 import { createLogger } from "./logger.mjs";
-const PLUGIN_ROOT = resolvePluginRoot();
-const CHAIN_BUDGET_BYTES = 18e3;
-const DEFAULT_CHAIN_CAP = 2;
-const PACKAGE_SKILL_MAP = {
+var PLUGIN_ROOT = resolvePluginRoot();
+var CHAIN_BUDGET_BYTES = 18e3;
+var DEFAULT_CHAIN_CAP = 2;
+var PACKAGE_SKILL_MAP = {
   // Express / traditional Node servers → Vercel Functions
   express: {
     skill: "vercel-functions",
@@ -177,8 +179,8 @@ const PACKAGE_SKILL_MAP = {
     message: "cron package detected \u2014 Vercel Cron Jobs provides managed scheduling via vercel.json. Loading cron guidance."
   }
 };
-const log = createLogger();
-const INSTALL_CMD_RE = /(?:npm\s+(?:install|i|add)|yarn\s+add|pnpm\s+(?:add|install)|bun\s+(?:add|install))\s+(.+)/;
+var log = createLogger();
+var INSTALL_CMD_RE = /(?:npm\s+(?:install|i|add)|yarn\s+add|pnpm\s+(?:add|install)|bun\s+(?:add|install))\s+(.+)/;
 function parseInstallCommand(command) {
   if (!command || typeof command !== "string") return [];
   const match = INSTALL_CMD_RE.exec(command);

@@ -1,7 +1,8 @@
+// hooks/src/unified-ranker.mts
 import { createLogger } from "./logger.mjs";
-const log = createLogger();
-const MATCH_POINTS = 10;
-const LEXICAL_MULTIPLIER = 1.35;
+var log = createLogger();
+var MATCH_POINTS = 10;
+var LEXICAL_MULTIPLIER = 1.35;
 function rankSkills(candidates) {
   const ranked = candidates.map(({ skill, pathMatch = false, commandMatch = false, importMatch = false, profilerBoost = 0, promptScore = 0, lexicalScore = 0, basePriority = 5 }) => {
     const breakdown = {

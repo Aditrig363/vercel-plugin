@@ -30,6 +30,19 @@ export interface ValidationRule {
   upgradeMode?: "hard" | "soft";
 }
 
+export interface ChainToRule {
+  /** Regex pattern to match against file contents after a PostToolUse write/edit. */
+  pattern: string;
+  /** The skill slug to inject when the pattern matches. */
+  targetSkill: string;
+  /** Optional human-readable message explaining why the chain is triggered. */
+  message?: string;
+  /** True when this rule was auto-synthesized from a validate upgradeToSkill rule at build time. */
+  synthesized?: boolean;
+  /** Optional regex — if file content matches, skip this chain rule. */
+  skipIfFileContains?: string;
+}
+
 export interface RetrievalMetadata {
   aliases?: string[];
   intents?: string[];
@@ -43,6 +56,7 @@ export interface SkillFrontmatter {
   summary: string;
   metadata: Record<string, unknown>;
   validate: ValidationRule[];
+  chainTo: ChainToRule[];
   retrieval?: RetrievalMetadata;
 }
 
@@ -53,6 +67,7 @@ export interface ScannedSkill {
   summary: string;
   metadata: Record<string, unknown>;
   validate: ValidationRule[];
+  chainTo: ChainToRule[];
   retrieval?: RetrievalMetadata;
 }
 
@@ -84,6 +99,7 @@ export interface SkillConfig {
   bashPatterns: string[];
   importPatterns: string[];
   validate: ValidationRule[];
+  chainTo?: ChainToRule[];
   promptSignals?: PromptSignals;
   retrieval?: RetrievalMetadata;
 }
@@ -401,6 +417,12 @@ function parseYamlBlock(
     if (key === "") {
       throw invalidYaml("empty key is not allowed", index + 1);
     }
+    if (key in obj) {
+      throw invalidYaml(
+        `duplicate key "${key}" (first defined earlier in this block)`,
+        index + 1,
+      );
+    }
 
     const remainder = content.slice(colonIndex + 1);
     if (remainder.trim() !== "") {
@@ -507,9 +529,36 @@ function parseValidateRules(raw: unknown): ValidationRule[] {
   return rules;
 }
 
+/**
+ * Parse a raw chainTo: YAML value into an array of ChainToRule objects.
+ * Malformed entries are silently skipped.
+ */
+function parseChainToRules(raw: unknown): ChainToRule[] {
+  if (!Array.isArray(raw)) return [];
+  const rules: ChainToRule[] = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== "object" || Array.isArray(item)) continue;
+    const obj = item as Record<string, unknown>;
+    if (typeof obj.pattern !== "string" || obj.pattern === "") continue;
+    if (typeof obj.targetSkill !== "string" || obj.targetSkill === "") continue;
+    const rule: ChainToRule = {
+      pattern: obj.pattern,
+      targetSkill: obj.targetSkill,
+    };
+    if (typeof obj.message === "string" && obj.message !== "") {
+      rule.message = obj.message;
+    }
+    if (typeof obj.skipIfFileContains === "string" && obj.skipIfFileContains !== "") {
+      rule.skipIfFileContains = obj.skipIfFileContains;
+    }
+    rules.push(rule);
+  }
+  return rules;
+}
+
 export function parseSkillFrontmatter(yamlStr: string): SkillFrontmatter {
   if (!yamlStr || !yamlStr.trim()) {
-    return { name: "", description: "", summary: "", metadata: {}, validate: [] };
+    return { name: "", description: "", summary: "", metadata: {}, validate: [], chainTo: [] };
   }
   const doc = parseSimpleYaml(yamlStr);
   return {
@@ -523,6 +572,7 @@ export function parseSkillFrontmatter(yamlStr: string): SkillFrontmatter {
         ? (doc.metadata as Record<string, unknown>)
         : {},
     validate: parseValidateRules(doc.validate),
+    chainTo: parseChainToRules(doc.chainTo),
     ...(doc.retrieval != null &&
       typeof doc.retrieval === "object" &&
       !Array.isArray(doc.retrieval)
@@ -598,6 +648,7 @@ export function scanSkillsDir(rootDir: string): ScanResult {
       summary: parsed.summary,
       metadata: parsed.metadata,
       validate: parsed.validate,
+      chainTo: parsed.chainTo,
       ...(parsed.retrieval ? { retrieval: parsed.retrieval } : {}),
     });
   }
@@ -963,6 +1014,9 @@ export function buildSkillMap(rootDir: string): SkillMapResult {
     if (sitemap) {
       entry.sitemap = sitemap;
     }
+    if (skill.chainTo.length > 0) {
+      entry.chainTo = skill.chainTo;
+    }
     if (promptSignals) {
       entry.promptSignals = promptSignals;
     }
@@ -993,6 +1047,7 @@ const KNOWN_KEYS = new Set([
   "bashPatterns",
   "importPatterns",
   "validate",
+  "chainTo",
   "promptSignals",
   "retrieval",
 ]);
@@ -1184,6 +1239,9 @@ export function validateSkillMap(raw: unknown): ValidationResult {
         ? cfg.sitemap
         : undefined;
 
+    // Normalize chainTo (optional array of ChainToRule, default [])
+    const chainTo = parseChainToRules(cfg.chainTo);
+
     const normalizedEntry: SkillConfig = {
       priority,
       summary,
@@ -1196,6 +1254,9 @@ export function validateSkillMap(raw: unknown): ValidationResult {
     if (sitemap) {
       normalizedEntry.sitemap = sitemap;
     }
+    if (chainTo.length > 0) {
+      normalizedEntry.chainTo = chainTo;
+    }
     if (promptSignals) {
       normalizedEntry.promptSignals = promptSignals;
     }
@@ -1203,6 +1264,52 @@ export function validateSkillMap(raw: unknown): ValidationResult {
       normalizedEntry.retrieval = cfg.retrieval as RetrievalMetadata;
     }
     normalizedSkills[skill] = normalizedEntry;
+  }
+
+  // Cross-reference: validate chainTo targetSkill references exist
+  const allSlugs = new Set(Object.keys(normalizedSkills));
+  for (const [skill, config] of Object.entries(normalizedSkills)) {
+    if (!config.chainTo) continue;
+    for (const rule of config.chainTo) {
+      if (!allSlugs.has(rule.targetSkill)) {
+        addError(
+          `skill "${skill}": chainTo references non-existent skill "${rule.targetSkill}"`,
+          {
+            code: "CHAIN_TO_MISSING_TARGET",
+            skill,
+            field: "chainTo.targetSkill",
+            valueType: "string",
+            hint: `Ensure "${rule.targetSkill}" exists as a skill directory`,
+          },
+        );
+      }
+    }
+  }
+
+  // Cross-reference: warn when upgradeToSkill exists without a matching chainTo
+  for (const [skill, config] of Object.entries(normalizedSkills)) {
+    if (!config.validate?.length) continue;
+    const chainTargets = new Set(
+      (config.chainTo ?? []).map((c: ChainToRule) => c.targetSkill),
+    );
+    for (const rule of config.validate) {
+      if (
+        rule.upgradeToSkill &&
+        (rule.severity === "error" || rule.severity === "recommended") &&
+        !chainTargets.has(rule.upgradeToSkill)
+      ) {
+        addWarning(
+          `skill "${skill}": validate rule with upgradeToSkill "${rule.upgradeToSkill}" (severity: ${rule.severity}) has no matching chainTo entry`,
+          {
+            code: "UPGRADE_WITHOUT_CHAIN",
+            skill,
+            field: "validate.upgradeToSkill",
+            valueType: "string",
+            hint: `Add a chainTo entry targeting "${rule.upgradeToSkill}" or let build-manifest synthesize one`,
+          },
+        );
+      }
+    }
   }
 
   if (errors.length > 0) {

@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-import { appendFileSync } from "node:fs";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/subagent-stop-sync.mts
+import { appendFileSync } from "fs";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import { tmpdir } from "os";
+import { fileURLToPath } from "url";
 import { listSessionKeys } from "./hook-env.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
-const log = createLogger();
+var log = createLogger();
 function parseInput() {
   try {
     const raw = readFileSync(0, "utf8");
@@ -69,8 +71,8 @@ function main() {
   });
   process.exit(0);
 }
-const ENTRYPOINT = fileURLToPath(import.meta.url);
-const isEntrypoint = process.argv[1] ? resolve(process.argv[1]) === ENTRYPOINT : false;
+var ENTRYPOINT = fileURLToPath(import.meta.url);
+var isEntrypoint = process.argv[1] ? resolve(process.argv[1]) === ENTRYPOINT : false;
 if (isEntrypoint) {
   main();
 }

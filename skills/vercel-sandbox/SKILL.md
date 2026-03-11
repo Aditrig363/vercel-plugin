@@ -80,6 +80,15 @@ retrieval:
     - Firecracker
     - microVM
     - isolated execution
+chainTo:
+  -
+    pattern: 'from\s+[''""]vm2[''""]|require\s*\(\s*[''""]vm2[''""\)]|new\s+VM\('
+    targetSkill: vercel-sandbox
+    message: 'vm2 detected — it has known security vulnerabilities. Reloading Vercel Sandbox guidance for Firecracker microVM-based safe execution.'
+  -
+    pattern: 'child_process.*exec\(|execSync\(|spawn\(.*\{.*shell:\s*true'
+    targetSkill: ai-sdk
+    message: 'Shell exec for code execution detected — loading AI SDK guidance for tool-calling patterns that pair with Vercel Sandbox for safe agent execution.'
 
 ---
 

@@ -183,7 +183,7 @@ describe("subagent-start-context: budget enforcement", () => {
     // Give it many skills to potentially exceed budget
     writeProfileCache(testSession, [
       "nextjs", "vercel-storage", "ai-sdk", "shadcn", "auth",
-      "vercel-functions", "edge-runtime", "turborepo",
+      "vercel-functions", "turborepo",
     ]);
 
     try {
@@ -203,7 +203,7 @@ describe("subagent-start-context: budget enforcement", () => {
   test("Plan context stays within 3KB budget", async () => {
     writeProfileCache(testSession, [
       "nextjs", "vercel-storage", "ai-sdk", "shadcn", "auth",
-      "vercel-functions", "edge-runtime", "turborepo",
+      "vercel-functions", "turborepo",
     ]);
 
     try {
@@ -223,7 +223,7 @@ describe("subagent-start-context: budget enforcement", () => {
   test("general-purpose context stays within 8KB budget", async () => {
     writeProfileCache(testSession, [
       "nextjs", "vercel-storage", "ai-sdk", "shadcn", "auth",
-      "vercel-functions", "edge-runtime", "turborepo",
+      "vercel-functions", "turborepo",
     ]);
 
     try {

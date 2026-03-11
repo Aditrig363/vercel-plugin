@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/pretooluse-skill-inject.mts
+import { readFileSync, realpathSync } from "fs";
+import { join, resolve } from "path";
+import { fileURLToPath } from "url";
 import {
   detectPlatform
 } from "./compat.mjs";
@@ -31,26 +33,26 @@ import {
 } from "./patterns.mjs";
 import { resolveVercelJsonSkills, isVercelJsonPath, VERCEL_JSON_SKILLS } from "./vercel-config.mjs";
 import { createLogger, logDecision } from "./logger.mjs";
-const MAX_SKILLS = 3;
-const DEFAULT_INJECTION_BUDGET_BYTES = 18e3;
-const SETUP_MODE_BOOTSTRAP_SKILL = "bootstrap";
-const SETUP_MODE_PRIORITY_BOOST = 50;
-const PLUGIN_ROOT = resolvePluginRoot();
-const SUPPORTED_TOOLS = ["Read", "Edit", "Write", "Bash"];
-const TSX_REVIEW_SKILL = "react-best-practices";
-const DEFAULT_REVIEW_THRESHOLD = 3;
-const TSX_REVIEW_PRIORITY_BOOST = 40;
-const REVIEW_MARKER = "<!-- marker:review-injected -->";
-const TSX_EDIT_COUNT_SESSION_KEY = "tsx-edit-count";
-const DEV_SERVER_VERIFY_SKILL = "agent-browser-verify";
-const DEV_SERVER_VERIFY_PRIORITY_BOOST = 45;
-const DEV_SERVER_VERIFY_MAX_ITERATIONS = 2;
-const DEV_SERVER_VERIFY_MARKER = "<!-- marker:dev-server-verify -->";
-const DEV_VERIFY_COUNT_SESSION_KEY = "dev-verify-count";
-const DEV_SERVER_COMPANION_SKILLS = ["verification"];
-const AI_SDK_SKILL = "ai-sdk";
-const AI_SDK_COMPANION_SKILLS = ["ai-elements"];
-const DEV_SERVER_UNAVAILABLE_WARNING = `<!-- agent-browser-unavailable -->
+var MAX_SKILLS = 3;
+var DEFAULT_INJECTION_BUDGET_BYTES = 18e3;
+var SETUP_MODE_BOOTSTRAP_SKILL = "bootstrap";
+var SETUP_MODE_PRIORITY_BOOST = 50;
+var PLUGIN_ROOT = resolvePluginRoot();
+var SUPPORTED_TOOLS = ["Read", "Edit", "Write", "Bash"];
+var TSX_REVIEW_SKILL = "react-best-practices";
+var DEFAULT_REVIEW_THRESHOLD = 3;
+var TSX_REVIEW_PRIORITY_BOOST = 40;
+var REVIEW_MARKER = "<!-- marker:review-injected -->";
+var TSX_EDIT_COUNT_SESSION_KEY = "tsx-edit-count";
+var DEV_SERVER_VERIFY_SKILL = "agent-browser-verify";
+var DEV_SERVER_VERIFY_PRIORITY_BOOST = 45;
+var DEV_SERVER_VERIFY_MAX_ITERATIONS = 2;
+var DEV_SERVER_VERIFY_MARKER = "<!-- marker:dev-server-verify -->";
+var DEV_VERIFY_COUNT_SESSION_KEY = "dev-verify-count";
+var DEV_SERVER_COMPANION_SKILLS = ["verification"];
+var AI_SDK_SKILL = "ai-sdk";
+var AI_SDK_COMPANION_SKILLS = ["ai-elements"];
+var DEV_SERVER_UNAVAILABLE_WARNING = `<!-- agent-browser-unavailable -->
 **Recommendation: Install agent-browser for automatic verification**
 
 We detected a dev server starting. Normally, after several files have been changed, we run \`agent-browser\` to do a browser verification pass \u2014 checking that pages load correctly, there are no console errors, and UI elements render as expected. This catches visual regressions and runtime issues that static analysis misses.
@@ -63,9 +65,9 @@ npm install -g agent-browser && agent-browser install
 
 **Tell the user**: "I'd normally run a browser verification pass at this point to make sure everything looks right, but \`agent-browser\` isn't installed yet. You can install it globally with \`npm install -g agent-browser && agent-browser install\` \u2014 it takes about a minute and lets me visually verify your app after changes."
 <!-- /agent-browser-unavailable -->`;
-const VERCEL_ENV_HELP_ONCE_KEY = "vercel-env-help";
-const VERCEL_ENV_COMMAND = /\bvercel\s+env\s+(add|update|pull)\b/;
-const VERCEL_ENV_HELP = `<!-- vercel-env-help -->
+var VERCEL_ENV_HELP_ONCE_KEY = "vercel-env-help";
+var VERCEL_ENV_COMMAND = /\bvercel\s+env\s+(add|update|pull)\b/;
+var VERCEL_ENV_HELP = `<!-- vercel-env-help -->
 **Vercel env quick reference**
 - Add and paste the value at the prompt: vercel env add NAME production
 - Add from stdin/file: vercel env add NAME production < .env-value
@@ -74,7 +76,7 @@ const VERCEL_ENV_HELP = `<!-- vercel-env-help -->
 - Pull cloud envs locally after changes: vercel env pull .env.local --yes
 - Do NOT pass NAME=value as a positional argument. vercel env add reads the value from stdin or from the interactive prompt.
 <!-- /vercel-env-help -->`;
-const DEV_SERVER_PATTERNS = [
+var DEV_SERVER_PATTERNS = [
   /\bnext\s+dev\b/,
   /\bnpm\s+run\s+dev\b/,
   /\bpnpm\s+dev\b/,
@@ -94,7 +96,7 @@ function getInjectionBudget() {
   }
   return DEFAULT_INJECTION_BUDGET_BYTES;
 }
-const log = createLogger();
+var log = createLogger();
 function getReviewThreshold() {
   const envVal = process.env.VERCEL_PLUGIN_REVIEW_THRESHOLD;
   if (envVal != null && envVal !== "") {
@@ -146,7 +148,7 @@ function isClientReactFile(toolName, toolInput) {
   if (!/\.[jt]sx$/.test(filePath)) return false;
   return !/\/(api|actions)\//.test(filePath) && !/\broute\.[jt]sx?$/.test(filePath);
 }
-const RUNTIME_ENV_KEYS = [
+var RUNTIME_ENV_KEYS = [
   "VERCEL_PLUGIN_SEEN_SKILLS",
   "VERCEL_PLUGIN_TSX_EDIT_COUNT",
   "VERCEL_PLUGIN_DEV_VERIFY_COUNT"
@@ -1106,8 +1108,8 @@ function run() {
   }
   return result;
 }
-const REDACT_MAX = 200;
-const REDACT_RULES = [
+var REDACT_MAX = 200;
+var REDACT_RULES = [
   {
     // Connection strings: scheme://user:password@host
     re: /\b[a-z][a-z0-9+.-]*:\/\/[^:/?#\s]+:[^@\s]+@[^\s]+/gi,
@@ -1167,7 +1169,7 @@ function redactCommand(command) {
   }
   return redacted;
 }
-const SKILL_INJECTION_VERSION = 1;
+var SKILL_INJECTION_VERSION = 1;
 function isMainModule() {
   try {
     const scriptPath = realpathSync(resolve(process.argv[1] || ""));

@@ -43,6 +43,15 @@ retrieval:
     - Geist Mono
     - Geist Pixel
     - next/font
+chainTo:
+  -
+    pattern: 'localFont\s*\(|next/font/local|next/font/google'
+    targetSkill: nextjs
+    message: 'Font loading in Next.js layout detected — loading Next.js guidance for next/font optimization, layout patterns, and CSS variable setup.'
+  -
+    pattern: '--font-geist|geist.*className|fontFamily.*geist'
+    targetSkill: shadcn
+    message: 'Geist CSS variable or className usage detected — loading shadcn/ui guidance for theme integration and Tailwind font configuration.'
 
 ---
 

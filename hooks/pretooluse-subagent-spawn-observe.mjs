@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/pretooluse-subagent-spawn-observe.mts
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import { fileURLToPath } from "url";
 import { appendPendingLaunch } from "./subagent-state.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
-const log = createLogger();
-const EMPTY_OUTPUT = "{}";
+var log = createLogger();
+var EMPTY_OUTPUT = "{}";
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

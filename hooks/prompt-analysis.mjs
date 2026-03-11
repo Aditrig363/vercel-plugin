@@ -1,3 +1,4 @@
+// hooks/src/prompt-analysis.mts
 import { normalizePromptText, compilePromptSignals, matchPromptWithReason, scorePromptWithLexical } from "./prompt-patterns.mjs";
 import { searchSkills } from "./lexical-index.mjs";
 import { parseSeenSkills } from "./patterns.mjs";

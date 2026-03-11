@@ -231,10 +231,6 @@ export const SKILL_PATTERN_HINTS: Record<string, { glob: string; tool: string }[
     { glob: "flags/**", tool: "Read" },
     { glob: "app/**", tool: "Read" },
   ],
-  "edge-runtime": [
-    { glob: "middleware.{ts,js}", tool: "Read" },
-    { glob: "app/api/**", tool: "Read" },
-  ],
   "vercel-queues": [
     { glob: "app/api/queue/**", tool: "Read" },
     { glob: "queue/**", tool: "Read" },

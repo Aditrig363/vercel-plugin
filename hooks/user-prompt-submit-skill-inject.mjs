@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/user-prompt-submit-skill-inject.mts
+import { readFileSync, realpathSync } from "fs";
+import { resolve } from "path";
+import { fileURLToPath } from "url";
 import {
   appendAuditLog,
   listSessionKeys,
@@ -17,18 +19,18 @@ import { normalizePromptText, compilePromptSignals, matchPromptWithReason, score
 import { searchSkills, initializeLexicalIndex } from "./lexical-index.mjs";
 import { analyzePrompt } from "./prompt-analysis.mjs";
 import { createLogger, logDecision } from "./logger.mjs";
-const MAX_SKILLS = 2;
-const DEFAULT_INJECTION_BUDGET_BYTES = 8e3;
-const MIN_PROMPT_LENGTH = 10;
-const PLUGIN_ROOT = resolvePluginRoot();
-const SKILL_INJECTION_VERSION = 1;
-const ENV_SEEN_SKILLS_KEY = "VERCEL_PLUGIN_SEEN_SKILLS";
-const INVESTIGATION_COMPANION_SKILLS = [
+var MAX_SKILLS = 2;
+var DEFAULT_INJECTION_BUDGET_BYTES = 8e3;
+var MIN_PROMPT_LENGTH = 10;
+var PLUGIN_ROOT = resolvePluginRoot();
+var SKILL_INJECTION_VERSION = 1;
+var ENV_SEEN_SKILLS_KEY = "VERCEL_PLUGIN_SEEN_SKILLS";
+var INVESTIGATION_COMPANION_SKILLS = [
   "workflow",
   "agent-browser-verify",
   "vercel-cli"
 ];
-const log = createLogger();
+var log = createLogger();
 function getSeenSkillsEnv() {
   return typeof process.env[ENV_SEEN_SKILLS_KEY] === "string" ? process.env[ENV_SEEN_SKILLS_KEY] : "";
 }

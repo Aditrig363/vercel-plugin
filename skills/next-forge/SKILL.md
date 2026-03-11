@@ -123,6 +123,24 @@ retrieval:
     - Turborepo
     - monorepo
     - SaaS starter
+chainTo:
+  -
+    pattern: 'export\s+(default\s+)?function\s+middleware'
+    targetSkill: routing-middleware
+    message: 'middleware.ts detected in next-forge project — loading Routing Middleware guidance for proxy.ts migration.'
+  -
+    pattern: '@clerk/|clerkMiddleware|ClerkProvider|getAuth\(\)|auth\(\)'
+    targetSkill: auth
+    message: 'Clerk auth patterns in next-forge — loading Auth guidance for middleware auth, sign-in/sign-up flows, and organization handling.'
+    skipIfFileContains: '@auth0/|@descope/'
+  -
+    pattern: 'from\s+[''""](stripe|@stripe/stripe-js)[''""]|Stripe\(|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET'
+    targetSkill: payments
+    message: 'Stripe integration in next-forge — loading Payments guidance for checkout sessions, webhooks, and subscription billing.'
+  -
+    pattern: 'from\s+[''""](resend|@react-email)[''""]|Resend\(|RESEND_API_KEY'
+    targetSkill: email
+    message: 'Resend/React Email in next-forge — loading Email guidance for transactional emails, domain verification, and template patterns.'
 
 ---
 

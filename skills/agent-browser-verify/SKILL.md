@@ -84,6 +84,15 @@ retrieval:
     - console errors
     - visual check
     - gut-check
+chainTo:
+  -
+    pattern: 'console\.(error|warn)\s*\(|Error:|TypeError:|ReferenceError:'
+    targetSkill: investigation-mode
+    message: 'Console errors detected during browser verification — loading investigation mode to debug root cause with structured error analysis.'
+  -
+    pattern: 'localhost:\d+|127\.0\.0\.1:\d+|http://0\.0\.0\.0:\d+'
+    targetSkill: agent-browser
+    message: 'Dev server URL detected — loading browser automation skill for deeper interactive testing beyond the initial gut-check.'
 
 ---
 

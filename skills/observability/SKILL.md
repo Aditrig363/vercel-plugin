@@ -143,6 +143,22 @@ retrieval:
     - OpenTelemetry
     - Drains
     - runtime logs
+chainTo:
+  -
+    pattern: 'console\.log\s*\(\s*[''"]error|catch\s*\(\w+\)\s*\{\s*\n\s*console\.log'
+    targetSkill: vercel-functions
+    message: 'Console.log-only error handling detected in route handler — loading Vercel Functions guidance for structured error handling, proper logging, and function runtime configuration.'
+    skipIfFileContains: 'captureException|@sentry/|@opentelemetry/|logger\.\w+|Sentry\.|reportError'
+  -
+    pattern: 'from\s+[''"]@sentry/(nextjs|node)[''""]'
+    targetSkill: nextjs
+    message: 'Sentry SDK import detected — loading Next.js guidance for instrumentation.ts setup and Sentry config integration.'
+    skipIfFileContains: 'instrumentation\.register|withSentryConfig'
+  -
+    pattern: "winston|pino|bunyan"
+    targetSkill: observability
+    message: 'Third-party logger detected (winston/pino/bunyan) — Vercel provides native structured logging, runtime logs, and Drains for log export. Loading Observability guidance for Vercel-native logging.'
+    skipIfFileContains: "@vercel/otel|@opentelemetry/|Sentry\\."
 
 ---
 

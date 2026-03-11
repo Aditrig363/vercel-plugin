@@ -1,18 +1,20 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/subagent-start-bootstrap.mts
+import { readFileSync } from "fs";
+import { join, resolve } from "path";
+import { fileURLToPath } from "url";
 import { pluginRoot as resolvePluginRoot, profileCachePath, safeReadFile, safeReadJson, tryClaimSessionKey } from "./hook-env.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
 import { compilePromptSignals, matchPromptWithReason, normalizePromptText } from "./prompt-patterns.mjs";
 import { loadSkills } from "./pretooluse-skill-inject.mjs";
 import { extractFrontmatter } from "./skill-map-frontmatter.mjs";
 import { claimPendingLaunch } from "./subagent-state.mjs";
-const PLUGIN_ROOT = resolvePluginRoot();
-const MINIMAL_BUDGET_BYTES = 1024;
-const LIGHT_BUDGET_BYTES = 3072;
-const STANDARD_BUDGET_BYTES = 8e3;
-const log = createLogger();
+var PLUGIN_ROOT = resolvePluginRoot();
+var MINIMAL_BUDGET_BYTES = 1024;
+var LIGHT_BUDGET_BYTES = 3072;
+var STANDARD_BUDGET_BYTES = 8e3;
+var log = createLogger();
 function parseInput() {
   try {
     const raw = readFileSync(0, "utf8");
@@ -266,8 +268,8 @@ function main() {
   process.stdout.write(JSON.stringify(output));
   process.exit(0);
 }
-const ENTRYPOINT = fileURLToPath(import.meta.url);
-const isEntrypoint = process.argv[1] ? resolve(process.argv[1]) === ENTRYPOINT : false;
+var ENTRYPOINT = fileURLToPath(import.meta.url);
+var isEntrypoint = process.argv[1] ? resolve(process.argv[1]) === ENTRYPOINT : false;
 if (isEntrypoint) {
   main();
 }

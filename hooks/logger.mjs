@@ -1,12 +1,13 @@
-import { randomBytes } from "node:crypto";
-const LEVELS = ["off", "summary", "debug", "trace"];
-const LEVEL_INDEX = {
+// hooks/src/logger.mts
+import { randomBytes } from "crypto";
+var LEVELS = ["off", "summary", "debug", "trace"];
+var LEVEL_INDEX = {
   off: 0,
   summary: 1,
   debug: 2,
   trace: 3
 };
-const VERCEL_PLUGIN_SHARED_LOGGER_CONTEXT_KEY = "__vercelPluginSharedLoggerContext__";
+var VERCEL_PLUGIN_SHARED_LOGGER_CONTEXT_KEY = "__vercelPluginSharedLoggerContext__";
 function readErrorField(error, field) {
   return field in error ? error[field] : void 0;
 }

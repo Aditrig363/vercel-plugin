@@ -1,10 +1,18 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+// hooks/src/session-start-seen-skills.mts
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import { fileURLToPath } from "url";
 import {
   formatOutput
 } from "./compat.mjs";
+import {
+  dedupFilePath,
+  removeSessionClaimDir
+} from "./hook-env.mjs";
+import { unlinkSync } from "fs";
+var CONTEXT_CLEARING_EVENTS = /* @__PURE__ */ new Set(["clear", "compact"]);
 function parseSessionStartSeenSkillsInput(raw) {
   try {
     if (!raw.trim()) return null;
@@ -26,6 +34,13 @@ function formatSessionStartSeenSkillsCursorOutput() {
     }
   }));
 }
+function resetDedupStateForSession(sessionId) {
+  removeSessionClaimDir(sessionId, "seen-skills");
+  try {
+    unlinkSync(dedupFilePath(sessionId, "seen-skills"));
+  } catch {
+  }
+}
 function main() {
   const input = parseSessionStartSeenSkillsInput(readFileSync(0, "utf8"));
   const platform = detectSessionStartSeenSkillsPlatform(input);
@@ -33,14 +48,20 @@ function main() {
     process.stdout.write(formatSessionStartSeenSkillsCursorOutput());
     return;
   }
+  const hookEvent = input?.hook_event_name ?? "";
+  const sessionId = input?.session_id ?? "";
+  if (CONTEXT_CLEARING_EVENTS.has(hookEvent) && sessionId) {
+    resetDedupStateForSession(sessionId);
+  }
 }
-const SESSION_START_SEEN_SKILLS_ENTRYPOINT = fileURLToPath(import.meta.url);
-const isSessionStartSeenSkillsEntrypoint = process.argv[1] ? resolve(process.argv[1]) === SESSION_START_SEEN_SKILLS_ENTRYPOINT : false;
+var SESSION_START_SEEN_SKILLS_ENTRYPOINT = fileURLToPath(import.meta.url);
+var isSessionStartSeenSkillsEntrypoint = process.argv[1] ? resolve(process.argv[1]) === SESSION_START_SEEN_SKILLS_ENTRYPOINT : false;
 if (isSessionStartSeenSkillsEntrypoint) {
   main();
 }
 export {
   detectSessionStartSeenSkillsPlatform,
   formatSessionStartSeenSkillsCursorOutput,
-  parseSessionStartSeenSkillsInput
+  parseSessionStartSeenSkillsInput,
+  resetDedupStateForSession
 };

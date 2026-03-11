@@ -154,7 +154,7 @@
       }
     },
     {
-      "name": "Write middleware.ts \u2014 cap 3 drops edge-runtime",
+      "name": "Write middleware.ts \u2014 cap 3 matches exactly",
       "input": {
         "tool_name": "Write",
         "tool_input": {
@@ -170,17 +170,14 @@
           "matchedSkills": [
             "routing-middleware",
             "auth",
-            "investigation-mode",
-            "edge-runtime"
+            "investigation-mode"
           ],
           "injectedSkills": [
             "investigation-mode",
             "auth",
             "routing-middleware"
           ],
-          "droppedByCap": [
-            "edge-runtime"
-          ],
+          "droppedByCap": [],
           "droppedByBudget": []
         }
       }

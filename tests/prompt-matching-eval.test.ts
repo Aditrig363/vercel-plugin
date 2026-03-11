@@ -234,7 +234,7 @@ describe("prompt matching eval harness", () => {
     const results: Array<{ entry: CorpusEntry; selected: string[] }> = [];
 
     for (const entry of corpus.corpus) {
-      const { selected } = evaluate(entry);
+      const { selected } = evaluate(entry, true);
       results.push({ entry, selected });
     }
 

@@ -91,21 +91,40 @@ validate:
     pattern: part\.text\b
     message: 'You are rendering AI message text as raw strings — use <MessageResponse> from @/components/ai-elements/message to render markdown, code blocks, and rich formatting. Install with: npx shadcn@latest add https://elements.ai-sdk.dev/api/registry/message.json'
     severity: warn
+    upgradeToSkill: ai-elements
+    upgradeWhy: 'Guides migration from raw text rendering to AI Elements MessageResponse for streaming-aware markdown display.'
     skipIfFileContains: "ai-elements/message"
   -
     pattern: react-markdown
     message: 'Use <MessageResponse> from @/components/ai-elements/message instead of react-markdown — it handles streaming, code highlighting, and AI SDK message parts out of the box'
     severity: warn
+    upgradeToSkill: ai-elements
+    upgradeWhy: 'Guides migration from react-markdown to AI Elements MessageResponse with streaming, code highlighting, and math support.'
     skipIfFileContains: "ai-elements/message"
   -
     pattern: dangerouslySetInnerHTML
     message: 'Do not render AI responses with dangerouslySetInnerHTML — use <MessageResponse> from @/components/ai-elements/message for safe, styled markdown rendering'
     severity: error
+    upgradeToSkill: ai-elements
+    upgradeWhy: 'Guides migration from dangerouslySetInnerHTML to AI Elements MessageResponse for safe, streaming-aware AI content rendering.'
     skipIfFileContains: "ai-elements/message"
   -
     pattern: '@ts-nocheck'
     message: 'Do not add @ts-nocheck — this means you installed an AI Elements component with a type conflict. Delete unused components, or reinstall the broken one: npx shadcn@latest add https://elements.ai-sdk.dev/api/registry/<component>.json --overwrite'
     severity: error
+chainTo:
+  -
+    pattern: '\{message\.content\}'
+    targetSkill: ai-sdk
+    message: 'Raw message.content rendering detected — loading AI SDK guidance for UIMessage parts migration (message.parts).'
+  -
+    pattern: 'dangerouslySetInnerHTML'
+    targetSkill: ai-sdk
+    message: 'Unsafe HTML rendering of AI content — loading AI SDK guidance for proper streaming and MessageResponse rendering.'
+  -
+    pattern: 'from\s+[''\"](react-markdown|marked|markdown-it|showdown|commonmark)[''"]|require\s*\(\s*[''\"](react-markdown|marked|markdown-it|showdown|commonmark)[''"]'
+    targetSkill: ai-elements
+    message: 'Generic markdown library detected for AI content — use <MessageResponse> from AI Elements instead. It handles streaming, code highlighting, math, mermaid, and CJK out of the box.'
 retrieval:
   aliases:
     - ai components
@@ -510,6 +529,7 @@ Known issues and how to fix them:
 2. **Some components have peer dependencies** — the CLI installs them automatically, but check for missing UI primitives if you see import errors
 3. **Components are installed as source** — you can and should customize them for your app's design
 4. **Use `toUIMessageStreamResponse()`** on the server, not `toDataStreamResponse()` — AI Elements expects the UI message stream format
+5. **shadcn must use Radix base** — AI Elements uses Radix-specific APIs (`asChild`, `openDelay` on Root). If shadcn was initialized with `--base base-ui`, reinstall components after switching: `npx shadcn@latest init -d --base radix -f`
 
 ## Official Documentation
 

@@ -112,6 +112,80 @@ describe("session-start-seen-skills hook", () => {
       },
     });
   });
+
+  test("test_clear_event_wipes_claim_dir_and_session_file", async () => {
+    const sessionId = `test-clear-${Date.now()}`;
+
+    try {
+      // Pre-seed dedup state: claim dir + session file
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "nextjs")).toBe(true);
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "ai-sdk")).toBe(true);
+      writeFileSync(dedupFilePath(sessionId, "seen-skills"), "nextjs,ai-sdk", "utf-8");
+
+      expect(existsSync(dedupClaimDirPath(sessionId, "seen-skills"))).toBe(true);
+      expect(existsSync(dedupFilePath(sessionId, "seen-skills"))).toBe(true);
+
+      // Fire the hook with a "clear" event
+      const result = await runSessionStart(
+        { CLAUDE_ENV_FILE: undefined },
+        JSON.stringify({ session_id: sessionId, hook_event_name: "clear" }),
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe("");
+
+      // Both claim dir and session file should be gone
+      expect(existsSync(dedupClaimDirPath(sessionId, "seen-skills"))).toBe(false);
+      expect(existsSync(dedupFilePath(sessionId, "seen-skills"))).toBe(false);
+    } finally {
+      rmSync(dedupClaimDirPath(sessionId, "seen-skills"), { recursive: true, force: true });
+      try { rmSync(dedupFilePath(sessionId, "seen-skills")); } catch {}
+    }
+  });
+
+  test("test_compact_event_wipes_claim_dir_and_session_file", async () => {
+    const sessionId = `test-compact-${Date.now()}`;
+
+    try {
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "swr")).toBe(true);
+      writeFileSync(dedupFilePath(sessionId, "seen-skills"), "swr", "utf-8");
+
+      const result = await runSessionStart(
+        { CLAUDE_ENV_FILE: undefined },
+        JSON.stringify({ session_id: sessionId, hook_event_name: "compact" }),
+      );
+
+      expect(result.code).toBe(0);
+      expect(existsSync(dedupClaimDirPath(sessionId, "seen-skills"))).toBe(false);
+      expect(existsSync(dedupFilePath(sessionId, "seen-skills"))).toBe(false);
+    } finally {
+      rmSync(dedupClaimDirPath(sessionId, "seen-skills"), { recursive: true, force: true });
+      try { rmSync(dedupFilePath(sessionId, "seen-skills")); } catch {}
+    }
+  });
+
+  test("test_startup_event_does_not_wipe_claim_dir", async () => {
+    const sessionId = `test-startup-${Date.now()}`;
+
+    try {
+      expect(tryClaimSessionKey(sessionId, "seen-skills", "nextjs")).toBe(true);
+      writeFileSync(dedupFilePath(sessionId, "seen-skills"), "nextjs", "utf-8");
+
+      const result = await runSessionStart(
+        { CLAUDE_ENV_FILE: undefined },
+        JSON.stringify({ session_id: sessionId, hook_event_name: "startup" }),
+      );
+
+      expect(result.code).toBe(0);
+
+      // Claim dir and session file should still exist
+      expect(existsSync(dedupClaimDirPath(sessionId, "seen-skills"))).toBe(true);
+      expect(readFileSync(dedupFilePath(sessionId, "seen-skills"), "utf-8")).toBe("nextjs");
+    } finally {
+      rmSync(dedupClaimDirPath(sessionId, "seen-skills"), { recursive: true, force: true });
+      try { rmSync(dedupFilePath(sessionId, "seen-skills")); } catch {}
+    }
+  });
 });
 
 describe("hook-env session temp path guards", () => {

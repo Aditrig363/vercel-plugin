@@ -28,6 +28,19 @@ retrieval:
     - integration
     - vercel integration
     - unified billing
+chainTo:
+  -
+    pattern: 'NEON_|POSTGRES_|DATABASE_URL|@neondatabase|@vercel/postgres'
+    targetSkill: vercel-storage
+    message: 'Database integration detected — loading Storage guidance for Neon Postgres setup, connection pooling, and serverless patterns.'
+  -
+    pattern: 'CLERK_|@clerk/|clerkMiddleware'
+    targetSkill: auth
+    message: 'Clerk integration detected — loading Auth guidance for middleware setup, route protection, and organization flows.'
+  -
+    pattern: 'SANITY_|CONTENTFUL_|STORYBLOK_|DATOCMS_|sanity|contentful|storyblok'
+    targetSkill: cms
+    message: 'CMS integration detected — loading CMS guidance for content modeling, preview mode, and revalidation webhooks.'
 
 ---
 

@@ -1,5 +1,6 @@
+// hooks/src/vercel-config.mts
 import { safeReadFile } from "./hook-env.mjs";
-const KEY_SKILL_MAP = {
+var KEY_SKILL_MAP = {
   // Routing
   redirects: ["routing-middleware"],
   rewrites: ["routing-middleware"],
@@ -20,7 +21,7 @@ const KEY_SKILL_MAP = {
   devCommand: ["deployments-cicd"],
   ignoreCommand: ["deployments-cicd"]
 };
-const VERCEL_JSON_SKILLS = /* @__PURE__ */ new Set([
+var VERCEL_JSON_SKILLS = /* @__PURE__ */ new Set([
   "cron-jobs",
   "deployments-cicd",
   "routing-middleware",

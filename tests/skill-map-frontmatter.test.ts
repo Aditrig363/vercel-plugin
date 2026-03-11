@@ -1265,3 +1265,53 @@ describe("promptSignals malformed warnings via buildSkillMap", () => {
     }
   });
 });
+
+describe("parseSkillFrontmatter — duplicate key detection", () => {
+  test("throws on duplicate top-level key in frontmatter", () => {
+    const yaml = [
+      "name: my-skill",
+      "description: first",
+      "metadata:",
+      "  priority: 5",
+      "name: duplicate-name",
+    ].join("\n");
+    expect(() => parseSkillFrontmatter(yaml)).toThrow(/duplicate key "name"/);
+  });
+
+  test("throws on duplicate nested key inside metadata", () => {
+    const yaml = [
+      "name: my-skill",
+      "metadata:",
+      "  priority: 5",
+      "  priority: 8",
+    ].join("\n");
+    expect(() => parseSkillFrontmatter(yaml)).toThrow(/duplicate key "priority"/);
+  });
+
+  test("throws on duplicate chainTo key (the original bug)", () => {
+    const yaml = [
+      "name: my-skill",
+      "chainTo:",
+      "  -",
+      "    pattern: foo",
+      "    targetSkill: bar",
+      "chainTo:",
+      "  -",
+      "    pattern: baz",
+      "    targetSkill: qux",
+    ].join("\n");
+    expect(() => parseSkillFrontmatter(yaml)).toThrow(/duplicate key "chainTo"/);
+  });
+
+  test("non-duplicate keys with similar names parse fine", () => {
+    const yaml = [
+      "name: my-skill",
+      "description: test",
+      "summary: brief",
+    ].join("\n");
+    const result = parseSkillFrontmatter(yaml);
+    expect(result.name).toBe("my-skill");
+    expect(result.description).toBe("test");
+    expect(result.summary).toBe("brief");
+  });
+});
