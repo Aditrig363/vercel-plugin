@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { detectPlatform } from "./compat.mjs";
 import { pluginRoot as resolvePluginRoot, readSessionFile, safeReadFile, writeSessionFile } from "./hook-env.mjs";
 import { buildSkillMap } from "./skill-map-frontmatter.mjs";
 import {
@@ -10,11 +11,67 @@ import {
   matchPathWithReason,
   matchImportWithReason
 } from "./patterns.mjs";
-import { createLogger } from "./logger.mjs";
+import { createLogger, logCaughtError } from "./logger.mjs";
 const PLUGIN_ROOT = resolvePluginRoot();
 const SUPPORTED_TOOLS = ["Write", "Edit"];
+const VALIDATED_FILES_ENV_KEY = "VERCEL_PLUGIN_VALIDATED_FILES";
+function resolveSessionId(input) {
+  const sessionId = input.session_id ?? input.conversation_id;
+  return typeof sessionId === "string" && sessionId.trim() !== "" ? sessionId : null;
+}
+function resolveHookCwd(input, env) {
+  const workspaceRoot = Array.isArray(input.workspace_roots) ? input.workspace_roots[0] : void 0;
+  const candidate = input.cwd ?? workspaceRoot ?? env.CURSOR_PROJECT_DIR ?? env.CLAUDE_PROJECT_ROOT ?? process.cwd();
+  return typeof candidate === "string" && candidate.trim() !== "" ? candidate : process.cwd();
+}
+function formatPlatformOutput(platform, additionalContext, env) {
+  if (!additionalContext) {
+    return "{}";
+  }
+  if (platform === "cursor") {
+    const output2 = {
+      additional_context: additionalContext
+    };
+    if (env && Object.keys(env).length > 0) {
+      output2.env = env;
+    }
+    return JSON.stringify(output2);
+  }
+  const output = {
+    hookSpecificOutput: {
+      hookEventName: "PostToolUse",
+      additionalContext
+    }
+  };
+  return JSON.stringify(output);
+}
+function escapeShellEnvValue(value) {
+  return value.replace(/(["\\$`])/g, "\\$1");
+}
+function persistValidatedFilesEnv(value, logger) {
+  const l = logger || log;
+  const envFile = process.env.CLAUDE_ENV_FILE;
+  if (typeof envFile !== "string" || envFile.trim() === "") {
+    return;
+  }
+  try {
+    appendFileSync(
+      envFile,
+      `export ${VALIDATED_FILES_ENV_KEY}="${escapeShellEnvValue(value)}"
+`,
+      "utf-8"
+    );
+  } catch (error) {
+    logCaughtError(l, "posttooluse-validate-env-write-failed", error, {
+      attempted: "append_validated_files_export",
+      envFile,
+      envKey: VALIDATED_FILES_ENV_KEY,
+      state: "validation_completed"
+    });
+  }
+}
 const log = createLogger();
-function parseInput(raw, logger) {
+function parseInput(raw, logger, env = process.env) {
   const l = logger || log;
   const trimmed = (raw || "").trim();
   if (!trimmed) {
@@ -39,11 +96,17 @@ function parseInput(raw, logger) {
     l.debug("posttooluse-validate-skip", { reason: "no_file_path", toolName });
     return null;
   }
-  const sessionId = input.session_id || null;
-  const cwdCandidate = input.cwd ?? input.working_directory;
-  const cwd = typeof cwdCandidate === "string" && cwdCandidate.trim() !== "" ? cwdCandidate : null;
-  l.debug("posttooluse-validate-input", { toolName, filePath, sessionId });
-  return { toolName, filePath, sessionId, cwd };
+  const sessionId = resolveSessionId(input);
+  const cwd = resolveHookCwd(input, env);
+  const platform = detectPlatform(input);
+  l.debug("posttooluse-validate-input", {
+    toolName,
+    filePath,
+    sessionId,
+    cwd,
+    platform
+  });
+  return { toolName, filePath, sessionId, cwd, platform };
 }
 function loadValidateRules(pluginRoot, logger) {
   const l = logger || log;
@@ -181,17 +244,19 @@ function isAlreadyValidated(filePath, hash, sessionId) {
   const persisted = parseValidatedFiles(readSessionFile(sessionId, "validated-files"));
   return persisted.has(entry);
 }
-function markValidated(filePath, hash, sessionId) {
+function markValidated(filePath, hash, sessionId, logger) {
   const entry = `${filePath}:${hash}`;
   const persistedState = sessionId ? readSessionFile(sessionId, "validated-files") : "";
-  const current = process.env.VERCEL_PLUGIN_VALIDATED_FILES || persistedState;
+  const current = process.env[VALIDATED_FILES_ENV_KEY] || persistedState;
   const next = appendValidatedFile(current, entry);
-  process.env.VERCEL_PLUGIN_VALIDATED_FILES = next;
+  process.env[VALIDATED_FILES_ENV_KEY] = next;
   if (sessionId) {
     writeSessionFile(sessionId, "validated-files", next);
   }
+  persistValidatedFilesEnv(next, logger);
+  return next;
 }
-function formatOutput(violations, matchedSkills, filePath, logger) {
+function formatOutput(violations, matchedSkills, filePath, logger, platform = "claude-code", env) {
   const l = logger || log;
   if (violations.length === 0) {
     l.debug("posttooluse-validate-no-output", { reason: "no_actionable_violations" });
@@ -258,12 +323,6 @@ function formatOutput(violations, matchedSkills, filePath, logger) {
     warnCount: warns.length
   };
   const metaComment = `<!-- postValidation: ${JSON.stringify(metadata)} -->`;
-  const output = {
-    hookSpecificOutput: {
-      hookEventName: "PostToolUse",
-      additionalContext: context + "\n" + metaComment
-    }
-  };
   l.summary("posttooluse-validate-output", {
     filePath,
     matchedSkills,
@@ -271,7 +330,7 @@ function formatOutput(violations, matchedSkills, filePath, logger) {
     recommendedCount: recommended.length,
     warnCount: warns.length
   });
-  return JSON.stringify(output);
+  return formatPlatformOutput(platform, context + "\n" + metaComment, env);
 }
 function run() {
   const timing = {};
@@ -285,7 +344,7 @@ function run() {
   const parsed = parseInput(raw, log);
   if (!parsed) return "{}";
   if (log.active) timing.parse = Math.round(log.now() - tStart);
-  const { toolName, filePath, sessionId, cwd } = parsed;
+  const { toolName, filePath, sessionId, cwd, platform } = parsed;
   const resolvedPath = cwd ? resolve(cwd, filePath) : filePath;
   const fileContent = safeReadFile(resolvedPath);
   if (!fileContent) {
@@ -307,14 +366,15 @@ function run() {
   if (log.active) timing.match = Math.round(log.now() - tMatch);
   if (matchedSkills.length === 0) {
     log.debug("posttooluse-validate-skip", { reason: "no_skill_match", filePath });
-    markValidated(filePath, hash, sessionId);
+    markValidated(filePath, hash, sessionId, log);
     return "{}";
   }
   const tValidate = log.active ? log.now() : 0;
   const violations = runValidation(fileContent, matchedSkills, rulesMap, log);
   if (log.active) timing.validate = Math.round(log.now() - tValidate);
-  markValidated(filePath, hash, sessionId);
-  const result = formatOutput(violations, matchedSkills, filePath, log);
+  const validatedFiles = markValidated(filePath, hash, sessionId, log);
+  const cursorEnv = platform === "cursor" && violations.length > 0 ? { [VALIDATED_FILES_ENV_KEY]: validatedFiles } : void 0;
+  const result = formatOutput(violations, matchedSkills, filePath, log, platform, cursorEnv);
   log.complete("posttooluse-validate-done", {
     matchedCount: matchedSkills.length,
     injectedCount: violations.filter((v) => v.severity === "error").length

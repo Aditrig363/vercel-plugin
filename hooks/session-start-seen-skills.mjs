@@ -1,8 +1,56 @@
 #!/usr/bin/env node
-import { appendFileSync } from "node:fs";
-import { requireEnvFile } from "./hook-env.mjs";
-const envFile = requireEnvFile();
-try {
-  appendFileSync(envFile, 'export VERCEL_PLUGIN_SEEN_SKILLS=""\n');
-} catch {
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  formatOutput,
+  getEnvFilePath,
+  setSessionEnv
+} from "./compat.mjs";
+function parseSessionStartSeenSkillsInput(raw) {
+  try {
+    if (!raw.trim()) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
+function detectSessionStartSeenSkillsPlatform(input, env = process.env) {
+  if (input && ("conversation_id" in input || "cursor_version" in input)) {
+    return "cursor";
+  }
+  if (env.CLAUDE_ENV_FILE) {
+    return "claude-code";
+  }
+  return "claude-code";
+}
+function formatSessionStartSeenSkillsCursorOutput() {
+  return JSON.stringify(formatOutput("cursor", {
+    env: {
+      VERCEL_PLUGIN_SEEN_SKILLS: ""
+    }
+  }));
+}
+function main() {
+  const input = parseSessionStartSeenSkillsInput(readFileSync(0, "utf8"));
+  const platform = detectSessionStartSeenSkillsPlatform(input);
+  const envFile = getEnvFilePath();
+  if (platform === "claude-code" && !envFile) {
+    process.exit(0);
+  }
+  if (platform === "cursor") {
+    process.stdout.write(formatSessionStartSeenSkillsCursorOutput());
+    return;
+  }
+  setSessionEnv(platform, "VERCEL_PLUGIN_SEEN_SKILLS", "");
+}
+const SESSION_START_SEEN_SKILLS_ENTRYPOINT = fileURLToPath(import.meta.url);
+const isSessionStartSeenSkillsEntrypoint = process.argv[1] ? resolve(process.argv[1]) === SESSION_START_SEEN_SKILLS_ENTRYPOINT : false;
+if (isSessionStartSeenSkillsEntrypoint) {
+  main();
+}
+export {
+  detectSessionStartSeenSkillsPlatform,
+  formatSessionStartSeenSkillsCursorOutput,
+  parseSessionStartSeenSkillsInput
+};

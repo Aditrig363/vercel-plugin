@@ -4,12 +4,19 @@ import {
   constants as fsConstants,
   existsSync,
   readdirSync,
+  readFileSync,
   writeFileSync
 } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { profileCachePath, requireEnvFile, safeReadJson } from "./hook-env.mjs";
+import {
+  formatOutput,
+  getEnvFilePath,
+  normalizeInput,
+  setSessionEnv
+} from "./compat.mjs";
+import { profileCachePath, safeReadJson } from "./hook-env.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
 const FILE_MARKERS = [
   { file: "next.config.js", skills: ["nextjs", "turbopack"] },
@@ -312,45 +319,96 @@ const AGENT_BROWSER_BINARY = "agent-browser";
 function checkAgentBrowser() {
   return resolveBinaryFromPath(AGENT_BROWSER_BINARY) !== null;
 }
-function parseSessionStartInput() {
+function parseSessionStartInput(raw) {
   try {
-    const raw = require("node:fs").readFileSync(0, "utf8");
     if (!raw.trim()) return null;
     return JSON.parse(raw);
   } catch {
     return null;
   }
 }
-function main() {
-  const envFile = requireEnvFile();
-  const hookInput = parseSessionStartInput();
-  const sessionId = hookInput?.session_id ?? null;
-  const projectRoot = process.env.CLAUDE_PROJECT_ROOT || process.cwd();
-  const greenfield = checkGreenfield(projectRoot);
+function detectSessionStartPlatform(input, env = process.env) {
+  if (typeof env.CLAUDE_ENV_FILE === "string" && env.CLAUDE_ENV_FILE.trim() !== "") {
+    return "claude-code";
+  }
+  if (input && ("conversation_id" in input || "cursor_version" in input)) {
+    return "cursor";
+  }
+  return "claude-code";
+}
+function normalizeSessionStartSessionId(input) {
+  if (!input) return null;
+  const sessionId = normalizeInput(input).sessionId;
+  return sessionId || null;
+}
+function resolveSessionStartProjectRoot(env = process.env) {
+  return env.CLAUDE_PROJECT_ROOT ?? env.CURSOR_PROJECT_DIR ?? process.cwd();
+}
+function buildSessionStartProfilerEnvVars(args) {
+  const envVars = {
+    VERCEL_PLUGIN_AGENT_BROWSER_AVAILABLE: args.agentBrowserAvailable ? "1" : "0"
+  };
+  if (args.greenfield) {
+    envVars.VERCEL_PLUGIN_GREENFIELD = "true";
+  }
+  if (args.likelySkills.length > 0) {
+    envVars.VERCEL_PLUGIN_LIKELY_SKILLS = args.likelySkills.join(",");
+  }
+  if (args.setupSignals.bootstrapHints.length > 0) {
+    envVars.VERCEL_PLUGIN_BOOTSTRAP_HINTS = args.setupSignals.bootstrapHints.join(",");
+  }
+  if (args.setupSignals.resourceHints.length > 0) {
+    envVars.VERCEL_PLUGIN_RESOURCE_HINTS = args.setupSignals.resourceHints.join(",");
+  }
+  if (args.setupSignals.setupMode) {
+    envVars.VERCEL_PLUGIN_SETUP_MODE = "1";
+  }
+  return envVars;
+}
+function buildSessionStartProfilerUserMessages(greenfield, cliStatus) {
+  const messages = [];
   if (greenfield) {
-    process.stdout.write(
-      "This is a greenfield project. Skip exploration \u2014 there is no existing code to discover. Start executing immediately.\n"
+    messages.push(
+      "This is a greenfield project. Skip exploration \u2014 there is no existing code to discover. Start executing immediately."
     );
   }
-  const cliStatus = checkVercelCli();
   if (!cliStatus.installed) {
-    process.stdout.write(
+    messages.push(
       [
         "IMPORTANT: The Vercel CLI is not installed.",
-        "Strongly recommend the user install it with `npm i -g vercel` to unlock agentic features like `vercel env pull`, `vercel deploy`, and `vercel logs`.",
-        ""
+        "Strongly recommend the user install it with `npm i -g vercel` to unlock agentic features like `vercel env pull`, `vercel deploy`, and `vercel logs`."
       ].join("\n")
     );
   } else if (cliStatus.needsUpdate) {
-    process.stdout.write(
+    messages.push(
       [
         `IMPORTANT: The Vercel CLI is outdated (${cliStatus.currentVersion} \u2192 ${cliStatus.latestVersion}).`,
         "Strongly recommend the user upgrade with `npm i -g vercel@latest` or `pnpm add -g vercel@latest` for best compatibility.",
-        "The latest version includes significant agentic features and improvements that will greatly enhance their development experience.",
-        ""
+        "The latest version includes significant agentic features and improvements that will greatly enhance their development experience."
       ].join("\n")
     );
   }
+  return messages;
+}
+function formatSessionStartProfilerCursorOutput(envVars, userMessages) {
+  const additionalContext = userMessages.join("\n\n");
+  return JSON.stringify(formatOutput("cursor", {
+    additionalContext: additionalContext || void 0,
+    env: envVars
+  }));
+}
+function main() {
+  const hookInput = parseSessionStartInput(readFileSync(0, "utf8"));
+  const platform = detectSessionStartPlatform(hookInput);
+  const sessionId = normalizeSessionStartSessionId(hookInput);
+  const projectRoot = resolveSessionStartProjectRoot();
+  const envFile = platform === "claude-code" ? getEnvFilePath() : null;
+  if (platform === "claude-code" && !envFile) {
+    process.exit(0);
+  }
+  const greenfield = checkGreenfield(projectRoot);
+  const cliStatus = checkVercelCli();
+  const userMessages = buildSessionStartProfilerUserMessages(greenfield, cliStatus);
   const likelySkills = greenfield ? GREENFIELD_DEFAULT_SKILLS : profileProject(projectRoot);
   if (!greenfield && !likelySkills.includes("observability")) {
     likelySkills.push("observability");
@@ -358,32 +416,32 @@ function main() {
   }
   const setupSignals = greenfield ? GREENFIELD_SETUP_SIGNALS : profileBootstrapSignals(projectRoot);
   const agentBrowserAvailable = checkAgentBrowser();
+  const envVars = buildSessionStartProfilerEnvVars({
+    agentBrowserAvailable,
+    greenfield: greenfield !== null,
+    likelySkills,
+    setupSignals
+  });
+  const cursorOutput = platform === "cursor" ? formatSessionStartProfilerCursorOutput(envVars, userMessages) : null;
   try {
-    appendEnvExport(envFile, "VERCEL_PLUGIN_AGENT_BROWSER_AVAILABLE", agentBrowserAvailable ? "1" : "0");
-    if (greenfield) {
-      appendEnvExport(envFile, "VERCEL_PLUGIN_GREENFIELD", "true");
-    }
-    if (likelySkills.length > 0) {
-      appendEnvExport(envFile, "VERCEL_PLUGIN_LIKELY_SKILLS", likelySkills.join(","));
-    }
-    if (setupSignals.bootstrapHints.length > 0) {
-      appendEnvExport(envFile, "VERCEL_PLUGIN_BOOTSTRAP_HINTS", setupSignals.bootstrapHints.join(","));
-    }
-    if (setupSignals.resourceHints.length > 0) {
-      appendEnvExport(envFile, "VERCEL_PLUGIN_RESOURCE_HINTS", setupSignals.resourceHints.join(","));
-    }
-    if (setupSignals.setupMode) {
-      appendEnvExport(envFile, "VERCEL_PLUGIN_SETUP_MODE", "1");
+    if (platform === "claude-code") {
+      for (const [key, value] of Object.entries(envVars)) {
+        setSessionEnv(platform, key, value);
+      }
     }
   } catch (error) {
     logCaughtError(log, "session-start-profiler:append-env-export-failed", error, {
-      envFile,
+      envFile: envFile ?? null,
+      platform,
       projectRoot,
-      likelySkillsCount: likelySkills.length,
-      bootstrapHintCount: setupSignals.bootstrapHints.length,
-      resourceHintCount: setupSignals.resourceHints.length,
-      setupMode: setupSignals.setupMode
+      envVarCount: Object.keys(envVars).length
     });
+  }
+  const additionalContext = userMessages.join("\n\n");
+  if (platform === "claude-code" && additionalContext) {
+    process.stdout.write(`${additionalContext}
+
+`);
   }
   if (sessionId) {
     try {
@@ -405,6 +463,9 @@ function main() {
       });
     }
   }
+  if (cursorOutput) {
+    process.stdout.write(cursorOutput);
+  }
   process.exit(0);
 }
 const SESSION_START_PROFILER_ENTRYPOINT = fileURLToPath(import.meta.url);
@@ -413,10 +474,17 @@ if (isSessionStartProfilerEntrypoint) {
   main();
 }
 export {
+  buildSessionStartProfilerEnvVars,
+  buildSessionStartProfilerUserMessages,
   checkAgentBrowser,
   checkGreenfield,
+  detectSessionStartPlatform,
   escapeShellEnvValue,
   formatEnvExport,
+  formatSessionStartProfilerCursorOutput,
+  normalizeSessionStartSessionId,
+  parseSessionStartInput,
   profileBootstrapSignals,
-  profileProject
+  profileProject,
+  resolveSessionStartProjectRoot
 };

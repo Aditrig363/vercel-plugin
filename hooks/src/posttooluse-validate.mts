@@ -20,9 +20,10 @@
 
 import type { SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { detectPlatform, type HookPlatform } from "./compat.mjs";
 import { pluginRoot as resolvePluginRoot, readSessionFile, safeReadFile, writeSessionFile } from "./hook-env.mjs";
 import { buildSkillMap } from "./skill-map-frontmatter.mjs";
 import type { SkillConfig, ValidationRule } from "./skill-map-frontmatter.mjs";
@@ -33,11 +34,12 @@ import {
   importPatternToRegex,
 } from "./patterns.mjs";
 import type { CompiledSkillEntry, CompiledPattern } from "./patterns.mjs";
-import { createLogger } from "./logger.mjs";
+import { createLogger, logCaughtError } from "./logger.mjs";
 import type { Logger } from "./logger.mjs";
 
 const PLUGIN_ROOT = resolvePluginRoot();
 const SUPPORTED_TOOLS = ["Write", "Edit"];
+const VALIDATED_FILES_ENV_KEY = "VERCEL_PLUGIN_VALIDATED_FILES";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,7 +49,53 @@ export interface ParsedInput {
   toolName: string;
   filePath: string;
   sessionId: string | null;
-  cwd: string | null;
+  cwd: string;
+  platform: HookPlatform;
+}
+
+function resolveSessionId(input: Record<string, unknown>): string | null {
+  const sessionId = input.session_id ?? input.conversation_id;
+  return typeof sessionId === "string" && sessionId.trim() !== "" ? sessionId : null;
+}
+
+function resolveHookCwd(input: Record<string, unknown>, env: NodeJS.ProcessEnv): string {
+  const workspaceRoot = Array.isArray(input.workspace_roots) ? input.workspace_roots[0] : undefined;
+  const candidate = input.cwd
+    ?? workspaceRoot
+    ?? env.CURSOR_PROJECT_DIR
+    ?? env.CLAUDE_PROJECT_ROOT
+    ?? process.cwd();
+
+  return typeof candidate === "string" && candidate.trim() !== "" ? candidate : process.cwd();
+}
+
+function formatPlatformOutput(
+  platform: HookPlatform,
+  additionalContext?: string,
+  env?: Record<string, string>,
+): string {
+  if (!additionalContext) {
+    return "{}";
+  }
+
+  if (platform === "cursor") {
+    const output: Record<string, unknown> = {
+      additional_context: additionalContext,
+    };
+    if (env && Object.keys(env).length > 0) {
+      output.env = env;
+    }
+    return JSON.stringify(output);
+  }
+
+  const output: SyncHookJSONOutput = {
+    hookSpecificOutput: {
+      hookEventName: "PostToolUse" as const,
+      additionalContext,
+    },
+  };
+
+  return JSON.stringify(output);
 }
 
 export interface SkillValidateRules {
@@ -72,6 +120,33 @@ export interface ValidateResult {
   skippedDedup: boolean;
 }
 
+function escapeShellEnvValue(value: string): string {
+  return value.replace(/(["\\$`])/g, "\\$1");
+}
+
+function persistValidatedFilesEnv(value: string, logger?: Logger): void {
+  const l = logger || log;
+  const envFile = process.env.CLAUDE_ENV_FILE;
+  if (typeof envFile !== "string" || envFile.trim() === "") {
+    return;
+  }
+
+  try {
+    appendFileSync(
+      envFile,
+      `export ${VALIDATED_FILES_ENV_KEY}="${escapeShellEnvValue(value)}"\n`,
+      "utf-8",
+    );
+  } catch (error) {
+    logCaughtError(l, "posttooluse-validate-env-write-failed", error, {
+      attempted: "append_validated_files_export",
+      envFile,
+      envKey: VALIDATED_FILES_ENV_KEY,
+      state: "validation_completed",
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Logger
 // ---------------------------------------------------------------------------
@@ -86,7 +161,11 @@ const log: Logger = createLogger();
  * Parse raw stdin JSON into a normalized input descriptor.
  * Returns null if input is irrelevant (wrong tool, no file path, etc.).
  */
-export function parseInput(raw: string, logger?: Logger): ParsedInput | null {
+export function parseInput(
+  raw: string,
+  logger?: Logger,
+  env: NodeJS.ProcessEnv = process.env,
+): ParsedInput | null {
   const l = logger || log;
   const trimmed = (raw || "").trim();
   if (!trimmed) {
@@ -115,12 +194,18 @@ export function parseInput(raw: string, logger?: Logger): ParsedInput | null {
     return null;
   }
 
-  const sessionId = (input.session_id as string) || null;
-  const cwdCandidate = input.cwd ?? input.working_directory;
-  const cwd = typeof cwdCandidate === "string" && cwdCandidate.trim() !== "" ? cwdCandidate : null;
+  const sessionId = resolveSessionId(input);
+  const cwd = resolveHookCwd(input, env);
+  const platform = detectPlatform(input);
 
-  l.debug("posttooluse-validate-input", { toolName, filePath, sessionId: sessionId as string });
-  return { toolName, filePath, sessionId, cwd };
+  l.debug("posttooluse-validate-input", {
+    toolName,
+    filePath,
+    sessionId: sessionId as string,
+    cwd,
+    platform,
+  });
+  return { toolName, filePath, sessionId, cwd, platform };
 }
 
 // ---------------------------------------------------------------------------
@@ -347,15 +432,22 @@ export function isAlreadyValidated(filePath: string, hash: string, sessionId?: s
 /**
  * Mark a file+hash as validated in the env var.
  */
-export function markValidated(filePath: string, hash: string, sessionId?: string | null): void {
+export function markValidated(
+  filePath: string,
+  hash: string,
+  sessionId?: string | null,
+  logger?: Logger,
+): string {
   const entry = `${filePath}:${hash}`;
   const persistedState = sessionId ? readSessionFile(sessionId, "validated-files") : "";
-  const current = process.env.VERCEL_PLUGIN_VALIDATED_FILES || persistedState;
+  const current = process.env[VALIDATED_FILES_ENV_KEY] || persistedState;
   const next = appendValidatedFile(current, entry);
-  process.env.VERCEL_PLUGIN_VALIDATED_FILES = next;
+  process.env[VALIDATED_FILES_ENV_KEY] = next;
   if (sessionId) {
     writeSessionFile(sessionId, "validated-files", next);
   }
+  persistValidatedFilesEnv(next, logger);
+  return next;
 }
 
 // ---------------------------------------------------------------------------
@@ -373,6 +465,8 @@ export function formatOutput(
   matchedSkills: string[],
   filePath: string,
   logger?: Logger,
+  platform: HookPlatform = "claude-code",
+  env?: Record<string, string>,
 ): string {
   const l = logger || log;
 
@@ -467,13 +561,6 @@ export function formatOutput(
   };
   const metaComment = `<!-- postValidation: ${JSON.stringify(metadata)} -->`;
 
-  const output: SyncHookJSONOutput = {
-    hookSpecificOutput: {
-      hookEventName: "PostToolUse" as const,
-      additionalContext: context + "\n" + metaComment,
-    },
-  };
-
   l.summary("posttooluse-validate-output", {
     filePath,
     matchedSkills,
@@ -482,7 +569,7 @@ export function formatOutput(
     warnCount: warns.length,
   });
 
-  return JSON.stringify(output);
+  return formatPlatformOutput(platform, context + "\n" + metaComment, env);
 }
 
 // ---------------------------------------------------------------------------
@@ -504,7 +591,7 @@ export function run(): string {
   if (!parsed) return "{}";
   if (log.active) timing.parse = Math.round(log.now() - tStart);
 
-  const { toolName, filePath, sessionId, cwd } = parsed;
+  const { toolName, filePath, sessionId, cwd, platform } = parsed;
 
   // Read file content from disk
   const resolvedPath = cwd ? resolve(cwd, filePath) : filePath;
@@ -536,7 +623,7 @@ export function run(): string {
 
   if (matchedSkills.length === 0) {
     log.debug("posttooluse-validate-skip", { reason: "no_skill_match", filePath });
-    markValidated(filePath, hash, sessionId);
+    markValidated(filePath, hash, sessionId, log);
     return "{}";
   }
 
@@ -546,10 +633,13 @@ export function run(): string {
   if (log.active) timing.validate = Math.round(log.now() - tValidate);
 
   // Mark as validated regardless of result (content hasn't changed)
-  markValidated(filePath, hash, sessionId);
+  const validatedFiles = markValidated(filePath, hash, sessionId, log);
 
   // Stage 5: formatOutput
-  const result = formatOutput(violations, matchedSkills, filePath, log);
+  const cursorEnv = platform === "cursor" && violations.length > 0
+    ? { [VALIDATED_FILES_ENV_KEY]: validatedFiles }
+    : undefined;
+  const result = formatOutput(violations, matchedSkills, filePath, log, platform, cursorEnv);
 
   log.complete("posttooluse-validate-done", {
     matchedCount: matchedSkills.length,
