@@ -14,7 +14,7 @@
  *   Threshold: score >= minScore (default 6) with at least one phrase hit.
  *
  * Max 2 skills injected per prompt, 8KB total budget.
- * Deduplicates via VERCEL_PLUGIN_SEEN_SKILLS env var.
+ * Deduplicates via session seen-skill state when available.
  */
 
 import type { SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
@@ -33,7 +33,7 @@ import {
 } from "./hook-env.mjs";
 import { loadSkills, injectSkills } from "./pretooluse-skill-inject.mjs";
 import type { LoadedSkills } from "./pretooluse-skill-inject.mjs";
-import { parseSeenSkills, appendSeenSkill, mergeSeenSkillStates, rankEntries, buildDocsBlock } from "./patterns.mjs";
+import { parseSeenSkills, mergeSeenSkillStates, buildDocsBlock } from "./patterns.mjs";
 import type { CompiledSkillEntry } from "./patterns.mjs";
 import { normalizePromptText, compilePromptSignals, matchPromptWithReason, scorePromptWithLexical, classifyTroubleshootingIntent } from "./prompt-patterns.mjs";
 import type { CompiledPromptSignals, TroubleshootingIntentResult } from "./prompt-patterns.mjs";
@@ -159,8 +159,6 @@ function getInjectionBudget(): number {
 export interface PromptSeenSkillState {
   dedupOff: boolean;
   hasFileDedup: boolean;
-  hasEnvDedup: boolean;
-  seenEnv: string;
   seenClaims: string;
   seenFile: string;
   seenState: string;
@@ -169,16 +167,10 @@ export interface PromptSeenSkillState {
 export function resolvePromptSeenSkillState(sessionId: string | null): PromptSeenSkillState {
   const dedupOff = process.env.VERCEL_PLUGIN_HOOK_DEDUP === "off";
   const hasFileDedup = !dedupOff && !!sessionId;
-  const seenEnv = typeof process.env.VERCEL_PLUGIN_SEEN_SKILLS === "string"
-    ? process.env.VERCEL_PLUGIN_SEEN_SKILLS
-    : "";
   const seenClaims = hasFileDedup ? listSessionKeys(sessionId as string, "seen-skills").join(",") : "";
   const seenFile = hasFileDedup ? readSessionFile(sessionId as string, "seen-skills") : "";
-  const seenState = hasFileDedup ? mergeSeenSkillStates(seenEnv, seenFile, seenClaims) : seenEnv;
+  const seenState = hasFileDedup ? mergeSeenSkillStates(seenFile, seenClaims) : getSeenSkillsEnv();
 
-  if (!dedupOff) {
-    process.env.VERCEL_PLUGIN_SEEN_SKILLS = seenState;
-  }
   if (hasFileDedup) {
     writeSessionFile(sessionId as string, "seen-skills", seenState);
   }
@@ -186,8 +178,6 @@ export function resolvePromptSeenSkillState(sessionId: string | null): PromptSee
   return {
     dedupOff,
     hasFileDedup,
-    hasEnvDedup: !dedupOff && typeof process.env.VERCEL_PLUGIN_SEEN_SKILLS === "string",
-    seenEnv,
     seenClaims,
     seenFile,
     seenState,
@@ -198,12 +188,7 @@ export function syncPromptSeenSkillClaims(sessionId: string, loadedSkills: strin
   for (const skill of loadedSkills) {
     tryClaimSessionKey(sessionId, "seen-skills", skill);
   }
-  const synced = syncSessionFileFromClaims(sessionId, "seen-skills");
-  process.env.VERCEL_PLUGIN_SEEN_SKILLS = mergeSeenSkillStates(
-    process.env.VERCEL_PLUGIN_SEEN_SKILLS || "",
-    synced,
-  );
-  return synced;
+  return syncSessionFileFromClaims(sessionId, "seen-skills");
 }
 
 // ---------------------------------------------------------------------------
@@ -429,12 +414,12 @@ export function deduplicateAndInject(
   matches: PromptMatchEntry[],
   skills: LoadedSkills,
   logger?: Logger,
+  platform?: PromptHookPlatform,
 ): PromptInjectResult {
   const l = logger || log;
   const dedupOff = process.env.VERCEL_PLUGIN_HOOK_DEDUP === "off";
-  const seenEnv = getSeenSkillsEnv();
-  const hasEnvDedup = !dedupOff && typeof process.env.VERCEL_PLUGIN_SEEN_SKILLS === "string";
-  const injectedSkills: Set<string> = hasEnvDedup ? parseSeenSkills(seenEnv) : new Set();
+  const seenState = getSeenSkillsEnv();
+  const injectedSkills: Set<string> = dedupOff ? new Set() : parseSeenSkills(seenState);
   const budget = getInjectionBudget();
 
   const allMatched = matches.map((m) => m.skill);
@@ -462,7 +447,7 @@ export function deduplicateAndInject(
   // Reuse injectSkills from pretooluse with our budget/cap
   const result = injectSkills(rankedSkills, {
     pluginRoot: PLUGIN_ROOT,
-    hasEnvDedup,
+    hasEnvDedup: !dedupOff,
     injectedSkills,
     budgetBytes: budget,
     maxSkills: MAX_SKILLS,
@@ -594,19 +579,12 @@ export function run(): string {
   const tAnalyze = log.active ? log.now() : 0;
   const dedupOff = process.env.VERCEL_PLUGIN_HOOK_DEDUP === "off";
   const hasFileDedup = !dedupOff && !!sessionId;
-  const seenEnv = typeof process.env.VERCEL_PLUGIN_SEEN_SKILLS === "string"
-    ? process.env.VERCEL_PLUGIN_SEEN_SKILLS
-    : "";
   const seenClaims = hasFileDedup ? listSessionKeys(sessionId as string, "seen-skills").join(",") : "";
   const seenFile = hasFileDedup ? readSessionFile(sessionId as string, "seen-skills") : "";
-  const seenState = hasFileDedup ? mergeSeenSkillStates(seenEnv, seenFile, seenClaims) : seenEnv;
-  if (!dedupOff) {
-    process.env.VERCEL_PLUGIN_SEEN_SKILLS = seenState;
-  }
+  const seenState = hasFileDedup ? mergeSeenSkillStates(seenFile, seenClaims) : getSeenSkillsEnv();
   if (hasFileDedup) {
     writeSessionFile(sessionId as string, "seen-skills", seenState);
   }
-  const hasEnvDedup = !dedupOff && typeof process.env.VERCEL_PLUGIN_SEEN_SKILLS === "string";
   const budget = getInjectionBudget();
   const lexicalEnabled = process.env.VERCEL_PLUGIN_LEXICAL_PROMPT === "1";
   if (lexicalEnabled) {
@@ -761,23 +739,25 @@ export function run(): string {
 
   // Stage 4: inject selected skills (file I/O for SKILL.md bodies)
   const tInject = log.active ? log.now() : 0;
-  const injectedSkills = hasEnvDedup ? parseSeenSkills(seenState) : new Set<string>();
+  const injectedSkills = dedupOff ? new Set<string>() : parseSeenSkills(seenState);
 
   const injectResult = injectSkills(report.selectedSkills, {
     pluginRoot: PLUGIN_ROOT,
-    hasEnvDedup,
+    hasEnvDedup: !dedupOff,
     sessionId,
     injectedSkills,
     budgetBytes: budget,
     maxSkills: MAX_SKILLS,
     skillMap: skills.skillMap,
     logger: log,
+    platform: platform as "claude-code" | "cursor",
   });
   if (log.active) timing.inject = Math.round(log.now() - tInject);
 
   const { parts, loaded, summaryOnly } = injectResult;
+  let syncedSeenSkills = seenState;
   if (hasFileDedup) {
-    syncPromptSeenSkillClaims(sessionId as string, loaded);
+    syncedSeenSkills = syncPromptSeenSkillClaims(sessionId as string, loaded);
   }
   const droppedByCap = [...injectResult.droppedByCap, ...report.droppedByCap];
   const droppedByBudget = [...injectResult.droppedByBudget, ...report.droppedByBudget];
@@ -827,7 +807,7 @@ export function run(): string {
 
   let outputEnv: Record<string, string> | undefined;
   const envFile = nonEmptyString(process.env.CLAUDE_ENV_FILE);
-  const seenSkills = getSeenSkillsEnv();
+  const seenSkills = hasFileDedup ? syncedSeenSkills : seenState;
   if (loaded.length > 0 && seenSkills !== "" && !envFile && platform === "cursor") {
     outputEnv = { [ENV_SEEN_SKILLS_KEY]: seenSkills };
   }
