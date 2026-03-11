@@ -3,8 +3,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  detectPlatform,
-  setSessionEnv
+  detectPlatform
 } from "./compat.mjs";
 import {
   appendAuditLog,
@@ -15,7 +14,8 @@ import {
   safeReadJson,
   safeReadFile,
   syncSessionFileFromClaims,
-  tryClaimSessionKey
+  tryClaimSessionKey,
+  writeSessionFile
 } from "./hook-env.mjs";
 import { buildSkillMap, validateSkillMap } from "./skill-map-frontmatter.mjs";
 import {
@@ -42,10 +42,12 @@ const TSX_REVIEW_SKILL = "react-best-practices";
 const DEFAULT_REVIEW_THRESHOLD = 3;
 const TSX_REVIEW_PRIORITY_BOOST = 40;
 const REVIEW_MARKER = "<!-- marker:review-injected -->";
+const TSX_EDIT_COUNT_SESSION_KEY = "tsx-edit-count";
 const DEV_SERVER_VERIFY_SKILL = "agent-browser-verify";
 const DEV_SERVER_VERIFY_PRIORITY_BOOST = 45;
 const DEV_SERVER_VERIFY_MAX_ITERATIONS = 2;
 const DEV_SERVER_VERIFY_MARKER = "<!-- marker:dev-server-verify -->";
+const DEV_VERIFY_COUNT_SESSION_KEY = "dev-verify-count";
 const DEV_SERVER_COMPANION_SKILLS = ["verification"];
 const AI_SDK_SKILL = "ai-sdk";
 const AI_SDK_COMPANION_SKILLS = ["ai-elements"];
@@ -105,20 +107,37 @@ function getReviewThreshold() {
   }
   return DEFAULT_REVIEW_THRESHOLD;
 }
-function getTsxEditCount() {
-  const raw = process.env.VERCEL_PLUGIN_TSX_EDIT_COUNT;
+function parsePersistentCounter(raw) {
   if (raw == null || raw === "") return 0;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) ? n : 0;
 }
-function incrementTsxEditCount() {
-  const current = getTsxEditCount();
-  const next = current + 1;
-  process.env.VERCEL_PLUGIN_TSX_EDIT_COUNT = String(next);
+function readPersistentCounter(sessionId, sessionKey, envKey) {
+  if (sessionId) {
+    const sessionValue = readSessionFile(sessionId, sessionKey);
+    if (sessionValue !== "") {
+      return parsePersistentCounter(sessionValue);
+    }
+  }
+  return parsePersistentCounter(process.env[envKey]);
+}
+function writePersistentCounter(sessionId, sessionKey, envKey, value) {
+  const nextValue = String(value);
+  process.env[envKey] = nextValue;
+  if (sessionId) {
+    writeSessionFile(sessionId, sessionKey, nextValue);
+  }
+}
+function getTsxEditCount(sessionId) {
+  return readPersistentCounter(sessionId, TSX_EDIT_COUNT_SESSION_KEY, "VERCEL_PLUGIN_TSX_EDIT_COUNT");
+}
+function incrementTsxEditCount(sessionId) {
+  const next = getTsxEditCount(sessionId) + 1;
+  writePersistentCounter(sessionId, TSX_EDIT_COUNT_SESSION_KEY, "VERCEL_PLUGIN_TSX_EDIT_COUNT", next);
   return next;
 }
-function resetTsxEditCount() {
-  process.env.VERCEL_PLUGIN_TSX_EDIT_COUNT = "0";
+function resetTsxEditCount(sessionId) {
+  writePersistentCounter(sessionId, TSX_EDIT_COUNT_SESSION_KEY, "VERCEL_PLUGIN_TSX_EDIT_COUNT", 0);
 }
 function isTsxEditTool(toolName, toolInput) {
   if (toolName !== "Edit" && toolName !== "Write") return false;
@@ -136,9 +155,6 @@ const RUNTIME_ENV_KEYS = [
   "VERCEL_PLUGIN_TSX_EDIT_COUNT",
   "VERCEL_PLUGIN_DEV_VERIFY_COUNT"
 ];
-function hasClaudeEnvFile() {
-  return !!process.env.CLAUDE_ENV_FILE;
-}
 function captureRuntimeEnvSnapshot(env = process.env) {
   return {
     VERCEL_PLUGIN_SEEN_SKILLS: env.VERCEL_PLUGIN_SEEN_SKILLS,
@@ -157,19 +173,11 @@ function collectRuntimeEnvUpdates(before, env = process.env) {
   return updates;
 }
 function finalizeRuntimeEnvUpdates(platform, before, env = process.env) {
+  if (platform !== "cursor") return void 0;
   const updates = collectRuntimeEnvUpdates(before, env);
-  if (platform === "cursor" || !hasClaudeEnvFile()) {
-    return Object.keys(updates).length > 0 ? updates : void 0;
-  }
-  for (const key of RUNTIME_ENV_KEYS) {
-    const value = updates[key];
-    if (typeof value === "string") {
-      setSessionEnv(platform, key, value);
-    }
-  }
-  return void 0;
+  return Object.keys(updates).length > 0 ? updates : void 0;
 }
-function checkTsxReviewTrigger(toolName, toolInput, _injectedSkills, dedupOff, logger) {
+function checkTsxReviewTrigger(toolName, toolInput, _injectedSkills, dedupOff, sessionId, logger) {
   const l = logger || log;
   const threshold = getReviewThreshold();
   if (dedupOff) {
@@ -178,10 +186,10 @@ function checkTsxReviewTrigger(toolName, toolInput, _injectedSkills, dedupOff, l
   }
   if (!isTsxEditTool(toolName, toolInput)) {
     l.debug("tsx-review-not-fired", { reason: "not-tsx-edit", tool: toolName });
-    return { triggered: false, count: getTsxEditCount(), threshold, debounced: false };
+    return { triggered: false, count: getTsxEditCount(sessionId), threshold, debounced: false };
   }
-  const prevCount = getTsxEditCount();
-  const count = incrementTsxEditCount();
+  const prevCount = getTsxEditCount(sessionId);
+  const count = incrementTsxEditCount(sessionId);
   const delta = count - prevCount;
   l.debug("tsx-edit-count", { count, threshold, file: toolInput.file_path || "" });
   l.trace("tsx-edit-counter-state", { previous: prevCount, current: count, delta, threshold, remaining: Math.max(0, threshold - count), file: toolInput.file_path || "" });
@@ -192,20 +200,16 @@ function checkTsxReviewTrigger(toolName, toolInput, _injectedSkills, dedupOff, l
   l.debug("tsx-review-not-fired", { reason: "below-threshold", count, threshold });
   return { triggered: false, count, threshold, debounced: false };
 }
-function getDevServerVerifyCount() {
-  const raw = process.env.VERCEL_PLUGIN_DEV_VERIFY_COUNT;
-  if (raw == null || raw === "") return 0;
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) ? n : 0;
+function getDevServerVerifyCount(sessionId) {
+  return readPersistentCounter(sessionId, DEV_VERIFY_COUNT_SESSION_KEY, "VERCEL_PLUGIN_DEV_VERIFY_COUNT");
 }
-function incrementDevServerVerifyCount() {
-  const current = getDevServerVerifyCount();
-  const next = current + 1;
-  process.env.VERCEL_PLUGIN_DEV_VERIFY_COUNT = String(next);
+function incrementDevServerVerifyCount(sessionId) {
+  const next = getDevServerVerifyCount(sessionId) + 1;
+  writePersistentCounter(sessionId, DEV_VERIFY_COUNT_SESSION_KEY, "VERCEL_PLUGIN_DEV_VERIFY_COUNT", next);
   return next;
 }
-function resetDevServerVerifyCount() {
-  process.env.VERCEL_PLUGIN_DEV_VERIFY_COUNT = "0";
+function resetDevServerVerifyCount(sessionId) {
+  writePersistentCounter(sessionId, DEV_VERIFY_COUNT_SESSION_KEY, "VERCEL_PLUGIN_DEV_VERIFY_COUNT", 0);
 }
 function isDevServerCommand(command) {
   if (!command) return false;
@@ -213,7 +217,7 @@ function isDevServerCommand(command) {
   if (devCommand && command.includes(devCommand)) return true;
   return DEV_SERVER_PATTERNS.some((re) => re.test(command));
 }
-function checkDevServerVerify(toolName, toolInput, _injectedSkills, _dedupOff, logger) {
+function checkDevServerVerify(toolName, toolInput, _injectedSkills, _dedupOff, sessionId, logger) {
   const l = logger || log;
   const noResult = { triggered: false, unavailable: false, loopGuardHit: false, iterationCount: 0 };
   if (toolName !== "Bash") {
@@ -232,7 +236,7 @@ function checkDevServerVerify(toolName, toolInput, _injectedSkills, _dedupOff, l
     l.debug("dev-server-verify-unavailable", { reason: "agent-browser not installed" });
     return { triggered: false, unavailable: true, loopGuardHit: false, iterationCount: 0 };
   }
-  const count = getDevServerVerifyCount();
+  const count = getDevServerVerifyCount(sessionId);
   l.trace("dev-server-verify-counter-state", { current: count, max: DEV_SERVER_VERIFY_MAX_ITERATIONS, remaining: Math.max(0, DEV_SERVER_VERIFY_MAX_ITERATIONS - count), command: command.slice(0, 100) });
   if (count >= DEV_SERVER_VERIFY_MAX_ITERATIONS) {
     l.debug("dev-server-verify-not-fired", { reason: "loop-guard", count, max: DEV_SERVER_VERIFY_MAX_ITERATIONS });
@@ -563,8 +567,12 @@ function deduplicateSkills({ matchedEntries, matched, toolName, toolInput, injec
   });
   return { newEntries, rankedSkills, vercelJsonRouting, profilerBoosted, setupModeRouting };
 }
+function skillInvocationMessage(skill, platform) {
+  return platform === "cursor" ? `Load the /${skill} skill.` : `You must run the Skill(${skill}) tool.`;
+}
 function injectSkills(rankedSkills, options) {
-  const { pluginRoot, hasEnvDedup, sessionId, scopeId, injectedSkills, budgetBytes, maxSkills, skillMap, logger, forceSummarySkills } = options || {};
+  const { pluginRoot, hasEnvDedup, sessionId, scopeId, injectedSkills, budgetBytes, maxSkills, skillMap, logger, forceSummarySkills, platform: optPlatform } = options || {};
+  const platform = optPlatform ?? "claude-code";
   const root = pluginRoot || PLUGIN_ROOT;
   const l = logger || log;
   const budget = budgetBytes ?? getInjectionBudget();
@@ -601,10 +609,10 @@ function injectSkills(rankedSkills, options) {
       l.issue("SKILL_FILE_MISSING", `SKILL.md not found for skill "${skill}"`, `Create skills/${skill}/SKILL.md with valid frontmatter`, { skillPath, error: "file not found or unreadable" });
       continue;
     }
-    const wrapped = `You must run the Skill(${skill}) tool.`;
+    const wrapped = skillInvocationMessage(skill, platform);
     const byteLen = Buffer.byteLength(wrapped, "utf-8");
     if (loaded.length > 0 && usedBytes + byteLen > budget) {
-      const summaryWrapped = `You must run the Skill(${skill}) tool.`;
+      const summaryWrapped = skillInvocationMessage(skill, platform);
       const summaryByteLen = Buffer.byteLength(summaryWrapped, "utf-8");
       if (usedBytes + summaryByteLen <= budget) {
         if (!canInjectSkill(skill)) {
@@ -629,7 +637,7 @@ function injectSkills(rankedSkills, options) {
       continue;
     }
     if (forceSummarySkills?.has(skill)) {
-      const summaryWrapped = `You must run the Skill(${skill}) tool.`;
+      const summaryWrapped = skillInvocationMessage(skill, platform);
       const summaryByteLen = Buffer.byteLength(summaryWrapped, "utf-8");
       if (usedBytes + summaryByteLen <= budget || loaded.length === 0) {
         if (!canInjectSkill(skill)) {
@@ -809,8 +817,8 @@ function run() {
   if (!matchResult) return "{}";
   if (log.active) timing.match = Math.round(log.now() - tMatch);
   const { matchedEntries, matchReasons, matched } = matchResult;
-  const tsxReview = checkTsxReviewTrigger(toolName, toolInput, injectedSkills, dedupOff, log);
-  const devServerVerify = checkDevServerVerify(toolName, toolInput, injectedSkills, dedupOff, log);
+  const tsxReview = checkTsxReviewTrigger(toolName, toolInput, injectedSkills, dedupOff, sessionId, log);
+  const devServerVerify = checkDevServerVerify(toolName, toolInput, injectedSkills, dedupOff, sessionId, log);
   const vercelEnvHelp = checkVercelEnvHelp(toolName, toolInput, injectedSkills, dedupOff, log);
   if (devServerVerify.triggered) {
     const devServerBoostSkills = /* @__PURE__ */ new Set([DEV_SERVER_VERIFY_SKILL, ...DEV_SERVER_COMPANION_SKILLS]);
@@ -1002,19 +1010,20 @@ function run() {
     injectedSkills,
     skillMap: skills.skillMap,
     logger: log,
-    forceSummarySkills: forceSummarySkills.size > 0 ? forceSummarySkills : void 0
+    forceSummarySkills: forceSummarySkills.size > 0 ? forceSummarySkills : void 0,
+    platform
   });
   if (log.active) timing.skill_read = Math.round(log.now() - tSkillRead);
   if (tsxReviewInjected && loaded.includes(TSX_REVIEW_SKILL)) {
     parts.push(REVIEW_MARKER);
-    const prevCount = getTsxEditCount();
-    resetTsxEditCount();
+    const prevCount = getTsxEditCount(sessionId);
+    resetTsxEditCount(sessionId);
     log.debug("tsx-review-marker-added", { marker: REVIEW_MARKER });
     log.trace("tsx-edit-counter-reset", { previousCount: prevCount, resetTo: 0, threshold: getReviewThreshold() });
   }
   if (devServerVerifyInjected && loaded.includes(DEV_SERVER_VERIFY_SKILL)) {
-    const prevIteration = getDevServerVerifyCount();
-    const iteration = incrementDevServerVerifyCount();
+    const prevIteration = getDevServerVerifyCount(sessionId);
+    const iteration = incrementDevServerVerifyCount(sessionId);
     parts.push(`${DEV_SERVER_VERIFY_MARKER.replace("-->", `iteration="${iteration}" max="${DEV_SERVER_VERIFY_MAX_ITERATIONS}" -->`)}`);
     log.debug("dev-server-verify-marker-added", { iteration, max: DEV_SERVER_VERIFY_MAX_ITERATIONS });
     log.trace("dev-server-verify-counter-increment", { previous: prevIteration, current: iteration, max: DEV_SERVER_VERIFY_MAX_ITERATIONS, remaining: DEV_SERVER_VERIFY_MAX_ITERATIONS - iteration });

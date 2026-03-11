@@ -201,7 +201,7 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
     expect(code).toBe(0);
     const result = JSON.parse(stdout);
     expect(result.continue).toBe(true);
-    expect(result.additional_context).toContain("Skill(ai-elements)");
+    expect(result.additional_context).toContain("ai-elements");
     expect(result.hookSpecificOutput).toBeUndefined();
     expect(result.env?.VERCEL_PLUGIN_SEEN_SKILLS).toContain("ai-elements");
 
@@ -228,7 +228,7 @@ describe("user-prompt-submit-skill-inject.mjs", () => {
     expect(JSON.parse(stdout)).toEqual({ continue: true });
   });
 
-  test("appends seen skills to CLAUDE_ENV_FILE when available", async () => {
+  test("does not append seen skills to CLAUDE_ENV_FILE when available", async () => {
     const tempDir = join(tmpdir(), `user-prompt-submit-env-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const envFile = join(tempDir, "claude.env");
     mkdirSync(tempDir, { recursive: true });

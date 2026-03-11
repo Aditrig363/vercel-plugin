@@ -25,7 +25,6 @@ import { fileURLToPath } from "node:url";
 import {
   detectPlatform,
   type HookPlatform,
-  setSessionEnv,
 } from "./compat.mjs";
 import {
   appendAuditLog,
@@ -37,6 +36,7 @@ import {
   safeReadFile,
   syncSessionFileFromClaims,
   tryClaimSessionKey,
+  writeSessionFile,
 } from "./hook-env.mjs";
 
 import { buildSkillMap, extractFrontmatter, validateSkillMap } from "./skill-map-frontmatter.mjs";
@@ -72,12 +72,14 @@ const TSX_REVIEW_SKILL = "react-best-practices";
 const DEFAULT_REVIEW_THRESHOLD = 3;
 const TSX_REVIEW_PRIORITY_BOOST = 40;
 const REVIEW_MARKER = "<!-- marker:review-injected -->";
+const TSX_EDIT_COUNT_SESSION_KEY = "tsx-edit-count";
 
 // Dev-server verification constants
 const DEV_SERVER_VERIFY_SKILL = "agent-browser-verify";
 const DEV_SERVER_VERIFY_PRIORITY_BOOST = 45;
 const DEV_SERVER_VERIFY_MAX_ITERATIONS = 2;
 const DEV_SERVER_VERIFY_MARKER = "<!-- marker:dev-server-verify -->";
+const DEV_VERIFY_COUNT_SESSION_KEY = "dev-verify-count";
 
 // Companion skills co-injected alongside agent-browser-verify on dev server detection.
 // These share the same iteration guard and loop-guard bypass logic.
@@ -153,7 +155,7 @@ function getSeenSkillsEnv(): string {
 }
 
 // ---------------------------------------------------------------------------
-// TSX review trigger: env-var-backed edit counter
+// TSX review trigger: session-file-backed edit counter
 // ---------------------------------------------------------------------------
 
 /** Get the configured review threshold from env or default. */
@@ -166,25 +168,55 @@ export function getReviewThreshold(): number {
   return DEFAULT_REVIEW_THRESHOLD;
 }
 
-/** Read current TSX edit count from env var. */
-function getTsxEditCount(): number {
-  const raw = process.env.VERCEL_PLUGIN_TSX_EDIT_COUNT;
+function parsePersistentCounter(raw: string | undefined): number {
   if (raw == null || raw === "") return 0;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) ? n : 0;
 }
 
+function readPersistentCounter(
+  sessionId: string | undefined,
+  sessionKey: string,
+  envKey: keyof NodeJS.ProcessEnv,
+): number {
+  if (sessionId) {
+    const sessionValue = readSessionFile(sessionId, sessionKey);
+    if (sessionValue !== "") {
+      return parsePersistentCounter(sessionValue);
+    }
+  }
+
+  return parsePersistentCounter(process.env[envKey]);
+}
+
+function writePersistentCounter(
+  sessionId: string | undefined,
+  sessionKey: string,
+  envKey: keyof NodeJS.ProcessEnv,
+  value: number,
+): void {
+  const nextValue = String(value);
+  process.env[envKey] = nextValue;
+  if (sessionId) {
+    writeSessionFile(sessionId, sessionKey, nextValue);
+  }
+}
+
+/** Read current TSX edit count from session file or env fallback. */
+function getTsxEditCount(sessionId?: string): number {
+  return readPersistentCounter(sessionId, TSX_EDIT_COUNT_SESSION_KEY, "VERCEL_PLUGIN_TSX_EDIT_COUNT");
+}
+
 /** Increment and persist TSX edit count. Returns new count. */
-function incrementTsxEditCount(): number {
-  const current = getTsxEditCount();
-  const next = current + 1;
-  process.env.VERCEL_PLUGIN_TSX_EDIT_COUNT = String(next);
+function incrementTsxEditCount(sessionId?: string): number {
+  const next = getTsxEditCount(sessionId) + 1;
+  writePersistentCounter(sessionId, TSX_EDIT_COUNT_SESSION_KEY, "VERCEL_PLUGIN_TSX_EDIT_COUNT", next);
   return next;
 }
 
 /** Reset TSX edit count after review injection. */
-function resetTsxEditCount(): void {
-  process.env.VERCEL_PLUGIN_TSX_EDIT_COUNT = "0";
+function resetTsxEditCount(sessionId?: string): void {
+  writePersistentCounter(sessionId, TSX_EDIT_COUNT_SESSION_KEY, "VERCEL_PLUGIN_TSX_EDIT_COUNT", 0);
 }
 
 /** Check if the current tool call is an Edit/Write on a .tsx file. */
@@ -221,10 +253,6 @@ type RuntimeEnvKey = (typeof RUNTIME_ENV_KEYS)[number];
 export type RuntimeEnvSnapshot = Record<RuntimeEnvKey, string | undefined>;
 export type RuntimeEnvUpdates = Partial<Record<RuntimeEnvKey, string>>;
 
-function hasClaudeEnvFile(): boolean {
-  return !!process.env.CLAUDE_ENV_FILE;
-}
-
 export function captureRuntimeEnvSnapshot(env: NodeJS.ProcessEnv = process.env): RuntimeEnvSnapshot {
   return {
     VERCEL_PLUGIN_SEEN_SKILLS: env.VERCEL_PLUGIN_SEEN_SKILLS,
@@ -254,20 +282,10 @@ function finalizeRuntimeEnvUpdates(
   before: RuntimeEnvSnapshot,
   env: NodeJS.ProcessEnv = process.env,
 ): RuntimeEnvUpdates | undefined {
+  if (platform !== "cursor") return undefined;
+
   const updates = collectRuntimeEnvUpdates(before, env);
-
-  if (platform === "cursor" || !hasClaudeEnvFile()) {
-    return Object.keys(updates).length > 0 ? updates : undefined;
-  }
-
-  for (const key of RUNTIME_ENV_KEYS) {
-    const value = updates[key];
-    if (typeof value === "string") {
-      setSessionEnv(platform, key, value);
-    }
-  }
-
-  return undefined;
+  return Object.keys(updates).length > 0 ? updates : undefined;
 }
 
 /**
@@ -284,6 +302,7 @@ export function checkTsxReviewTrigger(
   toolInput: Record<string, unknown>,
   _injectedSkills: Set<string>,
   dedupOff: boolean,
+  sessionId?: string,
   logger?: Logger,
 ): TsxReviewTriggerResult {
   const l = logger || log;
@@ -298,11 +317,11 @@ export function checkTsxReviewTrigger(
   // Only count Edit/Write on .tsx files
   if (!isTsxEditTool(toolName, toolInput)) {
     l.debug("tsx-review-not-fired", { reason: "not-tsx-edit", tool: toolName });
-    return { triggered: false, count: getTsxEditCount(), threshold, debounced: false };
+    return { triggered: false, count: getTsxEditCount(sessionId), threshold, debounced: false };
   }
 
-  const prevCount = getTsxEditCount();
-  const count = incrementTsxEditCount();
+  const prevCount = getTsxEditCount(sessionId);
+  const count = incrementTsxEditCount(sessionId);
   const delta = count - prevCount;
   l.debug("tsx-edit-count", { count, threshold, file: (toolInput.file_path as string) || "" });
   l.trace("tsx-edit-counter-state", { previous: prevCount, current: count, delta, threshold, remaining: Math.max(0, threshold - count), file: (toolInput.file_path as string) || "" });
@@ -320,25 +339,21 @@ export function checkTsxReviewTrigger(
 // Dev-server verification trigger
 // ---------------------------------------------------------------------------
 
-/** Read current dev-server verify iteration count from env var. */
-export function getDevServerVerifyCount(): number {
-  const raw = process.env.VERCEL_PLUGIN_DEV_VERIFY_COUNT;
-  if (raw == null || raw === "") return 0;
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) ? n : 0;
+/** Read current dev-server verify iteration count from session file or env fallback. */
+export function getDevServerVerifyCount(sessionId?: string): number {
+  return readPersistentCounter(sessionId, DEV_VERIFY_COUNT_SESSION_KEY, "VERCEL_PLUGIN_DEV_VERIFY_COUNT");
 }
 
 /** Increment and persist dev-server verify count. Returns new count. */
-export function incrementDevServerVerifyCount(): number {
-  const current = getDevServerVerifyCount();
-  const next = current + 1;
-  process.env.VERCEL_PLUGIN_DEV_VERIFY_COUNT = String(next);
+export function incrementDevServerVerifyCount(sessionId?: string): number {
+  const next = getDevServerVerifyCount(sessionId) + 1;
+  writePersistentCounter(sessionId, DEV_VERIFY_COUNT_SESSION_KEY, "VERCEL_PLUGIN_DEV_VERIFY_COUNT", next);
   return next;
 }
 
 /** Reset dev-server verify count. */
-export function resetDevServerVerifyCount(): void {
-  process.env.VERCEL_PLUGIN_DEV_VERIFY_COUNT = "0";
+export function resetDevServerVerifyCount(sessionId?: string): void {
+  writePersistentCounter(sessionId, DEV_VERIFY_COUNT_SESSION_KEY, "VERCEL_PLUGIN_DEV_VERIFY_COUNT", 0);
 }
 
 /** Check if a Bash command is a dev-server startup command. */
@@ -373,6 +388,7 @@ export function checkDevServerVerify(
   toolInput: Record<string, unknown>,
   _injectedSkills: Set<string>,
   _dedupOff: boolean,
+  sessionId?: string,
   logger?: Logger,
 ): DevServerVerifyResult {
   const l = logger || log;
@@ -401,7 +417,7 @@ export function checkDevServerVerify(
   }
 
   // Loop guard: max iterations (hard stop, regardless of dedup state)
-  const count = getDevServerVerifyCount();
+  const count = getDevServerVerifyCount(sessionId);
   l.trace("dev-server-verify-counter-state", { current: count, max: DEV_SERVER_VERIFY_MAX_ITERATIONS, remaining: Math.max(0, DEV_SERVER_VERIFY_MAX_ITERATIONS - count), command: command.slice(0, 100) });
   if (count >= DEV_SERVER_VERIFY_MAX_ITERATIONS) {
     l.debug("dev-server-verify-not-fired", { reason: "loop-guard", count, max: DEV_SERVER_VERIFY_MAX_ITERATIONS });
@@ -931,6 +947,8 @@ export interface InjectOptions {
   logger?: Logger;
   /** Skills that must be injected as summary-only (e.g. companion skills on dedup bypass). */
   forceSummarySkills?: Set<string>;
+  /** Platform for formatting skill invocation instructions. */
+  platform?: HookPlatform;
 }
 
 export interface InjectResult {
@@ -947,8 +965,15 @@ export interface InjectResult {
  * Skills are loaded in priority order until the next would exceed the budget or the ceiling.
  * When a full body would exceed the budget but a summary exists, the summary is injected instead.
  */
+function skillInvocationMessage(skill: string, platform: HookPlatform): string {
+  return platform === "cursor"
+    ? `Load the /${skill} skill.`
+    : `You must run the Skill(${skill}) tool.`;
+}
+
 export function injectSkills(rankedSkills: string[], options?: InjectOptions): InjectResult {
-  const { pluginRoot, hasEnvDedup, sessionId, scopeId, injectedSkills, budgetBytes, maxSkills, skillMap, logger, forceSummarySkills } = options || {};
+  const { pluginRoot, hasEnvDedup, sessionId, scopeId, injectedSkills, budgetBytes, maxSkills, skillMap, logger, forceSummarySkills, platform: optPlatform } = options || {};
+  const platform: HookPlatform = optPlatform ?? "claude-code";
   const root = pluginRoot || PLUGIN_ROOT;
   const l = logger || log;
   const budget = budgetBytes ?? getInjectionBudget();
@@ -992,14 +1017,14 @@ export function injectSkills(rankedSkills: string[], options?: InjectOptions): I
       continue;
     }
 
-    // Instead of injecting the full body, instruct the agent to invoke the Skill tool
-    const wrapped = `You must run the Skill(${skill}) tool.`;
+    // Instead of injecting the full body, instruct the agent to invoke the skill
+    const wrapped = skillInvocationMessage(skill, platform);
     const byteLen = Buffer.byteLength(wrapped, "utf-8");
 
     // Budget check: always allow the first skill full body, then enforce budget
     if (loaded.length > 0 && usedBytes + byteLen > budget) {
-      // Summary fallback uses the same Skill tool instruction
-      const summaryWrapped = `You must run the Skill(${skill}) tool.`;
+      // Summary fallback uses the same skill invocation instruction
+      const summaryWrapped = skillInvocationMessage(skill, platform);
       const summaryByteLen = Buffer.byteLength(summaryWrapped, "utf-8");
       if (usedBytes + summaryByteLen <= budget) {
         if (!canInjectSkill(skill)) {
@@ -1025,7 +1050,7 @@ export function injectSkills(rankedSkills: string[], options?: InjectOptions): I
 
     // Force summary-only for dedup-bypassed companion skills
     if (forceSummarySkills?.has(skill)) {
-      const summaryWrapped = `You must run the Skill(${skill}) tool.`;
+      const summaryWrapped = skillInvocationMessage(skill, platform);
       const summaryByteLen = Buffer.byteLength(summaryWrapped, "utf-8");
       if (usedBytes + summaryByteLen <= budget || loaded.length === 0) {
         if (!canInjectSkill(skill)) {
@@ -1302,10 +1327,10 @@ function run(): string {
   const { matchedEntries, matchReasons, matched } = matchResult;
 
   // Stage 3.5: TSX review trigger — check before dedup to inform synthetic injection
-  const tsxReview = checkTsxReviewTrigger(toolName, toolInput, injectedSkills, dedupOff, log);
+  const tsxReview = checkTsxReviewTrigger(toolName, toolInput, injectedSkills, dedupOff, sessionId, log);
 
   // Stage 3.6: Dev-server verification trigger
-  const devServerVerify = checkDevServerVerify(toolName, toolInput, injectedSkills, dedupOff, log);
+  const devServerVerify = checkDevServerVerify(toolName, toolInput, injectedSkills, dedupOff, sessionId, log);
 
   // Stage 3.7: Vercel env command quick-help trigger
   const vercelEnvHelp = checkVercelEnvHelp(toolName, toolInput, injectedSkills, dedupOff, log);
@@ -1538,22 +1563,23 @@ function run(): string {
     skillMap: skills.skillMap,
     logger: log,
     forceSummarySkills: forceSummarySkills.size > 0 ? forceSummarySkills : undefined,
+    platform,
   });
   if (log.active) timing.skill_read = Math.round(log.now() - tSkillRead);
 
   // Append review marker if tsx review was triggered and skill was loaded
   if (tsxReviewInjected && loaded.includes(TSX_REVIEW_SKILL)) {
     parts.push(REVIEW_MARKER);
-    const prevCount = getTsxEditCount();
-    resetTsxEditCount();
+    const prevCount = getTsxEditCount(sessionId);
+    resetTsxEditCount(sessionId);
     log.debug("tsx-review-marker-added", { marker: REVIEW_MARKER });
     log.trace("tsx-edit-counter-reset", { previousCount: prevCount, resetTo: 0, threshold: getReviewThreshold() });
   }
 
   // Append dev-server verify marker and increment iteration count
   if (devServerVerifyInjected && loaded.includes(DEV_SERVER_VERIFY_SKILL)) {
-    const prevIteration = getDevServerVerifyCount();
-    const iteration = incrementDevServerVerifyCount();
+    const prevIteration = getDevServerVerifyCount(sessionId);
+    const iteration = incrementDevServerVerifyCount(sessionId);
     parts.push(`${DEV_SERVER_VERIFY_MARKER.replace("-->", `iteration="${iteration}" max="${DEV_SERVER_VERIFY_MAX_ITERATIONS}" -->`)}`);
     log.debug("dev-server-verify-marker-added", { iteration, max: DEV_SERVER_VERIFY_MAX_ITERATIONS });
     log.trace("dev-server-verify-counter-increment", { previous: prevIteration, current: iteration, max: DEV_SERVER_VERIFY_MAX_ITERATIONS, remaining: DEV_SERVER_VERIFY_MAX_ITERATIONS - iteration });

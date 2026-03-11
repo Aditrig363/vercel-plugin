@@ -18,7 +18,7 @@
  */
 
 import type { SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
-import { appendFileSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -500,6 +500,7 @@ export function deduplicateAndInject(
     maxSkills: MAX_SKILLS,
     skillMap: skills.skillMap,
     logger: l,
+    platform: platform ?? "claude-code",
   });
 
   return {
