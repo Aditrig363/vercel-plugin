@@ -1,7 +1,5 @@
 # vercel-plugin
 
-A comprehensive [Open Plugin](https://github.com/vercel-labs/open-plugin) that turns any AI agent into a Vercel expert.
-
 ## Getting Started
 
 ### Prerequisites
