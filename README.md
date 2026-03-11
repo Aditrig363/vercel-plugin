@@ -8,7 +8,23 @@
 - Node.js 18+
 - [Bun](https://bun.sh)
 
-### 1. Clone and build
+### Option 1: Install with `npx add-plugin` (recommended)
+
+```bash
+npx add-plugin https://github.com/vercel-labs/vercel-plugin -s project
+```
+
+Or using the shorthand:
+
+```bash
+npx add-plugin vercel-labs/vercel-plugin
+```
+
+That's it. The plugin activates automatically — no setup, no commands to learn.
+
+### Option 2: Clone and build manually
+
+#### 1. Clone and build
 
 ```bash
 git clone https://github.com/vercel-labs/vercel-plugin.git
@@ -17,7 +33,7 @@ bun install
 bun run build
 ```
 
-### 2. Run Claude Code with the plugin
+#### 2. Run Claude Code with the plugin
 
 Navigate to any project you want to work on, then:
 
@@ -27,7 +43,7 @@ claude --plugin-dir /path/to/vercel-plugin
 
 That's it. The plugin activates automatically — no setup, no commands to learn.
 
-### Updating
+#### Updating
 
 ```bash
 cd /path/to/vercel-plugin
