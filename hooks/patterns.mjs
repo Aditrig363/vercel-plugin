@@ -1,5 +1,9 @@
 // hooks/src/patterns.mts
+import { createHash } from "crypto";
+import { appendFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { basename } from "path";
+import { join, resolve } from "path";
 var REGEX_META_CHARS = ".()+[]{}|^$\\";
 function parseBraceExpansion(pattern, startIndex) {
   let depth = 0;
@@ -114,6 +118,143 @@ function mergeSeenSkillStates(...values) {
     }
   }
   return serializeSeenSkills(merged);
+}
+var COMPACTION_REINJECT_MIN_PRIORITY = 7;
+var SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
+function dedupSessionIdSegment(sessionId) {
+  if (SAFE_SESSION_ID_RE.test(sessionId)) {
+    return sessionId;
+  }
+  return createHash("sha256").update(sessionId).digest("hex");
+}
+function listSessionSeenSkillArtifactPaths(sessionId) {
+  const tempRoot = resolve(tmpdir());
+  const prefix = `vercel-plugin-${dedupSessionIdSegment(sessionId)}-`;
+  const files = [];
+  const claimDirs = [];
+  try {
+    for (const entry of readdirSync(tempRoot)) {
+      if (!entry.startsWith(prefix)) continue;
+      const fullPath = join(tempRoot, entry);
+      if (entry.endsWith("-seen-skills.txt")) {
+        files.push(fullPath);
+        continue;
+      }
+      if (entry.endsWith("-seen-skills.d")) {
+        claimDirs.push(fullPath);
+      }
+    }
+  } catch {
+    return { files: [], claimDirs: [] };
+  }
+  return { files, claimDirs };
+}
+function collectSessionSeenSkillValues(sessionId) {
+  const { files, claimDirs } = listSessionSeenSkillArtifactPaths(sessionId);
+  const values = [];
+  for (const filePath of files) {
+    try {
+      values.push(readFileSync(filePath, "utf-8"));
+    } catch {
+    }
+  }
+  for (const claimDirPath of claimDirs) {
+    try {
+      const claimedSkills = readdirSync(claimDirPath).map((entry) => decodeURIComponent(entry)).filter((entry) => entry !== "").join(",");
+      values.push(claimedSkills);
+    } catch {
+    }
+  }
+  return values;
+}
+function filterSeenSkillState(value, blockedSkills) {
+  if (blockedSkills.size === 0) return value;
+  const filtered = /* @__PURE__ */ new Set();
+  for (const skill of parseSeenSkills(value)) {
+    if (!blockedSkills.has(skill)) {
+      filtered.add(skill);
+    }
+  }
+  return serializeSeenSkills(filtered);
+}
+function isHighPrioritySkill(skill, skillMap, minPriority = COMPACTION_REINJECT_MIN_PRIORITY) {
+  const priority = skillMap?.[skill]?.priority;
+  return typeof priority === "number" && priority >= minPriority;
+}
+function escapeShellEnvValue(value) {
+  return value.replace(/(["\\$`])/g, "\\$1");
+}
+function persistCompactionResetEnv(nextSeenEnv) {
+  process.env.VERCEL_PLUGIN_SEEN_SKILLS = nextSeenEnv;
+  process.env.VERCEL_PLUGIN_CONTEXT_COMPACTED = "";
+  const envFile = process.env.CLAUDE_ENV_FILE;
+  if (!envFile) return;
+  try {
+    appendFileSync(
+      envFile,
+      [
+        `export VERCEL_PLUGIN_SEEN_SKILLS="${escapeShellEnvValue(nextSeenEnv)}"`,
+        'export VERCEL_PLUGIN_CONTEXT_COMPACTED=""'
+      ].join("\n") + "\n",
+      "utf-8"
+    );
+  } catch {
+  }
+}
+function pruneSessionSeenSkillArtifacts(sessionId, clearedSkills) {
+  if (clearedSkills.size === 0) return;
+  const { files, claimDirs } = listSessionSeenSkillArtifactPaths(sessionId);
+  for (const filePath of files) {
+    try {
+      const rawValue = readFileSync(filePath, "utf-8");
+      writeFileSync(filePath, filterSeenSkillState(rawValue, clearedSkills), "utf-8");
+    } catch {
+    }
+  }
+  for (const claimDirPath of claimDirs) {
+    for (const skill of clearedSkills) {
+      try {
+        rmSync(join(claimDirPath, encodeURIComponent(skill)), { force: true });
+      } catch {
+      }
+    }
+  }
+}
+function mergeSeenSkillStatesWithCompactionReset(envValue, fileValue, claimValue, options) {
+  const includeEnv = options?.includeEnv ?? true;
+  const compactionTriggered = process.env.VERCEL_PLUGIN_CONTEXT_COMPACTED === "true";
+  let seenEnv = envValue;
+  let seenFile = fileValue;
+  let seenClaims = claimValue;
+  let clearedSkills = [];
+  if (compactionTriggered) {
+    const compactionState = options?.sessionId ? mergeSeenSkillStates(envValue, ...collectSessionSeenSkillValues(options.sessionId)) : mergeSeenSkillStates(envValue, fileValue, claimValue);
+    const skillsToClear = /* @__PURE__ */ new Set();
+    for (const skill of parseSeenSkills(compactionState)) {
+      if (isHighPrioritySkill(skill, options?.skillMap)) {
+        skillsToClear.add(skill);
+      }
+    }
+    if (skillsToClear.size > 0) {
+      seenEnv = filterSeenSkillState(envValue, skillsToClear);
+      seenFile = filterSeenSkillState(fileValue, skillsToClear);
+      seenClaims = filterSeenSkillState(claimValue, skillsToClear);
+      if (options?.sessionId) {
+        pruneSessionSeenSkillArtifacts(options.sessionId, skillsToClear);
+      }
+      clearedSkills = [...skillsToClear].sort();
+    }
+    persistCompactionResetEnv(seenEnv);
+  }
+  const seenState = includeEnv ? mergeSeenSkillStates(seenEnv, seenFile, seenClaims) : mergeSeenSkillStates(seenFile, seenClaims);
+  return {
+    seenEnv,
+    seenFile,
+    seenClaims,
+    seenState,
+    compactionResetApplied: compactionTriggered,
+    clearedSkills
+  };
 }
 function mergeScopedSeenSkillStates(scopeId, envValue, fileValue, claimValue) {
   if (scopeId === "main") {
@@ -239,6 +380,7 @@ function buildDocsBlock(injectedSkills, skillMap) {
   ].join("\n");
 }
 export {
+  COMPACTION_REINJECT_MIN_PRIORITY,
   appendSeenSkill,
   buildDocsBlock,
   compileSkillPatterns,
@@ -249,6 +391,7 @@ export {
   matchPathWithReason,
   mergeScopedSeenSkillStates,
   mergeSeenSkillStates,
+  mergeSeenSkillStatesWithCompactionReset,
   parseLikelySkills,
   parseSeenSkills,
   rankEntries,

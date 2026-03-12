@@ -1,5 +1,9 @@
 // hooks/src/prompt-patterns.mts
 import { searchSkills } from "./lexical-index.mjs";
+var MIN_LEXICAL_FALLBACK_SCORE = 20;
+function lexicalFallbackMeetsFloor(score) {
+  return score >= MIN_LEXICAL_FALLBACK_SCORE;
+}
 var CONTRACTIONS = {
   "it's": "it is",
   "what's": "what is",
@@ -202,6 +206,7 @@ export {
   adaptiveBoostTier,
   classifyTroubleshootingIntent,
   compilePromptSignals,
+  lexicalFallbackMeetsFloor,
   matchPromptWithReason,
   normalizePromptText,
   scorePromptWithLexical

@@ -4,7 +4,11 @@
  * and the CLI explain command.
  */
 
+import { createHash } from "node:crypto";
+import { appendFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename } from "node:path";
+import { join, resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -231,6 +235,217 @@ export function mergeSeenSkillStates(...values: string[]): string {
     }
   }
   return serializeSeenSkills(merged);
+}
+
+export const COMPACTION_REINJECT_MIN_PRIORITY = 7;
+
+export interface SeenSkillPriorityEntry {
+  priority?: number;
+}
+
+export interface MergeSeenSkillStatesWithCompactionResetOptions {
+  sessionId?: string | null;
+  includeEnv?: boolean;
+  skillMap?: Record<string, SeenSkillPriorityEntry>;
+}
+
+export interface MergeSeenSkillStatesWithCompactionResetResult {
+  seenEnv: string;
+  seenFile: string;
+  seenClaims: string;
+  seenState: string;
+  compactionResetApplied: boolean;
+  clearedSkills: string[];
+}
+
+const SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
+
+function dedupSessionIdSegment(sessionId: string): string {
+  if (SAFE_SESSION_ID_RE.test(sessionId)) {
+    return sessionId;
+  }
+
+  return createHash("sha256").update(sessionId).digest("hex");
+}
+
+function listSessionSeenSkillArtifactPaths(sessionId: string): { files: string[]; claimDirs: string[] } {
+  const tempRoot = resolve(tmpdir());
+  const prefix = `vercel-plugin-${dedupSessionIdSegment(sessionId)}-`;
+  const files: string[] = [];
+  const claimDirs: string[] = [];
+
+  try {
+    for (const entry of readdirSync(tempRoot)) {
+      if (!entry.startsWith(prefix)) continue;
+      const fullPath = join(tempRoot, entry);
+
+      if (entry.endsWith("-seen-skills.txt")) {
+        files.push(fullPath);
+        continue;
+      }
+
+      if (entry.endsWith("-seen-skills.d")) {
+        claimDirs.push(fullPath);
+      }
+    }
+  } catch {
+    return { files: [], claimDirs: [] };
+  }
+
+  return { files, claimDirs };
+}
+
+function collectSessionSeenSkillValues(sessionId: string): string[] {
+  const { files, claimDirs } = listSessionSeenSkillArtifactPaths(sessionId);
+  const values: string[] = [];
+
+  for (const filePath of files) {
+    try {
+      values.push(readFileSync(filePath, "utf-8"));
+    } catch {
+      // Ignore stale or concurrently-removed artifacts.
+    }
+  }
+
+  for (const claimDirPath of claimDirs) {
+    try {
+      const claimedSkills = readdirSync(claimDirPath)
+        .map((entry) => decodeURIComponent(entry))
+        .filter((entry) => entry !== "")
+        .join(",");
+      values.push(claimedSkills);
+    } catch {
+      // Ignore stale or concurrently-removed artifacts.
+    }
+  }
+
+  return values;
+}
+
+function filterSeenSkillState(value: string, blockedSkills: Set<string>): string {
+  if (blockedSkills.size === 0) return value;
+
+  const filtered = new Set<string>();
+  for (const skill of parseSeenSkills(value)) {
+    if (!blockedSkills.has(skill)) {
+      filtered.add(skill);
+    }
+  }
+  return serializeSeenSkills(filtered);
+}
+
+function isHighPrioritySkill(
+  skill: string,
+  skillMap?: Record<string, SeenSkillPriorityEntry>,
+  minPriority: number = COMPACTION_REINJECT_MIN_PRIORITY,
+): boolean {
+  const priority = skillMap?.[skill]?.priority;
+  return typeof priority === "number" && priority >= minPriority;
+}
+
+function escapeShellEnvValue(value: string): string {
+  return value.replace(/(["\\$`])/g, "\\$1");
+}
+
+function persistCompactionResetEnv(nextSeenEnv: string): void {
+  process.env.VERCEL_PLUGIN_SEEN_SKILLS = nextSeenEnv;
+  process.env.VERCEL_PLUGIN_CONTEXT_COMPACTED = "";
+
+  const envFile = process.env.CLAUDE_ENV_FILE;
+  if (!envFile) return;
+
+  try {
+    appendFileSync(
+      envFile,
+      [
+        `export VERCEL_PLUGIN_SEEN_SKILLS="${escapeShellEnvValue(nextSeenEnv)}"`,
+        'export VERCEL_PLUGIN_CONTEXT_COMPACTED=""',
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+  } catch {
+    // Hooks can continue even when env persistence fails.
+  }
+}
+
+function pruneSessionSeenSkillArtifacts(sessionId: string, clearedSkills: Set<string>): void {
+  if (clearedSkills.size === 0) return;
+
+  const { files, claimDirs } = listSessionSeenSkillArtifactPaths(sessionId);
+
+  for (const filePath of files) {
+    try {
+      const rawValue = readFileSync(filePath, "utf-8");
+      writeFileSync(filePath, filterSeenSkillState(rawValue, clearedSkills), "utf-8");
+    } catch {
+      // Ignore stale or concurrently-removed artifacts.
+    }
+  }
+
+  for (const claimDirPath of claimDirs) {
+    for (const skill of clearedSkills) {
+      try {
+        rmSync(join(claimDirPath, encodeURIComponent(skill)), { force: true });
+      } catch {
+        // Ignore stale or concurrently-removed claim files.
+      }
+    }
+  }
+}
+
+export function mergeSeenSkillStatesWithCompactionReset(
+  envValue: string,
+  fileValue: string,
+  claimValue: string,
+  options?: MergeSeenSkillStatesWithCompactionResetOptions,
+): MergeSeenSkillStatesWithCompactionResetResult {
+  const includeEnv = options?.includeEnv ?? true;
+  const compactionTriggered = process.env.VERCEL_PLUGIN_CONTEXT_COMPACTED === "true";
+
+  let seenEnv = envValue;
+  let seenFile = fileValue;
+  let seenClaims = claimValue;
+  let clearedSkills: string[] = [];
+
+  if (compactionTriggered) {
+    const compactionState = options?.sessionId
+      ? mergeSeenSkillStates(envValue, ...collectSessionSeenSkillValues(options.sessionId))
+      : mergeSeenSkillStates(envValue, fileValue, claimValue);
+    const skillsToClear = new Set<string>();
+
+    for (const skill of parseSeenSkills(compactionState)) {
+      if (isHighPrioritySkill(skill, options?.skillMap)) {
+        skillsToClear.add(skill);
+      }
+    }
+
+    if (skillsToClear.size > 0) {
+      seenEnv = filterSeenSkillState(envValue, skillsToClear);
+      seenFile = filterSeenSkillState(fileValue, skillsToClear);
+      seenClaims = filterSeenSkillState(claimValue, skillsToClear);
+
+      if (options?.sessionId) {
+        pruneSessionSeenSkillArtifacts(options.sessionId, skillsToClear);
+      }
+
+      clearedSkills = [...skillsToClear].sort();
+    }
+
+    persistCompactionResetEnv(seenEnv);
+  }
+
+  const seenState = includeEnv
+    ? mergeSeenSkillStates(seenEnv, seenFile, seenClaims)
+    : mergeSeenSkillStates(seenFile, seenClaims);
+
+  return {
+    seenEnv,
+    seenFile,
+    seenClaims,
+    seenState,
+    compactionResetApplied: compactionTriggered,
+    clearedSkills,
+  };
 }
 
 /**

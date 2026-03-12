@@ -21,8 +21,10 @@ import {
 } from "./hook-env.mjs";
 import { buildSkillMap, validateSkillMap } from "./skill-map-frontmatter.mjs";
 import {
+  COMPACTION_REINJECT_MIN_PRIORITY,
   parseSeenSkills,
   mergeSeenSkillStates,
+  mergeSeenSkillStatesWithCompactionReset,
   parseLikelySkills,
   compileSkillPatterns,
   matchPathWithReason,
@@ -150,12 +152,14 @@ function isClientReactFile(toolName, toolInput) {
   return !/\/(api|actions)\//.test(filePath) && !/\broute\.[jt]sx?$/.test(filePath);
 }
 var RUNTIME_ENV_KEYS = [
+  "VERCEL_PLUGIN_CONTEXT_COMPACTED",
   "VERCEL_PLUGIN_SEEN_SKILLS",
   "VERCEL_PLUGIN_TSX_EDIT_COUNT",
   "VERCEL_PLUGIN_DEV_VERIFY_COUNT"
 ];
 function captureRuntimeEnvSnapshot(env = process.env) {
   return {
+    VERCEL_PLUGIN_CONTEXT_COMPACTED: env.VERCEL_PLUGIN_CONTEXT_COMPACTED,
     VERCEL_PLUGIN_SEEN_SKILLS: env.VERCEL_PLUGIN_SEEN_SKILLS,
     VERCEL_PLUGIN_TSX_EDIT_COUNT: env.VERCEL_PLUGIN_TSX_EDIT_COUNT,
     VERCEL_PLUGIN_DEV_VERIFY_COUNT: env.VERCEL_PLUGIN_DEV_VERIFY_COUNT
@@ -735,7 +739,6 @@ function formatOutput({
     matchedSkills: [...matched],
     injectedSkills,
     summaryOnly: summaryOnly || [],
-    droppedByCap,
     droppedByBudget: droppedByBudget || []
   };
   if (reasons && Object.keys(reasons).length > 0) {
@@ -789,7 +792,17 @@ function run() {
   const seenEnv = typeof process.env.VERCEL_PLUGIN_SEEN_SKILLS === "string" ? process.env.VERCEL_PLUGIN_SEEN_SKILLS : "";
   const seenClaims = hasFileDedup ? listSessionKeys(sessionId, "seen-skills", scopeId).join(",") : "";
   const seenFile = hasFileDedup ? readSessionFile(sessionId, "seen-skills", scopeId) : "";
-  const seenState = hasFileDedup ? mergeSeenSkillStates(seenFile, seenClaims) : seenEnv;
+  const seenStateResult = dedupOff ? {
+    seenEnv,
+    seenState: hasFileDedup ? mergeSeenSkillStates(seenFile, seenClaims) : seenEnv,
+    compactionResetApplied: false,
+    clearedSkills: []
+  } : mergeSeenSkillStatesWithCompactionReset(seenEnv, seenFile, seenClaims, {
+    sessionId: hasFileDedup ? sessionId : void 0,
+    includeEnv: !hasFileDedup,
+    skillMap: skills.skillMap
+  });
+  const seenState = seenStateResult.seenState;
   const hasEnvDedup = !dedupOff && typeof process.env.VERCEL_PLUGIN_SEEN_SKILLS === "string";
   const hasSeenSkillDedup = hasFileDedup || hasEnvDedup;
   const dedupStrategy = dedupOff ? "disabled" : hasFileDedup ? "file" : hasEnvDedup ? "env-var" : "memory-only";
@@ -797,6 +810,14 @@ function run() {
   const likelySkills = parseLikelySkills(likelySkillsEnv);
   const setupMode = process.env.VERCEL_PLUGIN_SETUP_MODE === "1";
   log.debug("dedup-strategy", { strategy: dedupStrategy, sessionId, seenEnv: seenState });
+  if (seenStateResult.compactionResetApplied) {
+    log.debug("dedup-compaction-reset", {
+      sessionId,
+      scopeId,
+      threshold: COMPACTION_REINJECT_MIN_PRIORITY,
+      clearedSkills: seenStateResult.clearedSkills
+    });
+  }
   if (likelySkills.size > 0) {
     log.debug("likely-skills", { skills: [...likelySkills] });
   }

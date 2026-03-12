@@ -11,7 +11,8 @@
  *   - allOf:    +4 per conjunction group where ALL terms match
  *   - anyOf:    +1 per term hit, capped at +2
  *   - noneOf:   hard suppress (score → -Infinity)
- *   Threshold: score >= minScore (default 6) with at least one phrase hit.
+ *   Threshold: score >= minScore (default 6). Project-context skills get +3.
+ *   When one skill scores >= 600, scores under 50 are filtered out.
  *
  * Max 2 skills injected per prompt, 8KB total budget.
  * Deduplicates via session seen-skill state when available.
@@ -33,10 +34,14 @@ import {
 } from "./hook-env.mjs";
 import { loadSkills, injectSkills } from "./pretooluse-skill-inject.mjs";
 import type { LoadedSkills } from "./pretooluse-skill-inject.mjs";
-import { parseSeenSkills, mergeSeenSkillStates, buildDocsBlock } from "./patterns.mjs";
-import type { CompiledSkillEntry } from "./patterns.mjs";
-import { normalizePromptText, compilePromptSignals, matchPromptWithReason, scorePromptWithLexical, classifyTroubleshootingIntent } from "./prompt-patterns.mjs";
-import type { CompiledPromptSignals, TroubleshootingIntentResult } from "./prompt-patterns.mjs";
+import {
+  COMPACTION_REINJECT_MIN_PRIORITY,
+  parseSeenSkills,
+  mergeSeenSkillStates,
+  mergeSeenSkillStatesWithCompactionReset,
+  buildDocsBlock,
+} from "./patterns.mjs";
+import { normalizePromptText, compilePromptSignals, matchPromptWithReason, scorePromptWithLexical, classifyTroubleshootingIntent, lexicalFallbackMeetsFloor } from "./prompt-patterns.mjs";
 import { searchSkills, initializeLexicalIndex } from "./lexical-index.mjs";
 import { analyzePrompt } from "./prompt-analysis.mjs";
 import type { PromptAnalysisReport } from "./prompt-analysis.mjs";
@@ -50,6 +55,11 @@ const MIN_PROMPT_LENGTH = 10;
 const PLUGIN_ROOT = resolvePluginRoot();
 const SKILL_INJECTION_VERSION = 1;
 const ENV_SEEN_SKILLS_KEY = "VERCEL_PLUGIN_SEEN_SKILLS";
+const ENV_CONTEXT_COMPACTED_KEY = "VERCEL_PLUGIN_CONTEXT_COMPACTED";
+const DEFAULT_PROMPT_MIN_SCORE = 6;
+const PROJECT_CONTEXT_PROMPT_SCORE_BOOST = 3;
+const DOMINANT_TOPIC_SCORE_THRESHOLD = 600;
+const DOMINANT_TOPIC_MIN_SCORE = 50;
 
 export type PromptHookPlatform = "claude-code" | "cursor";
 
@@ -161,15 +171,59 @@ export interface PromptSeenSkillState {
   hasFileDedup: boolean;
   seenClaims: string;
   seenFile: string;
+  seenEnv: string;
   seenState: string;
+  compactionResetApplied: boolean;
+  clearedSkills: string[];
 }
 
-export function resolvePromptSeenSkillState(sessionId: string | null): PromptSeenSkillState {
+function capturePromptEnvSnapshot(env: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> {
+  return {
+    [ENV_SEEN_SKILLS_KEY]: env[ENV_SEEN_SKILLS_KEY],
+    [ENV_CONTEXT_COMPACTED_KEY]: env[ENV_CONTEXT_COMPACTED_KEY],
+  };
+}
+
+function finalizePromptEnvUpdates(
+  platform: PromptHookPlatform,
+  before: Record<string, string | undefined>,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> | undefined {
+  if (platform !== "cursor") return undefined;
+
+  const updates: Record<string, string> = {};
+  for (const key of [ENV_SEEN_SKILLS_KEY, ENV_CONTEXT_COMPACTED_KEY]) {
+    const nextValue = env[key];
+    if (typeof nextValue === "string" && nextValue !== before[key]) {
+      updates[key] = nextValue;
+    }
+  }
+
+  return Object.keys(updates).length > 0 ? updates : undefined;
+}
+
+export function resolvePromptSeenSkillState(
+  sessionId: string | null,
+  skillMap?: LoadedSkills["skillMap"],
+): PromptSeenSkillState {
   const dedupOff = process.env.VERCEL_PLUGIN_HOOK_DEDUP === "off";
   const hasFileDedup = !dedupOff && !!sessionId;
+  const seenEnv = getSeenSkillsEnv();
   const seenClaims = hasFileDedup ? listSessionKeys(sessionId as string, "seen-skills").join(",") : "";
   const seenFile = hasFileDedup ? readSessionFile(sessionId as string, "seen-skills") : "";
-  const seenState = hasFileDedup ? mergeSeenSkillStates(seenFile, seenClaims) : getSeenSkillsEnv();
+  const seenStateResult = dedupOff
+    ? {
+      seenEnv,
+      seenState: hasFileDedup ? mergeSeenSkillStates(seenFile, seenClaims) : seenEnv,
+      compactionResetApplied: false,
+      clearedSkills: [] as string[],
+    }
+    : mergeSeenSkillStatesWithCompactionReset(seenEnv, seenFile, seenClaims, {
+      sessionId: hasFileDedup ? sessionId : undefined,
+      includeEnv: !hasFileDedup,
+      skillMap,
+    });
+  const seenState = seenStateResult.seenState;
 
   if (hasFileDedup) {
     writeSessionFile(sessionId as string, "seen-skills", seenState);
@@ -180,7 +234,10 @@ export function resolvePromptSeenSkillState(sessionId: string | null): PromptSee
     hasFileDedup,
     seenClaims,
     seenFile,
+    seenEnv: seenStateResult.seenEnv,
     seenState,
+    compactionResetApplied: seenStateResult.compactionResetApplied,
+    clearedSkills: seenStateResult.clearedSkills,
   };
 }
 
@@ -258,6 +315,280 @@ export interface PromptMatchEntry {
   priority: number;
 }
 
+interface PromptScoreState extends PromptMatchEntry {
+  matched: boolean;
+  minScore: number;
+  suppressed: boolean;
+}
+
+function parseLikelySkillsEnv(envValue = process.env.VERCEL_PLUGIN_LIKELY_SKILLS): Set<string> {
+  if (typeof envValue !== "string" || envValue.trim() === "") {
+    return new Set();
+  }
+
+  return new Set(
+    envValue
+      .split(",")
+      .map((skill) => skill.trim())
+      .filter((skill) => skill.length > 0),
+  );
+}
+
+function getPromptSignalMinScore(skillConfig: LoadedSkills["skillMap"][string] | undefined): number {
+  const minScore = skillConfig?.promptSignals?.minScore;
+  return typeof minScore === "number" && !Number.isNaN(minScore)
+    ? minScore
+    : DEFAULT_PROMPT_MIN_SCORE;
+}
+
+function formatPromptScore(score: number): string {
+  return Number.isInteger(score) ? String(score) : score.toFixed(1);
+}
+
+function extractLexicalScore(reason: string): number | null {
+  const match = reason.match(/lexical [^(]*\((?:raw |score )([0-9]+(?:\.[0-9]+)?)/);
+  return match ? Number(match[1]) : null;
+}
+
+function extractBelowThresholdScore(reason: string): number | null {
+  const match = reason.match(/below threshold: score (-?[0-9]+(?:\.[0-9]+)?)/);
+  return match ? Number(match[1]) : null;
+}
+
+function applyLexicalFallbackFloor(entry: PromptScoreState): PromptScoreState {
+  const lexicalScore = extractLexicalScore(entry.reason);
+  if (lexicalScore == null || lexicalFallbackMeetsFloor(lexicalScore) || entry.score === -Infinity) {
+    return entry;
+  }
+
+  const exactScore = extractBelowThresholdScore(entry.reason);
+  const score = exactScore ?? entry.score;
+
+  return {
+    ...entry,
+    score,
+    matched: score >= entry.minScore,
+    reason: `${entry.reason}; lexical floor rejected (raw ${formatPromptScore(lexicalScore)} < 20)`,
+  };
+}
+
+function applyProjectContextBoost(
+  entry: PromptScoreState,
+  likelySkills: Set<string>,
+): PromptScoreState {
+  if (!likelySkills.has(entry.skill) || entry.score === -Infinity) {
+    return entry;
+  }
+
+  const boostedScore = entry.score + PROJECT_CONTEXT_PROMPT_SCORE_BOOST;
+  const boostReason = `project-context +${PROJECT_CONTEXT_PROMPT_SCORE_BOOST} (${formatPromptScore(entry.score)} -> ${formatPromptScore(boostedScore)})`;
+  const reason = entry.reason.startsWith("below threshold:") && boostedScore >= entry.minScore
+    ? boostReason
+    : entry.reason
+      ? `${entry.reason}; ${boostReason}`
+      : boostReason;
+
+  return {
+    ...entry,
+    score: boostedScore,
+    reason,
+    matched: boostedScore >= entry.minScore,
+  };
+}
+
+function applyDominantTopicSuppression(
+  entry: PromptScoreState,
+  topScore: number,
+): PromptScoreState {
+  if (
+    !entry.matched
+    || !Number.isFinite(entry.score)
+    || entry.score >= DOMINANT_TOPIC_MIN_SCORE
+    || topScore < DOMINANT_TOPIC_SCORE_THRESHOLD
+  ) {
+    return entry;
+  }
+
+  return {
+    ...entry,
+    matched: false,
+    suppressed: true,
+    reason: `${entry.reason}; suppressed by dominant topic (${formatPromptScore(topScore)} >= ${DOMINANT_TOPIC_SCORE_THRESHOLD}, score < ${DOMINANT_TOPIC_MIN_SCORE})`,
+  };
+}
+
+function applyPromptScoreAdjustments(
+  entries: PromptScoreState[],
+  logger?: Logger,
+): PromptScoreState[] {
+  const l = logger || log;
+  const likelySkills = parseLikelySkillsEnv();
+  const lexicalFloorRejected: string[] = [];
+  const flooredEntries = entries.map((entry) => {
+    const adjusted = applyLexicalFallbackFloor(entry);
+    if (adjusted !== entry) {
+      lexicalFloorRejected.push(entry.skill);
+    }
+    return adjusted;
+  });
+  const boostedSkills: string[] = [];
+
+  if (lexicalFloorRejected.length > 0) {
+    l.debug("prompt-lexical-floor-rejected", {
+      minRawScore: 20,
+      rejectedSkills: lexicalFloorRejected,
+    });
+  }
+
+  const boostedEntries = flooredEntries.map((entry) => {
+    const boosted = applyProjectContextBoost(entry, likelySkills);
+    if (boosted !== entry) {
+      boostedSkills.push(entry.skill);
+    }
+    return boosted;
+  });
+
+  if (boostedSkills.length > 0) {
+    l.debug("prompt-project-context-boost", {
+      boost: PROJECT_CONTEXT_PROMPT_SCORE_BOOST,
+      boostedSkills,
+    });
+  }
+
+  const topScore = boostedEntries.reduce((max, entry) => {
+    if (Number.isFinite(entry.score) && entry.score > max) {
+      return entry.score;
+    }
+    return max;
+  }, -Infinity);
+
+  if (topScore < DOMINANT_TOPIC_SCORE_THRESHOLD) {
+    return boostedEntries;
+  }
+
+  const suppressedSkills: string[] = [];
+  const adjustedEntries = boostedEntries.map((entry) => {
+    const adjusted = applyDominantTopicSuppression(entry, topScore);
+    if (adjusted !== entry) {
+      suppressedSkills.push(entry.skill);
+    }
+    return adjusted;
+  });
+
+  if (suppressedSkills.length > 0) {
+    l.debug("prompt-dominant-topic-suppression", {
+      topScore,
+      minScore: DOMINANT_TOPIC_MIN_SCORE,
+      suppressedSkills,
+    });
+  }
+
+  return adjustedEntries;
+}
+
+function sortPromptScoreStates<T extends Pick<PromptMatchEntry, "skill" | "score" | "priority">>(entries: T[]): void {
+  entries.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return a.skill.localeCompare(b.skill);
+  });
+}
+
+function estimatePromptSkillSize(skillConfig: LoadedSkills["skillMap"][string] | undefined): number {
+  return skillConfig?.summary
+    ? Math.max(skillConfig.summary.length * 10, 500)
+    : 500;
+}
+
+function rerankPromptAnalysisReport(
+  report: PromptAnalysisReport,
+  skillMap: LoadedSkills["skillMap"],
+  maxSkills: number,
+  budgetBytes: number,
+): void {
+  const ranked = Object.entries(report.perSkillResults)
+    .filter(([, result]) => result.matched)
+    .map(([skill, result]) => ({
+      skill,
+      score: result.score,
+      reason: result.reason,
+      priority: skillMap[skill]?.priority ?? 0,
+      matched: true,
+      minScore: getPromptSignalMinScore(skillMap[skill]),
+      suppressed: result.suppressed,
+    }));
+
+  sortPromptScoreStates(ranked);
+
+  const dedupDisabled = report.dedupState.strategy === "disabled";
+  const seenSkills = new Set(report.dedupState.seenSkills);
+  const filteredByDedup: string[] = [];
+  const afterDedup = ranked.filter((entry) => {
+    if (!dedupDisabled && seenSkills.has(entry.skill)) {
+      filteredByDedup.push(entry.skill);
+      return false;
+    }
+    return true;
+  });
+
+  report.dedupState.filteredByDedup = filteredByDedup;
+  report.droppedByCap = afterDedup.slice(maxSkills).map((entry) => entry.skill);
+
+  const droppedByBudget: string[] = [];
+  const selectedSkills: string[] = [];
+  let usedBytes = 0;
+  for (const entry of afterDedup.slice(0, maxSkills)) {
+    const estimatedSize = estimatePromptSkillSize(skillMap[entry.skill]);
+    if (usedBytes + estimatedSize > budgetBytes && selectedSkills.length > 0) {
+      droppedByBudget.push(entry.skill);
+      continue;
+    }
+    usedBytes += estimatedSize;
+    selectedSkills.push(entry.skill);
+  }
+
+  report.selectedSkills = selectedSkills;
+  report.droppedByBudget = droppedByBudget;
+}
+
+function applyPromptScoreAdjustmentsToReport(
+  report: PromptAnalysisReport,
+  skillMap: LoadedSkills["skillMap"],
+  logger?: Logger,
+  options?: { maxSkills?: number; budgetBytes?: number },
+): PromptAnalysisReport {
+  const scoredEntries: PromptScoreState[] = Object.entries(report.perSkillResults).map(
+    ([skill, result]) => ({
+      skill,
+      score: result.score,
+      reason: result.reason,
+      priority: skillMap[skill]?.priority ?? 0,
+      matched: result.matched,
+      minScore: getPromptSignalMinScore(skillMap[skill]),
+      suppressed: result.suppressed,
+    }),
+  );
+
+  const adjustedEntries = applyPromptScoreAdjustments(scoredEntries, logger);
+  for (const entry of adjustedEntries) {
+    report.perSkillResults[entry.skill] = {
+      score: entry.score,
+      reason: entry.reason,
+      matched: entry.matched,
+      suppressed: entry.suppressed,
+    };
+  }
+
+  rerankPromptAnalysisReport(
+    report,
+    skillMap,
+    options?.maxSkills ?? MAX_SKILLS,
+    options?.budgetBytes ?? report.budgetBytes,
+  );
+
+  return report;
+}
+
 /**
  * Evaluate all skills with promptSignals against the normalized prompt.
  * Returns matched entries sorted by score DESC then priority DESC.
@@ -275,7 +606,7 @@ export function matchPromptSignals(
   const l = logger || log;
   const lexical = options?.lexical ?? false;
   const { skillMap } = skills;
-  const matches: PromptMatchEntry[] = [];
+  const scoredEntries: PromptScoreState[] = [];
 
   // Pre-compute lexical hits once for all skills when enabled
   const lexicalHits = lexical ? searchSkills(normalizedPrompt) : undefined;
@@ -288,57 +619,61 @@ export function matchPromptSignals(
     if (lexical) {
       // Lexical path: use scorePromptWithLexical for hybrid scoring
       const lexResult = scorePromptWithLexical(normalizedPrompt, skill, compiled, lexicalHits);
-      const isMatched = lexResult.score >= compiled.minScore;
+      const lexicalFloorRejected = lexResult.source !== "exact"
+        && !lexicalFallbackMeetsFloor(lexResult.lexicalScore);
+      const isMatched = lexResult.score >= compiled.minScore && !lexicalFloorRejected;
 
       const reason = lexResult.source === "exact"
         ? matchPromptWithReason(normalizedPrompt, compiled).reason
-        : `${matchPromptWithReason(normalizedPrompt, compiled).reason}; lexical ${lexResult.source} (score ${lexResult.lexicalScore.toFixed(1)}, tier ${lexResult.boostTier ?? "none"})`;
+        : `${matchPromptWithReason(normalizedPrompt, compiled).reason}; lexical ${lexResult.source} (score ${lexResult.lexicalScore.toFixed(1)}, tier ${lexResult.boostTier ?? "none"})${lexicalFloorRejected ? "; lexical floor rejected" : ""}`;
 
-      l.trace("prompt-signal-eval", {
+      scoredEntries.push({
         skill,
-        matched: isMatched,
         score: lexResult.score,
         reason,
-        source: lexResult.source,
-        boostTier: lexResult.boostTier,
+        priority: config.priority,
+        matched: isMatched,
+        minScore: compiled.minScore,
+        suppressed: lexResult.score === -Infinity,
       });
-
-      if (isMatched) {
-        matches.push({
-          skill,
-          score: lexResult.score,
-          reason,
-          priority: config.priority,
-        });
-      }
     } else {
       // Exact-match path (default): unchanged behavior
       const result = matchPromptWithReason(normalizedPrompt, compiled);
 
-      l.trace("prompt-signal-eval", {
+      scoredEntries.push({
         skill,
         matched: result.matched,
         score: result.score,
         reason: result.reason,
+        priority: config.priority,
+        minScore: compiled.minScore,
+        suppressed: result.score === -Infinity,
       });
-
-      if (result.matched) {
-        matches.push({
-          skill,
-          score: result.score,
-          reason: result.reason,
-          priority: config.priority,
-        });
-      }
     }
   }
 
+  const adjustedEntries = applyPromptScoreAdjustments(scoredEntries, l);
+  for (const entry of adjustedEntries) {
+    l.trace("prompt-signal-eval", {
+      skill: entry.skill,
+      matched: entry.matched,
+      score: entry.score,
+      reason: entry.reason,
+      suppressed: entry.suppressed,
+    });
+  }
+
+  const matches = adjustedEntries
+    .filter((entry) => entry.matched)
+    .map(({ skill, score, reason, priority }) => ({
+      skill,
+      score,
+      reason,
+      priority,
+    }));
+
   // Sort by score DESC, then priority DESC, then skill name ASC
-  matches.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (b.priority !== a.priority) return b.priority - a.priority;
-    return a.skill.localeCompare(b.skill);
-  });
+  sortPromptScoreStates(matches);
 
   l.debug("prompt-matches", {
     totalWithSignals: Object.values(skillMap).filter((c) => c.promptSignals).length,
@@ -489,7 +824,6 @@ export function formatOutput(
     matchedSkills,
     injectedSkills,
     summaryOnly,
-    droppedByCap,
     droppedByBudget,
   };
 
@@ -555,6 +889,7 @@ export function run(): string {
   if (log.active) timing.stdin_parse = Math.round(log.now() - tPhase);
 
   const { prompt, sessionId, cwd } = parsed;
+  const promptEnvBefore = capturePromptEnvSnapshot();
 
   if (isTelemetryEnabled() && sessionId) {
     trackEvents(sessionId, [
@@ -577,13 +912,14 @@ export function run(): string {
 
   // Stage 3: analyzePrompt — structured analysis of matching + dedup + cap
   const tAnalyze = log.active ? log.now() : 0;
-  const dedupOff = process.env.VERCEL_PLUGIN_HOOK_DEDUP === "off";
-  const hasFileDedup = !dedupOff && !!sessionId;
-  const seenClaims = hasFileDedup ? listSessionKeys(sessionId as string, "seen-skills").join(",") : "";
-  const seenFile = hasFileDedup ? readSessionFile(sessionId as string, "seen-skills") : "";
-  const seenState = hasFileDedup ? mergeSeenSkillStates(seenFile, seenClaims) : getSeenSkillsEnv();
-  if (hasFileDedup) {
-    writeSessionFile(sessionId as string, "seen-skills", seenState);
+  const seenSkillState = resolvePromptSeenSkillState(sessionId, skills.skillMap);
+  const { dedupOff, hasFileDedup, seenState } = seenSkillState;
+  if (seenSkillState.compactionResetApplied) {
+    log.debug("dedup-compaction-reset", {
+      sessionId,
+      threshold: COMPACTION_REINJECT_MIN_PRIORITY,
+      clearedSkills: seenSkillState.clearedSkills,
+    });
   }
   const budget = getInjectionBudget();
   const lexicalEnabled = process.env.VERCEL_PLUGIN_LEXICAL_PROMPT !== "0";
@@ -591,6 +927,10 @@ export function run(): string {
     initializeLexicalIndex(new Map(Object.entries(skills.skillMap)));
   }
   const report = analyzePrompt(prompt, skills.skillMap, seenState, budget, MAX_SKILLS, { lexicalEnabled });
+  applyPromptScoreAdjustmentsToReport(report, skills.skillMap, log, {
+    maxSkills: MAX_SKILLS,
+    budgetBytes: budget,
+  });
   if (log.active) timing.analyze = Math.round(log.now() - tAnalyze);
 
   // --- Trace: full report ---
@@ -719,7 +1059,7 @@ export function run(): string {
         .map(([skill]) => skill),
     });
     log.complete("no_prompt_matches", { matchedCount: 0 }, log.active ? timing : null);
-    return formatEmptyOutput(platform);
+    return formatEmptyOutput(platform, finalizePromptEnvUpdates(platform, promptEnvBefore));
   }
 
   // All matched but filtered by dedup
@@ -734,7 +1074,7 @@ export function run(): string {
       matchedCount: allMatched.length,
       dedupedCount: allMatched.length,
     }, log.active ? timing : null);
-    return formatEmptyOutput(platform);
+    return formatEmptyOutput(platform, finalizePromptEnvUpdates(platform, promptEnvBefore));
   }
 
   // Stage 4: inject selected skills (file I/O for SKILL.md bodies)
@@ -808,8 +1148,11 @@ export function run(): string {
   let outputEnv: Record<string, string> | undefined;
   const envFile = nonEmptyString(process.env.CLAUDE_ENV_FILE);
   const seenSkills = hasFileDedup ? syncedSeenSkills : seenState;
-  if (loaded.length > 0 && seenSkills !== "" && !envFile && platform === "cursor") {
-    outputEnv = { [ENV_SEEN_SKILLS_KEY]: seenSkills };
+  if (platform === "cursor") {
+    if (!envFile) {
+      process.env[ENV_SEEN_SKILLS_KEY] = seenSkills;
+    }
+    outputEnv = finalizePromptEnvUpdates(platform, promptEnvBefore);
   }
   // Stage 5: formatOutput
   // Build prompt match reasons for the banner

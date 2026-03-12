@@ -6,7 +6,14 @@ import { readFileSync, realpathSync } from "fs";
 import { join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { detectPlatform } from "./compat.mjs";
-import { pluginRoot as resolvePluginRoot, readSessionFile, safeReadFile, writeSessionFile, tryClaimSessionKey, syncSessionFileFromClaims } from "./hook-env.mjs";
+import {
+  pluginRoot as resolvePluginRoot,
+  readSessionFile,
+  safeReadFile,
+  writeSessionFile,
+  tryClaimSessionKey,
+  syncSessionFileFromClaims
+} from "./hook-env.mjs";
 import { buildSkillMap, extractFrontmatter } from "./skill-map-frontmatter.mjs";
 import {
   compileSkillPatterns,
@@ -19,6 +26,34 @@ var SUPPORTED_TOOLS = ["Write", "Edit"];
 var VALIDATED_FILES_ENV_KEY = "VERCEL_PLUGIN_VALIDATED_FILES";
 var CHAIN_BUDGET_BYTES = 18e3;
 var DEFAULT_CHAIN_CAP = 2;
+function resolveToolFilePaths(toolInput) {
+  const collected = [];
+  const pushPath = (value) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed !== "") {
+      collected.push(trimmed);
+    }
+  };
+  pushPath(toolInput.file_path);
+  if (Array.isArray(toolInput.file_paths)) {
+    for (const value of toolInput.file_paths) {
+      pushPath(value);
+    }
+  }
+  if (Array.isArray(toolInput.files)) {
+    for (const value of toolInput.files) {
+      if (typeof value === "string") {
+        pushPath(value);
+        continue;
+      }
+      if (value && typeof value === "object" && "file_path" in value) {
+        pushPath(value.file_path);
+      }
+    }
+  }
+  return [...new Set(collected)];
+}
 function resolveSessionId(input) {
   const sessionId = input.session_id ?? input.conversation_id;
   return typeof sessionId === "string" && sessionId.trim() !== "" ? sessionId : null;
@@ -49,6 +84,9 @@ function formatPlatformOutput(platform, additionalContext, env) {
   };
   return JSON.stringify(output);
 }
+function validationRuleId(skill, rule) {
+  return `${skill}::${rule.pattern}`;
+}
 var log = createLogger();
 function parseInput(raw, logger, env = process.env) {
   const l = logger || log;
@@ -70,7 +108,8 @@ function parseInput(raw, logger, env = process.env) {
     return null;
   }
   const toolInput = input.tool_input || {};
-  const filePath = toolInput.file_path || "";
+  const filePaths = resolveToolFilePaths(toolInput);
+  const filePath = filePaths[0] || "";
   if (!filePath) {
     l.debug("posttooluse-validate-skip", { reason: "no_file_path", toolName });
     return null;
@@ -81,11 +120,12 @@ function parseInput(raw, logger, env = process.env) {
   l.debug("posttooluse-validate-input", {
     toolName,
     filePath,
+    filePathsCount: filePaths.length,
     sessionId,
     cwd,
     platform
   });
-  return { toolName, filePath, sessionId, cwd, platform };
+  return { toolName, filePath, filePaths, sessionId, cwd, platform };
 }
 function loadValidateRules(pluginRoot, logger) {
   const l = logger || log;
@@ -141,7 +181,7 @@ function matchFileToSkills(filePath, fileContent, compiledSkills, rulesMap, logg
   l.debug("posttooluse-validate-matched", { matchedSkills: matched });
   return matched;
 }
-function runValidation(fileContent, matchedSkills, rulesMap, logger) {
+function runValidation(fileContent, matchedSkills, rulesMap, logger, filePath) {
   const l = logger || log;
   const violations = [];
   const lines = fileContent.split("\n");
@@ -149,6 +189,7 @@ function runValidation(fileContent, matchedSkills, rulesMap, logger) {
     const rules = rulesMap.get(skill);
     if (!rules) continue;
     for (const rule of rules) {
+      const ruleId = validationRuleId(skill, rule);
       if (rule.skipIfFileContains) {
         try {
           if (new RegExp(rule.skipIfFileContains, "m").test(fileContent)) {
@@ -182,6 +223,8 @@ function runValidation(fileContent, matchedSkills, rulesMap, logger) {
             message: rule.message,
             severity: rule.severity,
             matchedText: match[0].slice(0, 80),
+            filePath,
+            ruleId,
             upgradeToSkill: rule.upgradeToSkill,
             upgradeWhy: rule.upgradeWhy,
             upgradeMode: rule.upgradeMode ?? (rule.upgradeToSkill ? "soft" : void 0)

@@ -3,10 +3,13 @@ import { rmSync } from "node:fs";
 import {
   dedupClaimDirPath,
   dedupFilePath,
+  listSessionKeys,
   readSessionFile,
   tryClaimSessionKey,
   writeSessionFile,
 } from "./src/hook-env.mts";
+import { formatOutput as formatPreToolOutput } from "./src/pretooluse-skill-inject.mts";
+import { mergeSeenSkillStatesWithCompactionReset } from "./src/patterns.mts";
 import {
   formatOutput,
   parsePromptInput,
@@ -16,10 +19,14 @@ import {
 
 const SESSION_KIND = "seen-skills";
 const originalSeenSkills = process.env.VERCEL_PLUGIN_SEEN_SKILLS;
+const originalContextCompacted = process.env.VERCEL_PLUGIN_CONTEXT_COMPACTED;
 const originalDedupMode = process.env.VERCEL_PLUGIN_HOOK_DEDUP;
 const touchedSessionIds = new Set<string>();
 
-function restoreEnv(name: "VERCEL_PLUGIN_SEEN_SKILLS" | "VERCEL_PLUGIN_HOOK_DEDUP", value: string | undefined): void {
+function restoreEnv(
+  name: "VERCEL_PLUGIN_SEEN_SKILLS" | "VERCEL_PLUGIN_CONTEXT_COMPACTED" | "VERCEL_PLUGIN_HOOK_DEDUP",
+  value: string | undefined,
+): void {
   if (typeof value === "string") {
     process.env[name] = value;
     return;
@@ -40,6 +47,7 @@ function newSessionId(name: string): string {
 
 afterEach(() => {
   restoreEnv("VERCEL_PLUGIN_SEEN_SKILLS", originalSeenSkills);
+  restoreEnv("VERCEL_PLUGIN_CONTEXT_COMPACTED", originalContextCompacted);
   restoreEnv("VERCEL_PLUGIN_HOOK_DEDUP", originalDedupMode);
   for (const sessionId of touchedSessionIds) {
     cleanupSession(sessionId);
@@ -77,6 +85,48 @@ describe("user prompt seen-skills dedup state", () => {
     expect(synced).toBe("skill-env,skill-new");
     expect(readSessionFile(sessionId, SESSION_KIND)).toBe("skill-env,skill-new");
     expect(process.env.VERCEL_PLUGIN_SEEN_SKILLS).toBe("skill-env");
+  });
+
+  it("test_mergeSeenSkillStatesWithCompactionReset_clears_only_high_priority_skills_across_session_artifacts", () => {
+    const sessionId = newSessionId("compact-reset");
+    const scopeId = "subagent-compact-reset";
+
+    process.env.VERCEL_PLUGIN_SEEN_SKILLS = "ai-sdk,low-skill,shared";
+    process.env.VERCEL_PLUGIN_CONTEXT_COMPACTED = "true";
+
+    writeSessionFile(sessionId, SESSION_KIND, "ai-sdk,low-skill");
+    writeSessionFile(sessionId, SESSION_KIND, "low-skill,workflow", scopeId);
+    tryClaimSessionKey(sessionId, SESSION_KIND, "ai-sdk");
+    tryClaimSessionKey(sessionId, SESSION_KIND, "low-skill");
+    tryClaimSessionKey(sessionId, SESSION_KIND, "workflow", scopeId);
+    tryClaimSessionKey(sessionId, SESSION_KIND, "low-skill", scopeId);
+
+    const result = mergeSeenSkillStatesWithCompactionReset(
+      process.env.VERCEL_PLUGIN_SEEN_SKILLS,
+      readSessionFile(sessionId, SESSION_KIND),
+      listSessionKeys(sessionId, SESSION_KIND).join(","),
+      {
+        sessionId,
+        includeEnv: false,
+        skillMap: {
+          "ai-sdk": { priority: 7 },
+          workflow: { priority: 8 },
+          "low-skill": { priority: 6 },
+        },
+      },
+    );
+
+    expect(result.compactionResetApplied).toBe(true);
+    expect(result.clearedSkills).toEqual(["ai-sdk", "workflow"]);
+    expect(result.seenState).toBe("low-skill");
+    expect(process.env.VERCEL_PLUGIN_SEEN_SKILLS).toBe("low-skill,shared");
+    expect(process.env.VERCEL_PLUGIN_CONTEXT_COMPACTED).toBe("");
+    expect(readSessionFile(sessionId, SESSION_KIND)).toBe("low-skill");
+    expect(readSessionFile(sessionId, SESSION_KIND, scopeId)).toBe("low-skill");
+    expect(listSessionKeys(sessionId, SESSION_KIND)).toEqual(["low-skill"]);
+    expect(listSessionKeys(sessionId, SESSION_KIND, scopeId)).toEqual(["low-skill"]);
+    expect(tryClaimSessionKey(sessionId, SESSION_KIND, "ai-sdk")).toBe(true);
+    expect(tryClaimSessionKey(sessionId, SESSION_KIND, "workflow", scopeId)).toBe(true);
   });
 });
 
@@ -141,5 +191,24 @@ describe("user prompt cursor compatibility", () => {
     expect(output.additional_context).toContain("skillInjection");
     expect(output.env).toEqual({ VERCEL_PLUGIN_SEEN_SKILLS: "ai-elements" });
     expect(output.hookSpecificOutput).toBeUndefined();
+  });
+
+  it("test_formatOutput_omits_droppedByCap_from_prettooluse_injected_metadata_comment", () => {
+    const output = JSON.parse(formatPreToolOutput({
+      parts: ["You must run the Skill(ai-sdk) tool."],
+      matched: new Set(["ai-sdk", "workflow"]),
+      injectedSkills: ["ai-sdk"],
+      summaryOnly: [],
+      droppedByCap: ["workflow"],
+      droppedByBudget: [],
+      toolName: "Write",
+      toolTarget: "app/page.tsx",
+      platform: "claude-code",
+    }));
+
+    const context = output.hookSpecificOutput?.additionalContext ?? "";
+    expect(context).toContain("skillInjection");
+    expect(context).not.toContain('"droppedByCap"');
+    expect(context).toContain('"droppedByBudget":[]');
   });
 });

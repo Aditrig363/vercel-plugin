@@ -42,6 +42,12 @@ type LexicalHit = { skill: string; score: number };
 
 export type BoostTier = "high" | "mid" | "low" | null;
 
+const MIN_LEXICAL_FALLBACK_SCORE = 20;
+
+export function lexicalFallbackMeetsFloor(score: number): boolean {
+  return score >= MIN_LEXICAL_FALLBACK_SCORE;
+}
+
 // ---------------------------------------------------------------------------
 // Contraction expansion
 // ---------------------------------------------------------------------------

@@ -22,11 +22,19 @@
 
 import type { SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectPlatform, type HookPlatform } from "./compat.mjs";
-import { pluginRoot as resolvePluginRoot, readSessionFile, safeReadFile, writeSessionFile, tryClaimSessionKey, syncSessionFileFromClaims } from "./hook-env.mjs";
+import {
+  dedupFilePath,
+  pluginRoot as resolvePluginRoot,
+  readSessionFile,
+  safeReadFile,
+  writeSessionFile,
+  tryClaimSessionKey,
+  syncSessionFileFromClaims,
+} from "./hook-env.mjs";
 import { buildSkillMap, extractFrontmatter } from "./skill-map-frontmatter.mjs";
 import type { ChainToRule, SkillConfig, ValidationRule } from "./skill-map-frontmatter.mjs";
 import {
@@ -36,14 +44,16 @@ import {
   importPatternToRegex,
 } from "./patterns.mjs";
 import type { CompiledSkillEntry, CompiledPattern } from "./patterns.mjs";
-import { createLogger } from "./logger.mjs";
+import { createLogger, logCaughtError } from "./logger.mjs";
 import type { Logger } from "./logger.mjs";
 
 const PLUGIN_ROOT = resolvePluginRoot();
 const SUPPORTED_TOOLS = ["Write", "Edit"];
 const VALIDATED_FILES_ENV_KEY = "VERCEL_PLUGIN_VALIDATED_FILES";
+const SEEN_VALIDATIONS_KIND = "seen-validations";
 const CHAIN_BUDGET_BYTES = 18_000;
 const DEFAULT_CHAIN_CAP = 2;
+const REPEATED_SUGGESTION_THRESHOLD = 3;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,9 +62,45 @@ const DEFAULT_CHAIN_CAP = 2;
 export interface ParsedInput {
   toolName: string;
   filePath: string;
+  filePaths: string[];
   sessionId: string | null;
   cwd: string;
   platform: HookPlatform;
+}
+
+function resolveToolFilePaths(toolInput: Record<string, unknown>): string[] {
+  const collected: string[] = [];
+
+  const pushPath = (value: unknown): void => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed !== "") {
+      collected.push(trimmed);
+    }
+  };
+
+  pushPath(toolInput.file_path);
+
+  if (Array.isArray(toolInput.file_paths)) {
+    for (const value of toolInput.file_paths) {
+      pushPath(value);
+    }
+  }
+
+  if (Array.isArray(toolInput.files)) {
+    for (const value of toolInput.files) {
+      if (typeof value === "string") {
+        pushPath(value);
+        continue;
+      }
+
+      if (value && typeof value === "object" && "file_path" in value) {
+        pushPath((value as { file_path?: unknown }).file_path);
+      }
+    }
+  }
+
+  return [...new Set(collected)];
 }
 
 function resolveSessionId(input: Record<string, unknown>): string | null {
@@ -113,9 +159,20 @@ export interface ValidationViolation {
   message: string;
   severity: "error" | "recommended" | "warn";
   matchedText: string;
+  filePath?: string;
+  ruleId?: string;
+  occurrenceCount?: number;
+  repeated?: boolean;
   upgradeToSkill?: string;
   upgradeWhy?: string;
   upgradeMode?: "hard" | "soft";
+}
+
+/**
+ * Generate a stable ID for a validation rule (skill + pattern hash).
+ */
+function validationRuleId(skill: string, rule: ValidationRule): string {
+  return `${skill}::${rule.pattern}`;
 }
 
 export interface ValidateResult {
@@ -165,7 +222,8 @@ export function parseInput(
   }
 
   const toolInput = (input.tool_input as Record<string, unknown>) || {};
-  const filePath = (toolInput.file_path as string) || "";
+  const filePaths = resolveToolFilePaths(toolInput);
+  const filePath = filePaths[0] || "";
   if (!filePath) {
     l.debug("posttooluse-validate-skip", { reason: "no_file_path", toolName });
     return null;
@@ -178,11 +236,12 @@ export function parseInput(
   l.debug("posttooluse-validate-input", {
     toolName,
     filePath,
+    filePathsCount: filePaths.length,
     sessionId: sessionId as string,
     cwd,
     platform,
   });
-  return { toolName, filePath, sessionId, cwd, platform };
+  return { toolName, filePath, filePaths, sessionId, cwd, platform };
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +353,7 @@ export function runValidation(
   matchedSkills: string[],
   rulesMap: Map<string, ValidationRule[]>,
   logger?: Logger,
+  filePath?: string,
 ): ValidationViolation[] {
   const l = logger || log;
   const violations: ValidationViolation[] = [];
@@ -304,6 +364,8 @@ export function runValidation(
     if (!rules) continue;
 
     for (const rule of rules) {
+      const ruleId = validationRuleId(skill, rule);
+
       // Skip rule if file matches the skip condition
       if (rule.skipIfFileContains) {
         try {
@@ -342,6 +404,8 @@ export function runValidation(
             message: rule.message,
             severity: rule.severity,
             matchedText: match[0].slice(0, 80),
+            filePath,
+            ruleId,
             upgradeToSkill: rule.upgradeToSkill,
             upgradeWhy: rule.upgradeWhy,
             upgradeMode: rule.upgradeMode ?? (rule.upgradeToSkill ? "soft" : undefined),

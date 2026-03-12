@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-11T22:12:41.030Z",
+  "generatedAt": "2026-03-12T01:01:33.116Z",
   "version": 2,
   "skills": {
     "vercel-agent": {
@@ -1152,7 +1152,7 @@
           "skipIfFileContains": "vercel\\.json|@vercel/node|edge-light"
         },
         {
-          "pattern": "ncc\\s+build|from\\s+[''\"]@vercel/ncc[''\"\"]",
+          "pattern": "ncc\\s+build|from\\s+['\"]@vercel/ncc['\"]",
           "targetSkill": "deployments-cicd",
           "message": "ncc single-file bundling detected — loading Deployments/CI guidance for deploy --prebuilt and build output optimization.",
           "skipIfFileContains": "vercel\\s+deploy|vercel\\s+build|\\.github/workflows"
@@ -7051,12 +7051,12 @@
           "skipIfFileContains": "@auth0/|@descope/"
         },
         {
-          "pattern": "from\\s+[''\"\"](stripe|@stripe/stripe-js)[''\"\"]|Stripe\\(|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET",
+          "pattern": "from\\s+['\"](stripe|@stripe/stripe-js)['\"]|Stripe\\(|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET",
           "targetSkill": "payments",
           "message": "Stripe integration in next-forge — loading Payments guidance for checkout sessions, webhooks, and subscription billing."
         },
         {
-          "pattern": "from\\s+[''\"\"](resend|@react-email)[''\"\"]|Resend\\(|RESEND_API_KEY",
+          "pattern": "from\\s+['\"](resend|@react-email)['\"]|Resend\\(|RESEND_API_KEY",
           "targetSkill": "email",
           "message": "Resend/React Email in next-forge — loading Email guidance for transactional emails, domain verification, and template patterns."
         }
