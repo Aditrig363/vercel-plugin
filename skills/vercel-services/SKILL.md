@@ -94,7 +94,7 @@ retrieval:
 
 # Deploy multi-service projects with Vercel
 
-Services let you deploy multiple backends and frontends within a single Vercel project. The typical use case is a Python backend (FastAPI) alongside a JavaScript frontend (Next.js, Vite), but it works for any combination — multiple backends, multiple frontends, or a mix of runtimes.
+Services let you deploy multiple independently-built units within a single Vercel project. The typical use case is combining different runtimes (e.g. Python + JavaScript) in one deployment with shared routing and environment variables, but services work for any combination — multiple services of the same runtime, different frameworks, or a mix.
 
 This skill covers **project structure and configuration**. For the actual deployment, defer to the **deployments-cicd** skill.
 
@@ -102,8 +102,8 @@ This skill covers **project structure and configuration**. For the actual deploy
 
 A service is an independently built unit within your project, deployed to the same domain under a unique subpath. At build time, Vercel builds each service separately. At request time, Vercel routes incoming requests to the correct service based on the URL path prefix (longest prefix wins).
 
-- Services layout is enabled via the `experimentalServices` field in `vercel.json` (see example applications).
-- `vercel dev` auto-detects each individual framework and runs services as one application. Use `-L` (short for `--local`) to run without authenticating with the Vercel Cloud. It automatically handles routing and managing dev servers.
+- Services are enabled via the `experimentalServices` field in `vercel.json` (see reference project).
+- `vercel dev -L` auto-detects frameworks and runs all services locally as one application, handling routing automatically. The `-L` flag (short for `--local`) runs without authenticating with Vercel Cloud.
 - Only `vercel.json` lives at the root. Each service manages its own dependencies independently.
 
 ## Configuration
@@ -129,23 +129,39 @@ The project's Framework Preset must be set to **Services** in the Vercel dashboa
 
 ### Configuration fields
 
-| Field          | Required | Description                                                                                         |
-|----------------|----------|-----------------------------------------------------------------------------------------------------|
-| `entrypoint`   | Yes      | Path to the service entrypoint file or directory.                                                   |
-| `routePrefix`  | Yes      | URL path prefix for routing (e.g. `/`, `/api`, `/svc/go`).                                          |
-| `framework`    | No       | Framework slug (e.g. `"nextjs"`, `"fastapi"`, `"express"`). Pins detection; auto-detected if unset. |
-| `memory`       | No       | Max available RAM in MB (128–10,240).                                                               |
-| `maxDuration`  | No       | Execution timeout in seconds (1–900).                                                               |
-| `includeFiles` | No       | Glob patterns for files to include in the deployment.                                               |
-| `excludeFiles` | No       | Glob patterns for files to exclude from the deployment.                                             |
+| Field          | Required | Description                                                |
+|----------------|----------|------------------------------------------------------------|
+| `entrypoint`   | Yes      | Path to the service entrypoint file or directory.          |
+| `routePrefix`  | Yes      | URL path prefix for routing (e.g. `/`, `/api`, `/svc/go`). |
+| `framework`    | No       | Framework slug. Pins detection; auto-detected if unset.    |
+| `memory`       | No       | Max available RAM in MB (128–10,240).                      |
+| `maxDuration`  | No       | Execution timeout in seconds (1–900).                      |
+| `includeFiles` | No       | Glob patterns for files to include in the deployment.      |
+| `excludeFiles` | No       | Glob patterns for files to exclude from the deployment.    |
 
 Do not add unknown fields — they will cause the build to fail.
 
+## Supported runtimes and frameworks
+
+Services is in beta. **Python** and **Go** are tested and production-ready. Other runtimes may work but are not yet validated.
+
+### Python
+
+Works with FastAPI, Flask, Django, or any ASGI/WSGI application. Framework is auto-detected. Set `entrypoint` to the application file (e.g. `"backend/main.py"`). Dependencies go in `pyproject.toml` in the service directory.
+
+### Go
+
+Set `entrypoint` to the service **directory** (e.g. `"backend"`), not a file. **Must** set `"framework": "go"` explicitly in `vercel.json` — auto-detection does not work for Go services. Dependencies in `go.mod` in the service directory.
+
+### Other runtimes (untested)
+
+Vercel supports Node.js, Bun, Rust, Ruby, Wasm, and Edge runtimes for functions. These can theoretically be used as services but are not yet validated.
+
 ## Routing
 
-Vercel evaluates route prefixes from longest to shortest (most specific first), with the primary service (`/`) as the catch-all. Vercel automatically mounts backend services at their `routePrefix`, so backend handlers should **not** include the prefix in their routes.
+Vercel evaluates route prefixes from longest to shortest (most specific first), with the primary service (`/`) as the catch-all. Vercel automatically mounts services at their `routePrefix`, so service handlers should **not** include the prefix in their routes.
 
-For frontend frameworks mounted on a subpath (not `/`), you still need to configure the framework's own base path (e.g. `basePath` in `next.config.js`) to match `routePrefix`.
+For frontend frameworks mounted on a subpath (not `/`), configure the framework's own base path (e.g. `basePath` in `next.config.js`) to match `routePrefix`.
 
 ## Environment variables
 
@@ -160,13 +176,10 @@ Vercel auto-generates URL variables so services can find each other:
 
 ## Usage
 
-1. Pick the most relevant project from `references/`:
-   - `fastapi-vite/` — Python (FastAPI) + Vite/React
-   - `fastapi-nextjs/` — Python (FastAPI) + Next.js
-   - `go-vite/` — Go (net/http) + Vite
-2. Read the reference files to understand the expected layout, then adapt to the user's requirements. Services projects can use all languages and frameworks supported by Vercel, not just the ones found in reference.
-3. Define backend routes **without** the route prefix (e.g. `@app.get("/health")` not `@app.get("/api/health")`). Vercel strips the prefix before forwarding to the backend.
-4. Validate that each service in `vercel.json` has `entrypoint` and `routePrefix`. Only use `framework` when auto-detection gets it wrong.
+1. Read `references/fastapi-vite/` for the canonical project layout.
+2. Adapt the structure to the user's chosen runtimes — services can use any supported runtime, not just the ones in the reference.
+3. Define service routes **without** the route prefix — Vercel strips the prefix before forwarding.
+4. Validate that each service in `vercel.json` has `entrypoint` and `routePrefix`. Only set `framework` when auto-detection fails (required for Go).
 
 ## Output
 
@@ -174,9 +187,9 @@ After scaffolding, present the created file structure to the user. After deploym
 
 ## Troubleshooting
 
-### 404 on backend routes after deployment
+### 404 on routes after deployment
 
-The project needs the Services framework preset enabled in the Vercel dashboard:
+The project needs the Services framework preset:
 
 1. Go to Project Settings → Build & Deployment → Framework Preset
 2. Select **Services** from the dropdown
@@ -184,6 +197,6 @@ The project needs the Services framework preset enabled in the Vercel dashboard:
 
 ### Routes return unexpected results
 
-1. Ensure all services are correctly picked up by `vercel dev` by analyzing the logs. If a service is missing, verify `vercel.json`. Try setting `framework` explicitly.
-2. Validate `routePrefix` behavior: endpoints are declared without `routePrefix` (e.g. `/health`), requests from other services use `routePrefix` (e.g. `/api/health`).
+1. Ensure all services are picked up by `vercel dev` — check logs. If a service is missing, verify `vercel.json`. Try setting `framework` explicitly.
+2. Validate route prefix behavior: handlers declare routes without `routePrefix` (e.g. `/health`), but requests from other services use the full prefix (e.g. `/api/health`).
 3. For frontend services on a subpath, confirm the framework's base path config matches `routePrefix`.
