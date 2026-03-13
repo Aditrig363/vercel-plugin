@@ -2,39 +2,27 @@
 
 ## Getting Started
 
+### Supported Tools
+
+| Tool | Status |
+|------|--------|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Supported |
+| [Cursor](https://www.cursor.com) | Supported |
+| [OpenAI Codex](https://openai.com/index/codex/) | Coming soon |
+
 ### Prerequisites
 
-- An AI coding agent that supports plugins (e.g. [Claude Code](https://docs.anthropic.com/en/docs/claude-code))
+- One of the supported AI coding tools listed above
 - Node.js 18+
 - [Bun](https://bun.sh)
 
-### Option 1: Install with `npx add-plugin` (recommended)
+### Installation
 
 ```bash
 npx plugins add vercel-labs/vercel-plugin
 ```
 
 That's it. The plugin activates automatically — no setup, no commands to learn.
-
-### Option 2: Clone and build manually
-
-```bash
-git clone https://github.com/vercel-labs/vercel-plugin.git
-cd vercel-plugin
-bun install
-bun run build
-```
-
-Then point your AI agent at the plugin directory (e.g. `claude --plugin-dir /path/to/vercel-plugin` for Claude Code). The plugin activates automatically — no setup, no commands to learn.
-
-#### Updating
-
-```bash
-cd /path/to/vercel-plugin
-git pull
-bun install
-bun run build
-```
 
 ## What It Does
 
@@ -113,26 +101,21 @@ A text-form relational graph covering:
 
 ### Hooks
 
-Currently implemented as [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks). We're actively working on making all hooks available to other major AI coding platforms.
+Lifecycle hooks that run automatically during your session:
 
-- **SessionStart context injection** — Injects `vercel.md` (ecosystem graph + conventions) into every session
-- **SessionStart repo profiler** — Scans config files and dependencies to pre-prime skill matching for faster first tool call
-- **PreToolUse skill injection** — Matches tool calls to skills and injects relevant guidance with dedup
+- **Session start context injection** — Injects `vercel.md` (ecosystem graph + conventions) into every session
+- **Session start repo profiler** — Scans config files and dependencies to pre-prime skill matching for faster first tool call
+- **Pre-tool-use skill injection** — Matches tool calls to skills and injects relevant guidance with dedup
 - **Pre-write/edit validation** — Catches deprecated patterns before they're written (sunset packages, old API names, renamed files)
 
 ## Usage
 
-```bash
-# Claude Code example
-claude --plugin-dir ./vercel-plugin
+After installing, skills and context are injected automatically. You can also invoke skills directly via slash commands:
 
-# Invoke skills via slash commands
+```
 /vercel-plugin:nextjs
 /vercel-plugin:ai-sdk
 /vercel-plugin:deploy prod
-
-# vercel.md is injected at session start,
-# giving the agent full Vercel context automatically.
 ```
 
 ## Architecture
