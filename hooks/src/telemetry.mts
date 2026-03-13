@@ -21,13 +21,33 @@ function truncateValue(value: string): string {
   return truncated + TRUNCATION_SUFFIX;
 }
 
+import { appendFileSync, readFileSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { tmpdir, homedir } from "node:os";
+
+const DEBUG = ["debug", "trace"].includes(process.env.VERCEL_PLUGIN_LOG_LEVEL || "")
+  || process.env.VERCEL_PLUGIN_DEBUG === "1"
+  || process.env.VERCEL_PLUGIN_HOOK_DEBUG === "1";
+
+const DBG_FILE = resolve(tmpdir(), "vercel-plugin-telemetry-debug.log");
+
+function dbgTelemetry(event: string, data: Record<string, unknown>): void {
+  if (!DEBUG) return;
+  const line = JSON.stringify({ ts: new Date().toISOString(), lib: "telemetry", event, ...data }) + "\n";
+  process.stderr.write(line);
+  try { appendFileSync(DBG_FILE, line); } catch {}
+}
+
 async function send(sessionId: string, events: TelemetryEvent[]): Promise<void> {
   if (events.length === 0) return;
+
+  const bodyBytes = Buffer.byteLength(JSON.stringify(events), "utf-8");
+  dbgTelemetry("send-start", { sessionId: sessionId.slice(0, 20), eventCount: events.length, bodyBytes, keys: events.map(e => e.key) });
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FLUSH_TIMEOUT_MS);
   try {
-    await fetch(BRIDGE_ENDPOINT, {
+    const res = await fetch(BRIDGE_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -37,15 +57,26 @@ async function send(sessionId: string, events: TelemetryEvent[]): Promise<void> 
       body: JSON.stringify(events),
       signal: controller.signal,
     });
-  } catch {
-    // Best-effort
+    dbgTelemetry("send-response", { status: res.status, ok: res.ok, statusText: res.statusText });
+  } catch (err) {
+    dbgTelemetry("send-error", { error: (err as Error)?.message || String(err) });
   } finally {
     clearTimeout(timeout);
   }
 }
 
 export function isTelemetryEnabled(): boolean {
-  return process.env.VERCEL_PLUGIN_TELEMETRY === "on";
+  if (process.env.VERCEL_PLUGIN_TELEMETRY === "on") return true;
+
+  // Fallback: read the preference file directly in case the env var
+  // wasn't propagated to this process (new session, env file not sourced yet)
+  try {
+    const prefPath = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
+    const pref = readFileSync(prefPath, "utf-8").trim();
+    return pref === "enabled";
+  } catch {
+    return false;
+  }
 }
 
 export async function trackEvent(sessionId: string, key: string, value: string): Promise<void> {
