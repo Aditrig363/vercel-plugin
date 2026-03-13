@@ -19,13 +19,16 @@ var KEY_SKILL_MAP = {
   outputDirectory: ["deployments-cicd"],
   framework: ["deployments-cicd"],
   devCommand: ["deployments-cicd"],
-  ignoreCommand: ["deployments-cicd"]
+  ignoreCommand: ["deployments-cicd"],
+  // Services
+  experimentalServices: ["vercel-services"]
 };
 var VERCEL_JSON_SKILLS = /* @__PURE__ */ new Set([
   "cron-jobs",
   "deployments-cicd",
   "routing-middleware",
-  "vercel-functions"
+  "vercel-functions",
+  "vercel-services"
 ]);
 function resolveVercelJsonSkills(filePath) {
   const content = safeReadFile(filePath);

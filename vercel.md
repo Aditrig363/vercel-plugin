@@ -42,6 +42,13 @@ VERCEL PLATFORM                            📖 docs: https://vercel.com/docs
 │   ⤳ skill: routing-middleware
 │   ⤳ skill: runtime-cache
 │
+├── Services API (multiple services in one project)
+│   ⊃ experimentalServices in vercel.json
+│   ⊃ Multiple backends and frontends deployed to the same domain
+│   → Deployment Engine (services deployed as one application)
+│   ↔ Vercel CLI (vercel dev auto-detects and runs all services)
+│   ⤳ skill: vercel-services  📖 docs: https://vercel.com/docs/services
+│
 ├── Domains & DNS
 │   → Deployment Engine
 │   ↔ Vercel Firewall

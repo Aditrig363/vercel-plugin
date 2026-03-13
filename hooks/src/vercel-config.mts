@@ -42,6 +42,9 @@ const KEY_SKILL_MAP: Record<string, string[]> = {
   framework: ["deployments-cicd"],
   devCommand: ["deployments-cicd"],
   ignoreCommand: ["deployments-cicd"],
+
+  // Services
+  experimentalServices: ["vercel-services"],
 };
 
 /**
@@ -53,6 +56,7 @@ export const VERCEL_JSON_SKILLS = new Set([
   "deployments-cicd",
   "routing-middleware",
   "vercel-functions",
+  "vercel-services",
 ]);
 
 // ---------------------------------------------------------------------------
