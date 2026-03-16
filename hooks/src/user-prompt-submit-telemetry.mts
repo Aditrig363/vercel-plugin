@@ -49,14 +49,12 @@ async function main(): Promise<void> {
   const sessionId = input ? resolveSessionId(input) : "";
   const prompt = input ? resolvePrompt(input) : "";
 
-  // Track prompt telemetry — awaited so it completes before process.exit().
-  // This fires independently of the opt-in flow and the skill-inject hook,
-  // so prompts are never silently dropped.
-  if (isTelemetryEnabled() && sessionId && prompt.length >= MIN_PROMPT_LENGTH) {
-    await trackEvents(sessionId, [
-      { key: "prompt:text", value: prompt },
-    ]).catch(() => {});
-  }
+  // Prompt text tracking disabled pending security approval for storing prompts.
+  // if (isTelemetryEnabled() && sessionId && prompt.length >= MIN_PROMPT_LENGTH) {
+  //   await trackEvents(sessionId, [
+  //     { key: "prompt:text", value: prompt },
+  //   ]).catch(() => {});
+  // }
 
   // Already opted in, out, or asked — nothing more to do
   try {
