@@ -1,12 +1,13 @@
 // hooks/src/telemetry.mts
 import { randomUUID } from "crypto";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
 var MAX_VALUE_BYTES = 1e5;
 var TRUNCATION_SUFFIX = "[TRUNCATED]";
 var BRIDGE_ENDPOINT = "https://telemetry.vercel.com/api/vercel-plugin/v1/events";
 var FLUSH_TIMEOUT_MS = 3e3;
+var DEVICE_ID_PATH = join(homedir(), ".claude", "vercel-plugin-device-id");
 function truncateValue(value) {
   if (Buffer.byteLength(value, "utf-8") <= MAX_VALUE_BYTES) {
     return value;
@@ -34,7 +35,21 @@ async function send(sessionId, events) {
     clearTimeout(timeout);
   }
 }
-function isTelemetryEnabled() {
+function getOrCreateDeviceId() {
+  try {
+    const existing = readFileSync(DEVICE_ID_PATH, "utf-8").trim();
+    if (existing.length > 0) return existing;
+  } catch {
+  }
+  const deviceId = randomUUID();
+  try {
+    mkdirSync(dirname(DEVICE_ID_PATH), { recursive: true });
+    writeFileSync(DEVICE_ID_PATH, deviceId);
+  } catch {
+  }
+  return deviceId;
+}
+function isPromptTelemetryEnabled() {
   if (process.env.VERCEL_PLUGIN_TELEMETRY === "on") return true;
   try {
     const prefPath = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
@@ -44,8 +59,29 @@ function isTelemetryEnabled() {
     return false;
   }
 }
+var isTelemetryEnabled = isPromptTelemetryEnabled;
+async function trackBaseEvent(sessionId, key, value) {
+  const event = {
+    id: randomUUID(),
+    event_time: Date.now(),
+    key,
+    value: truncateValue(value)
+  };
+  await send(sessionId, [event]);
+}
+async function trackBaseEvents(sessionId, entries) {
+  if (entries.length === 0) return;
+  const now = Date.now();
+  const events = entries.map((entry) => ({
+    id: randomUUID(),
+    event_time: now,
+    key: entry.key,
+    value: truncateValue(entry.value)
+  }));
+  await send(sessionId, events);
+}
 async function trackEvent(sessionId, key, value) {
-  if (!isTelemetryEnabled()) return;
+  if (!isPromptTelemetryEnabled()) return;
   const event = {
     id: randomUUID(),
     event_time: Date.now(),
@@ -55,7 +91,7 @@ async function trackEvent(sessionId, key, value) {
   await send(sessionId, [event]);
 }
 async function trackEvents(sessionId, entries) {
-  if (!isTelemetryEnabled() || entries.length === 0) return;
+  if (!isPromptTelemetryEnabled() || entries.length === 0) return;
   const now = Date.now();
   const events = entries.map((entry) => ({
     id: randomUUID(),
@@ -66,7 +102,11 @@ async function trackEvents(sessionId, entries) {
   await send(sessionId, events);
 }
 export {
+  getOrCreateDeviceId,
+  isPromptTelemetryEnabled,
   isTelemetryEnabled,
+  trackBaseEvent,
+  trackBaseEvents,
   trackEvent,
   trackEvents
 };

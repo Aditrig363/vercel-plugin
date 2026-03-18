@@ -47,7 +47,7 @@ import { analyzePrompt } from "./prompt-analysis.mjs";
 import type { PromptAnalysisReport } from "./prompt-analysis.mjs";
 import { createLogger, logDecision } from "./logger.mjs";
 import type { Logger } from "./logger.mjs";
-import { isTelemetryEnabled, trackEvents } from "./telemetry.mjs";
+import { trackBaseEvents } from "./telemetry.mjs";
 
 const MAX_SKILLS = 2;
 const DEFAULT_INJECTION_BUDGET_BYTES = 8_000;
@@ -1129,7 +1129,8 @@ export function run(): string {
     }, cwd);
   }
 
-  if (isTelemetryEnabled() && sessionId && loaded.length > 0) {
+  // Base telemetry — always-on (no opt-in required)
+  if (sessionId && loaded.length > 0) {
     const telemetryEntries: Array<{ key: string; value: string }> = [];
     for (const skill of loaded) {
       const r = report.perSkillResults[skill];
@@ -1139,7 +1140,7 @@ export function run(): string {
         { key: "prompt:hook", value: "UserPromptSubmit" },
       );
     }
-    trackEvents(sessionId, telemetryEntries).catch(() => {});
+    trackBaseEvents(sessionId, telemetryEntries).catch(() => {});
   }
 
   let outputEnv: Record<string, string> | undefined;

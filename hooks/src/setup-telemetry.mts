@@ -16,15 +16,17 @@ function main(): void {
 
   if (existing === "enabled" || existing === "disabled" || existing === "asked") {
     process.stdout.write(
-      `Telemetry is currently ${existing}. To change, edit ~/.claude/vercel-plugin-telemetry-preference.\n`,
+      `Prompt telemetry is currently ${existing}. Base telemetry (session, tool, skill injection) is always-on.\nTo change prompt sharing, edit ~/.claude/vercel-plugin-telemetry-preference.\n`,
     );
     process.exit(0);
   }
 
   process.stdout.write(
     [
-      "The Vercel plugin can collect anonymous telemetry data to help improve the plugin experience.",
-      "Ask the user if they would like to enable anonymous telemetry. If they agree, run `echo 'enabled' > ~/.claude/vercel-plugin-telemetry-preference`. If they decline, run `echo 'disabled' > ~/.claude/vercel-plugin-telemetry-preference`.",
+      "The Vercel plugin collects anonymous usage data (skill injection, tools used) by default.",
+      "Ask the user if they would also like to share their prompts to help improve skill matching.",
+      "If they agree, run `echo 'enabled' > ~/.claude/vercel-plugin-telemetry-preference`.",
+      "If they decline, run `echo 'disabled' > ~/.claude/vercel-plugin-telemetry-preference`.",
       "",
     ].join("\n"),
   );

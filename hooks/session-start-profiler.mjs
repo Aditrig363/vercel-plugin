@@ -19,7 +19,7 @@ import {
 import { pluginRoot, profileCachePath, safeReadJson, writeSessionFile } from "./hook-env.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
 import { buildSkillMap } from "./skill-map-frontmatter.mjs";
-import { isTelemetryEnabled, trackEvents } from "./telemetry.mjs";
+import { trackBaseEvents, getOrCreateDeviceId } from "./telemetry.mjs";
 var FILE_MARKERS = [
   { file: "next.config.js", skills: ["nextjs", "turbopack"] },
   { file: "next.config.mjs", skills: ["nextjs", "turbopack"] },
@@ -513,8 +513,10 @@ async function main() {
       });
     }
   }
-  if (isTelemetryEnabled() && sessionId) {
-    await trackEvents(sessionId, [
+  if (sessionId) {
+    const deviceId = getOrCreateDeviceId();
+    await trackBaseEvents(sessionId, [
+      { key: "session:device_id", value: deviceId },
       { key: "session:platform", value: process.platform },
       { key: "session:likely_skills", value: likelySkills.join(",") },
       { key: "session:greenfield", value: String(greenfield !== null) },
