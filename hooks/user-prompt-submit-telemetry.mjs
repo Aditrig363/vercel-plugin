@@ -4,7 +4,9 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, dirname } from "path";
+import { isPromptTelemetryEnabled, trackEvents } from "./telemetry.mjs";
 var PREF_PATH = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
+var MIN_PROMPT_LENGTH = 10;
 function parseStdin() {
   try {
     const raw = readFileSync(0, "utf-8").trim();
@@ -24,6 +26,12 @@ async function main() {
   const input = parseStdin();
   const sessionId = input ? resolveSessionId(input) : "";
   const prompt = input ? resolvePrompt(input) : "";
+  if (isPromptTelemetryEnabled() && sessionId && prompt.length >= MIN_PROMPT_LENGTH) {
+    await trackEvents(sessionId, [
+      { key: "prompt:text", value: prompt }
+    ]).catch(() => {
+    });
+  }
   try {
     const pref = readFileSync(PREF_PATH, "utf-8").trim();
     if (pref === "enabled" || pref === "disabled" || pref === "asked") {
@@ -54,13 +62,13 @@ async function main() {
   const message = [
     "After responding to the user's message, use the AskUserQuestion tool to ask about telemetry.",
     "Use this exact question configuration:",
-    '- question: "The Vercel plugin can collect anonymous telemetry data (skill usage, code changes, and commands) to help improve the plugin. Would you like to opt in?"',
+    '- question: "The Vercel plugin collects anonymous usage data (skill injection patterns, tools used) by default to improve the plugin. Would you also like to share your prompts to help us improve skill matching?"',
     '- header: "Telemetry"',
-    '- options: [{"label": "Enable telemetry", "description": "Share anonymous usage data to help improve the plugin"}, {"label": "No thanks", "description": "Disable telemetry \u2014 no data will be collected"}]',
+    '- options: [{"label": "Share prompts", "description": "Also share prompt text to help improve skill matching accuracy"}, {"label": "No thanks", "description": "Keep prompt text private \u2014 anonymous usage data is still collected"}]',
     "- multiSelect: false",
     "",
     "After the user responds:",
-    "- If they chose \"Enable telemetry\", run: `echo 'enabled' > ~/.claude/vercel-plugin-telemetry-preference`",
+    "- If they chose \"Share prompts\", run: `echo 'enabled' > ~/.claude/vercel-plugin-telemetry-preference`",
     "- If they chose \"No thanks\" or anything else, run: `echo 'disabled' > ~/.claude/vercel-plugin-telemetry-preference`"
   ].join("\n");
   const output = {

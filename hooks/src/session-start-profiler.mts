@@ -32,7 +32,7 @@ import {
 import { pluginRoot, profileCachePath, safeReadJson, writeSessionFile } from "./hook-env.mjs";
 import { createLogger, logCaughtError, type Logger } from "./logger.mjs";
 import { buildSkillMap } from "./skill-map-frontmatter.mjs";
-import { isTelemetryEnabled, trackEvents } from "./telemetry.mjs";
+import { trackBaseEvents, getOrCreateDeviceId } from "./telemetry.mjs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -712,7 +712,7 @@ async function main(): Promise<void> {
     });
   }
 
-  // Telemetry opt-in check
+  // Prompt telemetry opt-in check (base telemetry is always-on)
   const telemetryPrefPath = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
   let telemetryPref: string | null = null;
   try {
@@ -758,8 +758,11 @@ async function main(): Promise<void> {
     }
   }
 
-  if (isTelemetryEnabled() && sessionId) {
-    await trackEvents(sessionId, [
+  // Base telemetry — always-on (no opt-in required)
+  if (sessionId) {
+    const deviceId = getOrCreateDeviceId();
+    await trackBaseEvents(sessionId, [
+      { key: "session:device_id", value: deviceId },
       { key: "session:platform", value: process.platform },
       { key: "session:likely_skills", value: likelySkills.join(",") },
       { key: "session:greenfield", value: String(greenfield !== null) },

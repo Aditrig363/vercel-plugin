@@ -25,7 +25,7 @@ import { normalizePromptText, compilePromptSignals, matchPromptWithReason, score
 import { searchSkills, initializeLexicalIndex } from "./lexical-index.mjs";
 import { analyzePrompt } from "./prompt-analysis.mjs";
 import { createLogger, logDecision } from "./logger.mjs";
-import { isTelemetryEnabled, trackEvents } from "./telemetry.mjs";
+import { trackBaseEvents } from "./telemetry.mjs";
 var MAX_SKILLS = 2;
 var DEFAULT_INJECTION_BUDGET_BYTES = 8e3;
 var MIN_PROMPT_LENGTH = 10;
@@ -748,7 +748,7 @@ function run() {
       droppedByBudget
     }, cwd);
   }
-  if (isTelemetryEnabled() && sessionId && loaded.length > 0) {
+  if (sessionId && loaded.length > 0) {
     const telemetryEntries = [];
     for (const skill of loaded) {
       const r = report.perSkillResults[skill];
@@ -758,7 +758,7 @@ function run() {
         { key: "prompt:hook", value: "UserPromptSubmit" }
       );
     }
-    trackEvents(sessionId, telemetryEntries).catch(() => {
+    trackBaseEvents(sessionId, telemetryEntries).catch(() => {
     });
   }
   let outputEnv;

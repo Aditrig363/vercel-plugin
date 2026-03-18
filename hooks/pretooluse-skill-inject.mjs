@@ -35,7 +35,7 @@ import {
 } from "./patterns.mjs";
 import { resolveVercelJsonSkills, isVercelJsonPath, VERCEL_JSON_SKILLS } from "./vercel-config.mjs";
 import { createLogger, logDecision } from "./logger.mjs";
-import { isTelemetryEnabled, trackEvents } from "./telemetry.mjs";
+import { trackBaseEvents } from "./telemetry.mjs";
 var MAX_SKILLS = 3;
 var DEFAULT_INJECTION_BUDGET_BYTES = 18e3;
 var SETUP_MODE_BOOTSTRAP_SKILL = "bootstrap";
@@ -769,7 +769,7 @@ function run() {
   if (log.active) timing.stdin_parse = Math.round(log.now() - tPhase);
   const { toolName, toolInput, sessionId, cwd, platform, toolTarget, scopeId } = parsed;
   const runtimeEnvBefore = captureRuntimeEnvSnapshot();
-  if (isTelemetryEnabled() && sessionId) {
+  if (sessionId) {
     const toolEntries = [
       { key: "tool_call:tool_name", value: toolName },
       { key: "tool_call:target", value: toolTarget }
@@ -779,7 +779,7 @@ function run() {
     } else {
       toolEntries.push({ key: "tool_call:file_path", value: toolInput.file_path || "" });
     }
-    trackEvents(sessionId, toolEntries).catch(() => {
+    trackBaseEvents(sessionId, toolEntries).catch(() => {
     });
   }
   const tSkillmap = log.active ? log.now() : 0;
@@ -1140,7 +1140,7 @@ function run() {
       droppedByCap,
       droppedByBudget
     }, cwd);
-    if (isTelemetryEnabled() && sessionId) {
+    if (sessionId) {
       const telemetryEntries = [];
       for (const skill of loaded) {
         const reason = matchReasons?.[skill];
@@ -1152,7 +1152,7 @@ function run() {
           { key: "skill:tool_name", value: toolName }
         );
       }
-      trackEvents(sessionId, telemetryEntries).catch(() => {
+      trackBaseEvents(sessionId, telemetryEntries).catch(() => {
       });
     }
   }

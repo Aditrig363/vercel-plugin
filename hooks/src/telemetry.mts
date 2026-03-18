@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 
 const MAX_VALUE_BYTES = 100_000;
@@ -8,6 +8,8 @@ const TRUNCATION_SUFFIX = "[TRUNCATED]";
 
 const BRIDGE_ENDPOINT = "https://telemetry.vercel.com/api/vercel-plugin/v1/events";
 const FLUSH_TIMEOUT_MS = 3_000;
+
+const DEVICE_ID_PATH = join(homedir(), ".claude", "vercel-plugin-device-id");
 
 export interface TelemetryEvent {
   id: string;
@@ -47,11 +49,44 @@ async function send(sessionId: string, events: TelemetryEvent[]): Promise<void> 
   }
 }
 
-export function isTelemetryEnabled(): boolean {
+// ---------------------------------------------------------------------------
+// Device ID — stable anonymous identifier per machine (always-on)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a stable anonymous device ID. Creates one on first call.
+ * The ID is a random UUID stored at ~/.claude/vercel-plugin-device-id
+ * and is not tied to any user account or PII.
+ */
+export function getOrCreateDeviceId(): string {
+  try {
+    const existing = readFileSync(DEVICE_ID_PATH, "utf-8").trim();
+    if (existing.length > 0) return existing;
+  } catch {
+    // File doesn't exist yet
+  }
+
+  const deviceId = randomUUID();
+  try {
+    mkdirSync(dirname(DEVICE_ID_PATH), { recursive: true });
+    writeFileSync(DEVICE_ID_PATH, deviceId);
+  } catch {
+    // Best-effort — return the generated ID even if we can't persist it
+  }
+  return deviceId;
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry tiers
+// ---------------------------------------------------------------------------
+
+/**
+ * Prompt-level telemetry (opt-in): requires explicit user consent.
+ * Gates collection of prompt:text — actual user prompt content.
+ */
+export function isPromptTelemetryEnabled(): boolean {
   if (process.env.VERCEL_PLUGIN_TELEMETRY === "on") return true;
 
-  // Fallback: read the preference file directly in case the env var
-  // wasn't propagated to this process (new session, env file not sourced yet)
   try {
     const prefPath = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
     const pref = readFileSync(prefPath, "utf-8").trim();
@@ -61,8 +96,50 @@ export function isTelemetryEnabled(): boolean {
   }
 }
 
+/**
+ * @deprecated Use isPromptTelemetryEnabled() for opt-in data.
+ * Base telemetry (session, tool, skill injection) is always-on.
+ */
+export const isTelemetryEnabled = isPromptTelemetryEnabled;
+
+// ---------------------------------------------------------------------------
+// Always-on base telemetry (session, tool, skill injection events)
+// ---------------------------------------------------------------------------
+
+export async function trackBaseEvent(sessionId: string, key: string, value: string): Promise<void> {
+  const event: TelemetryEvent = {
+    id: randomUUID(),
+    event_time: Date.now(),
+    key,
+    value: truncateValue(value),
+  };
+
+  await send(sessionId, [event]);
+}
+
+export async function trackBaseEvents(
+  sessionId: string,
+  entries: Array<{ key: string; value: string }>,
+): Promise<void> {
+  if (entries.length === 0) return;
+
+  const now = Date.now();
+  const events: TelemetryEvent[] = entries.map((entry) => ({
+    id: randomUUID(),
+    event_time: now,
+    key: entry.key,
+    value: truncateValue(entry.value),
+  }));
+
+  await send(sessionId, events);
+}
+
+// ---------------------------------------------------------------------------
+// Opt-in telemetry (prompt text)
+// ---------------------------------------------------------------------------
+
 export async function trackEvent(sessionId: string, key: string, value: string): Promise<void> {
-  if (!isTelemetryEnabled()) return;
+  if (!isPromptTelemetryEnabled()) return;
 
   const event: TelemetryEvent = {
     id: randomUUID(),
@@ -78,7 +155,7 @@ export async function trackEvents(
   sessionId: string,
   entries: Array<{ key: string; value: string }>,
 ): Promise<void> {
-  if (!isTelemetryEnabled() || entries.length === 0) return;
+  if (!isPromptTelemetryEnabled() || entries.length === 0) return;
 
   const now = Date.now();
   const events: TelemetryEvent[] = entries.map((entry) => ({

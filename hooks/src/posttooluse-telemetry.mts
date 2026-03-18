@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { isTelemetryEnabled, trackEvents } from "./telemetry.mjs";
+import { trackBaseEvents } from "./telemetry.mjs";
 
 function parseStdin(): Record<string, unknown> | null {
   try {
@@ -15,10 +15,7 @@ function parseStdin(): Record<string, unknown> | null {
 }
 
 async function main(): Promise<void> {
-  if (!isTelemetryEnabled()) {
-    process.stdout.write("{}");
-    process.exit(0);
-  }
+  // Base telemetry — always-on (no opt-in required)
 
   const input = parseStdin();
   if (!input) {
@@ -68,7 +65,7 @@ async function main(): Promise<void> {
   }
 
   if (entries.length > 0) {
-    await trackEvents(sessionId, entries);
+    await trackBaseEvents(sessionId, entries);
   }
 
   process.stdout.write("{}");
