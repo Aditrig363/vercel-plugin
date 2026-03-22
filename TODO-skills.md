@@ -25,27 +25,30 @@ next-cache-components - COPIED/NEW
 next-upgrade - COPIED/NEW
 observability - OURS
 payments - OURS
-react-best-practices
-routing-middleware
-runtime-cache
-satori
-shadcn
-sign-in-with-vercel
-swr
-turbopack
-turborepo
-v0-dev
-vercel-agent
-vercel-api
-vercel-cli
-vercel-firewall
-vercel-flags
-vercel-functions
-vercel-queues
-vercel-sandbox
-vercel-services
-vercel-storage
-verification
-workflow
+react-best-practices - COPIED
+routing-middleware - OURS
+runtime-cache - OURS
+satori - OURS
+shadcn - PAUSE -> ask John
+sign-in-with-vercel - OURS
+swr - OURS
+turbopack - OURS
+turborepo - COPIED
+v0-dev - OURS
+vercel-agent - OURS
+vercel-api - OURS
+vercel-cli - COPIED
+vercel-firewall - OURS
+vercel-flags - OURS
+vercel-functions - OURS
+vercel-queues - OURS
+vercel-sandbox - COPIED
+vercel-services - OURS
+vercel-storage - OURS
+verification - OURS
+workflow - COPIED
 
-TODO: look at agent-skills
+TODO:
+
+- look at agent-skills
+- run evals with both branches
