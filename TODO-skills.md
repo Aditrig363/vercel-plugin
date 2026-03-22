@@ -52,3 +52,4 @@ TODO:
 
 - look at agent-skills
 - run evals with both branches
+- Ask Claude to run everything - done
