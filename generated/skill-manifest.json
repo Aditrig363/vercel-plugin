@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-22T22:50:07.847Z",
+  "generatedAt": "2026-03-23T18:09:21.758Z",
   "version": 2,
   "skills": {
     "vercel-agent": {
@@ -1378,6 +1378,36 @@
           "first run"
         ],
         "examples": []
+      }
+    },
+    "knowledge-update": {
+      "priority": 10,
+      "summary": "",
+      "docs": [
+        "https://vercel.com/docs"
+      ],
+      "pathPatterns": [
+        "vercel.ts"
+      ],
+      "bashPatterns": [],
+      "importPatterns": [],
+      "bodyPath": "skills/knowledge-update/SKILL.md",
+      "pathRegexSources": [
+        "^vercel\\.ts$"
+      ],
+      "bashRegexSources": [],
+      "importRegexSources": [],
+      "promptSignals": {
+        "phrases": [
+          "knowledge update",
+          "outdated knowledge",
+          "fluid compute",
+          "vercel.ts"
+        ],
+        "allOf": [],
+        "anyOf": [],
+        "noneOf": [],
+        "minScore": 6
       }
     },
     "vercel-cli": {
