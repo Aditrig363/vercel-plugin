@@ -820,6 +820,156 @@ describe("routing-policy-ledger", () => {
     });
   });
 
+  describe("strict null matching regression — paired unresolved/resolved", () => {
+    test("pending exposure stays unresolved when observed storyId and route are both null", () => {
+      appendSkillExposure(makeExposure({
+        id: "fallback-e1",
+        storyId: "story-fb",
+        route: "/settings",
+        targetBoundary: "clientRequest",
+        createdAt: T0,
+      }));
+
+      // Attempt resolution with null storyId and null route
+      const resolved = resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "clientRequest",
+        matchedSuggestedAction: false,
+        storyId: null,
+        route: null,
+        now: T1,
+      });
+
+      // Strict null matching: null does not match non-null — exposure stays pending
+      expect(resolved).toHaveLength(0);
+
+      const all = loadSessionExposures(TEST_SESSION);
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe("fallback-e1");
+      expect(all[0].outcome).toBe("pending");
+      expect(all[0].resolvedAt).toBeNull();
+
+      // Policy should have exposure counted but zero wins
+      const policy = loadProjectRoutingPolicy(TEST_PROJECT);
+      const stats = policy.scenarios["PreToolUse|flow-verification|clientRequest|Bash"]?.["agent-browser-verify"];
+      expect(stats).toBeDefined();
+      expect(stats!.exposures).toBe(1);
+      expect(stats!.wins).toBe(0);
+      expect(stats!.directiveWins).toBe(0);
+    });
+
+    test("same exposure resolves once exact storyId and route are supplied", () => {
+      // Seed the same exposure as the paired test above
+      appendSkillExposure(makeExposure({
+        id: "fallback-e1",
+        storyId: "story-fb",
+        route: "/settings",
+        targetBoundary: "clientRequest",
+        createdAt: T0,
+      }));
+
+      // First: null attempt — should fail
+      const attempt1 = resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "clientRequest",
+        matchedSuggestedAction: false,
+        storyId: null,
+        route: null,
+        now: T1,
+      });
+      expect(attempt1).toHaveLength(0);
+
+      // Second: exact values — should succeed
+      const attempt2 = resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "clientRequest",
+        matchedSuggestedAction: true,
+        storyId: "story-fb",
+        route: "/settings",
+        now: T2,
+      });
+
+      expect(attempt2).toHaveLength(1);
+      expect(attempt2[0].id).toBe("fallback-e1");
+      expect(attempt2[0].outcome).toBe("directive-win");
+      expect(attempt2[0].resolvedAt).toBe(T2);
+
+      // Verify ledger is updated
+      const all = loadSessionExposures(TEST_SESSION);
+      expect(all).toHaveLength(1);
+      expect(all[0].outcome).toBe("directive-win");
+
+      // Policy stats should reflect exactly 1 exposure, 1 win, 1 directiveWin
+      const policy = loadProjectRoutingPolicy(TEST_PROJECT);
+      const stats = policy.scenarios["PreToolUse|flow-verification|clientRequest|Bash"]?.["agent-browser-verify"];
+      expect(stats).toBeDefined();
+      expect(stats!.exposures).toBe(1);
+      expect(stats!.wins).toBe(1);
+      expect(stats!.directiveWins).toBe(1);
+      expect(stats!.staleMisses).toBe(0);
+    });
+
+    test("multiple exposures: null resolution leaves all pending, exact resolution is selective", () => {
+      appendSkillExposure(makeExposure({
+        id: "multi-e1",
+        storyId: "story-m",
+        route: "/api/data",
+        targetBoundary: "clientRequest",
+        createdAt: T0,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "multi-e2",
+        storyId: "story-m",
+        route: "/api/users",
+        targetBoundary: "clientRequest",
+        createdAt: T1,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "multi-e3",
+        storyId: null,
+        route: null,
+        targetBoundary: "clientRequest",
+        createdAt: T2,
+      }));
+
+      // Null resolution: only multi-e3 (null/null) should resolve
+      const nullResolved = resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "clientRequest",
+        matchedSuggestedAction: false,
+        storyId: null,
+        route: null,
+        now: T3,
+      });
+      expect(nullResolved).toHaveLength(1);
+      expect(nullResolved[0].id).toBe("multi-e3");
+
+      // Exact resolution for multi-e1
+      const exactResolved = resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "clientRequest",
+        matchedSuggestedAction: false,
+        storyId: "story-m",
+        route: "/api/data",
+        now: T4,
+      });
+      expect(exactResolved).toHaveLength(1);
+      expect(exactResolved[0].id).toBe("multi-e1");
+
+      // multi-e2 remains pending
+      const all = loadSessionExposures(TEST_SESSION);
+      const e2 = all.find((e) => e.id === "multi-e2");
+      expect(e2!.outcome).toBe("pending");
+
+      // Policy: 3 exposures, 2 wins, 0 directiveWins
+      const policy = loadProjectRoutingPolicy(TEST_PROJECT);
+      const stats = policy.scenarios["PreToolUse|flow-verification|clientRequest|Bash"]?.["agent-browser-verify"];
+      expect(stats!.exposures).toBe(3);
+      expect(stats!.wins).toBe(2);
+      expect(stats!.directiveWins).toBe(0);
+    });
+  });
+
   describe("idempotency", () => {
     test("resolveBoundaryOutcome is safe to call twice", () => {
       appendSkillExposure(makeExposure({ id: "e1", createdAt: T0 }));

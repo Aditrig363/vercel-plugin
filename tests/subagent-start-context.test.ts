@@ -21,6 +21,10 @@ import {
   buildVerificationEnv,
   resolveBudgetCategory,
 } from "../hooks/src/subagent-start-bootstrap.mts";
+import {
+  envString,
+  resolveObservedRoute,
+} from "../hooks/src/posttooluse-verification-observe.mts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const HOOK_SCRIPT = join(ROOT, "hooks", "subagent-start-bootstrap.mjs");
@@ -779,5 +783,173 @@ describe("subagent-start-context: verification directive", () => {
       VERCEL_PLUGIN_VERIFICATION_BOUNDARY: "",
       VERCEL_PLUGIN_VERIFICATION_ACTION: "",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Directive env contract: all four keys present
+// ---------------------------------------------------------------------------
+
+const CONTRACT_KEYS = [
+  "VERCEL_PLUGIN_VERIFICATION_STORY_ID",
+  "VERCEL_PLUGIN_VERIFICATION_ROUTE",
+  "VERCEL_PLUGIN_VERIFICATION_BOUNDARY",
+  "VERCEL_PLUGIN_VERIFICATION_ACTION",
+] as const;
+
+describe("subagent-start-context: directive env contract stability", () => {
+  test("active directive emits exactly the four contract keys", () => {
+    const directive = {
+      version: 1 as const,
+      storyId: "s1",
+      storyKind: "flow-verification",
+      route: "/api/test",
+      missingBoundaries: ["clientRequest"],
+      satisfiedBoundaries: ["serverHandler"],
+      primaryNextAction: {
+        action: "curl <LOCAL_DEV_ORIGIN>/api/test",
+        targetBoundary: "clientRequest",
+        reason: "verify endpoint",
+      },
+      blockedReasons: [],
+    };
+
+    const env = buildVerificationEnv(directive);
+    const keys = Object.keys(env).sort();
+    expect(keys).toEqual([...CONTRACT_KEYS].sort());
+    for (const k of CONTRACT_KEYS) {
+      expect(typeof env[k]).toBe("string");
+    }
+  });
+
+  test("null directive emits exactly the four contract keys with empty-string clearing values", () => {
+    const env = buildVerificationEnv(null);
+    const keys = Object.keys(env).sort();
+    expect(keys).toEqual([...CONTRACT_KEYS].sort());
+    for (const k of CONTRACT_KEYS) {
+      expect(env[k]).toBe("");
+    }
+  });
+
+  test("directive without primaryNextAction emits clearing values for all four keys", () => {
+    const plan: VerificationPlanResult = {
+      hasStories: true,
+      stories: [{
+        id: "s1",
+        kind: "flow-verification",
+        route: "/test",
+        promptExcerpt: "test",
+        createdAt: T0,
+        updatedAt: T0,
+      }],
+      observationCount: 0,
+      satisfiedBoundaries: [],
+      missingBoundaries: [],
+      recentRoutes: [],
+      primaryNextAction: null,
+      blockedReasons: [],
+    };
+
+    const directive = buildVerificationDirective(plan);
+    expect(directive).not.toBeNull();
+    const env = buildVerificationEnv(directive);
+    const keys = Object.keys(env).sort();
+    expect(keys).toEqual([...CONTRACT_KEYS].sort());
+    // All clearing because primaryNextAction is null
+    for (const k of CONTRACT_KEYS) {
+      expect(env[k]).toBe("");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-hook roundtrip: SubagentStart emits → PostToolUse consumes
+// ---------------------------------------------------------------------------
+
+describe("subagent-start-context: SubagentStart → PostToolUse roundtrip", () => {
+  test("PostToolUse envString reads what SubagentStart buildVerificationEnv writes — no translation needed", () => {
+    const directive = {
+      version: 1 as const,
+      storyId: "roundtrip-story",
+      storyKind: "flow-verification",
+      route: "/settings",
+      missingBoundaries: ["clientRequest"],
+      satisfiedBoundaries: ["serverHandler"],
+      primaryNextAction: {
+        action: "curl http://localhost:3000/settings",
+        targetBoundary: "clientRequest",
+        reason: "test",
+      },
+      blockedReasons: [],
+    };
+
+    // SubagentStart produces these env vars
+    const emittedEnv = buildVerificationEnv(directive);
+
+    // Simulate PostToolUse reading them via envString
+    const fakeEnv = emittedEnv as unknown as NodeJS.ProcessEnv;
+    expect(envString(fakeEnv, "VERCEL_PLUGIN_VERIFICATION_STORY_ID")).toBe("roundtrip-story");
+    expect(envString(fakeEnv, "VERCEL_PLUGIN_VERIFICATION_ROUTE")).toBe("/settings");
+    expect(envString(fakeEnv, "VERCEL_PLUGIN_VERIFICATION_BOUNDARY")).toBe("clientRequest");
+    expect(envString(fakeEnv, "VERCEL_PLUGIN_VERIFICATION_ACTION")).toBe("curl http://localhost:3000/settings");
+  });
+
+  test("PostToolUse resolveObservedRoute consumes directive route when inference is null", () => {
+    const directive = {
+      version: 1 as const,
+      storyId: "story-1",
+      storyKind: "flow-verification",
+      route: "/dashboard",
+      missingBoundaries: ["clientRequest"],
+      satisfiedBoundaries: [],
+      primaryNextAction: {
+        action: "curl http://localhost:3000/dashboard",
+        targetBoundary: "clientRequest",
+        reason: "test",
+      },
+      blockedReasons: [],
+    };
+
+    const emittedEnv = buildVerificationEnv(directive);
+    const fakeEnv = emittedEnv as unknown as NodeJS.ProcessEnv;
+
+    // Inference null → falls back to directive route
+    expect(resolveObservedRoute(null, fakeEnv)).toBe("/dashboard");
+    // Inference present → prefers inference
+    expect(resolveObservedRoute("/api/data", fakeEnv)).toBe("/api/data");
+  });
+
+  test("clearing env (null directive) produces null from PostToolUse envString", () => {
+    const emittedEnv = buildVerificationEnv(null);
+    const fakeEnv = emittedEnv as unknown as NodeJS.ProcessEnv;
+
+    // All keys exist but are empty → envString returns null
+    for (const k of CONTRACT_KEYS) {
+      expect(envString(fakeEnv, k)).toBeNull();
+    }
+    // resolveObservedRoute also returns null
+    expect(resolveObservedRoute(null, fakeEnv)).toBeNull();
+  });
+
+  test("emitted env is JSON-serializable for agent inspection", () => {
+    const directive = {
+      version: 1 as const,
+      storyId: "json-test",
+      storyKind: "flow-verification",
+      route: "/api",
+      missingBoundaries: [],
+      satisfiedBoundaries: [],
+      primaryNextAction: {
+        action: "curl /api",
+        targetBoundary: "clientRequest",
+        reason: "test",
+      },
+      blockedReasons: [],
+    };
+
+    const emittedEnv = buildVerificationEnv(directive);
+    const serialized = JSON.stringify(emittedEnv);
+    const deserialized = JSON.parse(serialized);
+    expect(deserialized).toEqual(emittedEnv);
   });
 });

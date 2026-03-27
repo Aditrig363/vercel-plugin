@@ -106,6 +106,14 @@ describe("envString", () => {
   test("returns null for empty string", () => {
     expect(envString({ X: "" } as NodeJS.ProcessEnv, "X")).toBeNull();
   });
+
+  test("returns null for whitespace-only string", () => {
+    expect(envString({ X: "   " } as NodeJS.ProcessEnv, "X")).toBeNull();
+  });
+
+  test("returns null for tab-only string", () => {
+    expect(envString({ X: "\t\t" } as NodeJS.ProcessEnv, "X")).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -5,9 +5,12 @@ import { join, resolve } from "node:path";
 import {
   buildBoundaryEvent,
   classifyBoundary,
+  envString,
   inferRoute,
   parseInput,
   redactCommand,
+  resolveObservedRoute,
+  run,
 } from "../hooks/src/posttooluse-verification-observe.mts";
 import {
   loadObservations,
@@ -17,6 +20,13 @@ import {
   recordStory,
 } from "../hooks/src/verification-ledger.mts";
 import type { VerificationObservation } from "../hooks/src/verification-ledger.mts";
+import {
+  appendSkillExposure,
+  loadProjectRoutingPolicy,
+  loadSessionExposures,
+  type SkillExposure,
+} from "../hooks/src/routing-policy-ledger.mts";
+import { scenarioKey } from "../hooks/src/routing-policy.mts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -417,5 +427,199 @@ describe("buildBoundaryEvent", () => {
     });
 
     expect(event.command.length).toBeLessThanOrEqual(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// envString helper
+// ---------------------------------------------------------------------------
+
+describe("envString", () => {
+  test("returns trimmed value for non-empty strings", () => {
+    const env = { FOO: "  bar  " } as unknown as NodeJS.ProcessEnv;
+    expect(envString(env, "FOO")).toBe("bar");
+  });
+
+  test("returns null for blank strings", () => {
+    const env = { FOO: "   " } as unknown as NodeJS.ProcessEnv;
+    expect(envString(env, "FOO")).toBeNull();
+  });
+
+  test("returns null for empty string", () => {
+    const env = { FOO: "" } as unknown as NodeJS.ProcessEnv;
+    expect(envString(env, "FOO")).toBeNull();
+  });
+
+  test("returns null for missing key", () => {
+    const env = {} as NodeJS.ProcessEnv;
+    expect(envString(env, "MISSING")).toBeNull();
+  });
+
+  test("returns null for undefined value", () => {
+    const env = { FOO: undefined } as unknown as NodeJS.ProcessEnv;
+    expect(envString(env, "FOO")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveObservedRoute
+// ---------------------------------------------------------------------------
+
+describe("resolveObservedRoute", () => {
+  test("returns VERCEL_PLUGIN_VERIFICATION_ROUTE when inferred is null", () => {
+    const env = { VERCEL_PLUGIN_VERIFICATION_ROUTE: "/settings" } as unknown as NodeJS.ProcessEnv;
+    expect(resolveObservedRoute(null, env)).toBe("/settings");
+  });
+
+  test("prefers inferred route over env fallback", () => {
+    const env = { VERCEL_PLUGIN_VERIFICATION_ROUTE: "/fallback" } as unknown as NodeJS.ProcessEnv;
+    expect(resolveObservedRoute("/real", env)).toBe("/real");
+  });
+
+  test("returns null when both inferred and env are absent", () => {
+    const env = {} as NodeJS.ProcessEnv;
+    expect(resolveObservedRoute(null, env)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Directive-env fallback closes the verified routing loop E2E
+// ---------------------------------------------------------------------------
+
+describe("directive-env fallback closes the routing policy loop", () => {
+  const projectRoot = ROOT;
+
+  function makeExposure(
+    sessionId: string,
+    overrides?: Partial<SkillExposure>,
+  ): SkillExposure {
+    return {
+      id: `exp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      sessionId,
+      projectRoot,
+      storyId: "story-1",
+      storyKind: "flow-verification",
+      route: "/settings",
+      hook: "PreToolUse",
+      toolName: "Bash",
+      skill: "verification",
+      targetBoundary: "clientRequest",
+      createdAt: T0,
+      resolvedAt: null,
+      outcome: "pending",
+      ...overrides,
+    };
+  }
+
+  test("observer resolves pending exposure as directive-win via env fallback", () => {
+    // --- Checkpoint 1: Seed a pending exposure ---
+    const exposure = makeExposure(testSessionId);
+    appendSkillExposure(exposure);
+
+    const seededExposures = loadSessionExposures(testSessionId);
+    expect(seededExposures).toHaveLength(1);
+    expect(seededExposures[0].outcome).toBe("pending");
+    expect(seededExposures[0].storyId).toBe("story-1");
+    expect(seededExposures[0].route).toBe("/settings");
+    expect(seededExposures[0].targetBoundary).toBe("clientRequest");
+
+    // --- Checkpoint 2: Record a verification story so the observer has plan context ---
+    // We deliberately do NOT create a matching story in the verification ledger.
+    // Instead, we rely on directive env fallback for story/route resolution.
+
+    // --- Checkpoint 3: Set directive env vars (simulating subagent bootstrap handoff) ---
+    const savedEnv = {
+      VERCEL_PLUGIN_VERIFICATION_STORY_ID: process.env.VERCEL_PLUGIN_VERIFICATION_STORY_ID,
+      VERCEL_PLUGIN_VERIFICATION_ROUTE: process.env.VERCEL_PLUGIN_VERIFICATION_ROUTE,
+      VERCEL_PLUGIN_VERIFICATION_BOUNDARY: process.env.VERCEL_PLUGIN_VERIFICATION_BOUNDARY,
+      VERCEL_PLUGIN_VERIFICATION_ACTION: process.env.VERCEL_PLUGIN_VERIFICATION_ACTION,
+      VERCEL_PLUGIN_LOG_LEVEL: process.env.VERCEL_PLUGIN_LOG_LEVEL,
+    };
+
+    process.env.VERCEL_PLUGIN_VERIFICATION_STORY_ID = "story-1";
+    process.env.VERCEL_PLUGIN_VERIFICATION_ROUTE = "/settings";
+    process.env.VERCEL_PLUGIN_VERIFICATION_BOUNDARY = "clientRequest";
+    process.env.VERCEL_PLUGIN_VERIFICATION_ACTION = "curl http://localhost:3000/settings";
+    process.env.VERCEL_PLUGIN_LOG_LEVEL = "off";
+
+    try {
+      // --- Checkpoint 4: Run the PostToolUse observer with a matching Bash payload ---
+      const stdinPayload = makeStdinPayload(
+        "curl http://localhost:3000/settings",
+        testSessionId,
+      );
+      const output = run(stdinPayload);
+      expect(output).toBe("{}");
+
+      // --- Checkpoint 5: Assert the exposure resolved as directive-win ---
+      const resolvedExposures = loadSessionExposures(testSessionId);
+      const resolved = resolvedExposures.filter((e) => e.outcome !== "pending");
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0].outcome).toBe("directive-win");
+      expect(resolved[0].resolvedAt).not.toBeNull();
+      expect(resolved[0].skill).toBe("verification");
+
+      // --- Checkpoint 6: Assert project routing policy incremented wins and directiveWins ---
+      const policy = loadProjectRoutingPolicy(projectRoot);
+      const scenario = scenarioKey({
+        hook: "PreToolUse",
+        storyKind: "flow-verification",
+        targetBoundary: "clientRequest",
+        toolName: "Bash",
+      });
+      const stats = policy.scenarios[scenario]?.["verification"];
+      expect(stats).toBeDefined();
+      expect(stats!.wins).toBeGreaterThanOrEqual(1);
+      expect(stats!.directiveWins).toBeGreaterThanOrEqual(1);
+    } finally {
+      // Restore env
+      for (const [key, val] of Object.entries(savedEnv)) {
+        if (val === undefined) delete process.env[key];
+        else process.env[key] = val;
+      }
+    }
+  });
+
+  test("exposure remains unresolved when directive env is absent and no story matches", () => {
+    const exposure = makeExposure(testSessionId, {
+      storyId: "story-orphan",
+      route: "/orphan",
+    });
+    appendSkillExposure(exposure);
+
+    const savedEnv = {
+      VERCEL_PLUGIN_VERIFICATION_STORY_ID: process.env.VERCEL_PLUGIN_VERIFICATION_STORY_ID,
+      VERCEL_PLUGIN_VERIFICATION_ROUTE: process.env.VERCEL_PLUGIN_VERIFICATION_ROUTE,
+      VERCEL_PLUGIN_VERIFICATION_BOUNDARY: process.env.VERCEL_PLUGIN_VERIFICATION_BOUNDARY,
+      VERCEL_PLUGIN_VERIFICATION_ACTION: process.env.VERCEL_PLUGIN_VERIFICATION_ACTION,
+      VERCEL_PLUGIN_LOG_LEVEL: process.env.VERCEL_PLUGIN_LOG_LEVEL,
+    };
+
+    // Clear all directive env — the observer has no story context
+    delete process.env.VERCEL_PLUGIN_VERIFICATION_STORY_ID;
+    delete process.env.VERCEL_PLUGIN_VERIFICATION_ROUTE;
+    delete process.env.VERCEL_PLUGIN_VERIFICATION_BOUNDARY;
+    delete process.env.VERCEL_PLUGIN_VERIFICATION_ACTION;
+    process.env.VERCEL_PLUGIN_LOG_LEVEL = "off";
+
+    try {
+      const stdinPayload = makeStdinPayload(
+        "curl http://localhost:3000/settings",
+        testSessionId,
+      );
+      run(stdinPayload);
+
+      // The exposure has storyId="story-orphan" and route="/orphan",
+      // but the observer inferred route="/settings" and storyId=null.
+      // Strict null matching prevents resolution.
+      const exposures = loadSessionExposures(testSessionId);
+      expect(exposures).toHaveLength(1);
+      expect(exposures[0].outcome).toBe("pending");
+    } finally {
+      for (const [key, val] of Object.entries(savedEnv)) {
+        if (val === undefined) delete process.env[key];
+        else process.env[key] = val;
+      }
+    }
   });
 });

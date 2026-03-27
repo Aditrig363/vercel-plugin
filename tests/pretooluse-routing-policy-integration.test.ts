@@ -633,3 +633,168 @@ describe("pretooluse routing decision trace", () => {
     expect(traceLog!.decisionId).toMatch(/^[0-9a-f]{16}$/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Manifest parity: manifest vs live-scan produce identical routing decisions
+// ---------------------------------------------------------------------------
+
+const MANIFEST_PATH = join(ROOT, "generated", "skill-manifest.json");
+
+/**
+ * Parse skillInjection metadata from hook stdout JSON.
+ * Returns a normalized comparison object suitable for deep equality.
+ */
+function parseSkillInjection(stdout: string): {
+  matchedSkills: string[];
+  injectedSkills: string[];
+  reasons: Record<string, { pattern: string; matchType: string }>;
+} | null {
+  try {
+    const output = JSON.parse(stdout);
+    const ctx = output.hookSpecificOutput?.additionalContext || "";
+    const siMatch = ctx.match(/<!-- skillInjection: (\{.*?\}) -->/);
+    if (!siMatch) return null;
+    const si = JSON.parse(siMatch[1]);
+    return {
+      matchedSkills: [...(si.matchedSkills ?? [])].sort(),
+      injectedSkills: [...(si.injectedSkills ?? [])].sort(),
+      reasons: si.reasons ?? {},
+    };
+  } catch {
+    return null;
+  }
+}
+
+describe("manifest vs live-scan parity", () => {
+  const paritySession = () =>
+    `parity-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  test("identical matched/injected skills and reasons for a Bash next-dev input", async () => {
+    const { renameSync } = await import("node:fs");
+    const backupPath = MANIFEST_PATH + ".bak";
+
+    // 1. Run with manifest
+    const sid1 = paritySession();
+    const withManifest = await runPreToolUseHook(
+      "Bash",
+      { command: "npx next dev" },
+      { VERCEL_PLUGIN_LOG_LEVEL: "off" },
+      sid1,
+    );
+    expect(withManifest.code).toBe(0);
+    const manifestResult = parseSkillInjection(withManifest.stdout);
+    expect(manifestResult).not.toBeNull();
+
+    // 2. Run without manifest (live scan)
+    renameSync(MANIFEST_PATH, backupPath);
+    try {
+      const sid2 = paritySession();
+      const withoutManifest = await runPreToolUseHook(
+        "Bash",
+        { command: "npx next dev" },
+        { VERCEL_PLUGIN_LOG_LEVEL: "off" },
+        sid2,
+      );
+      expect(withoutManifest.code).toBe(0);
+      const liveScanResult = parseSkillInjection(withoutManifest.stdout);
+      expect(liveScanResult).not.toBeNull();
+
+      // 3. Assert parity — matched skills, injected skills, and match reasons
+      const comparison = {
+        manifest: {
+          matchedSkills: manifestResult!.matchedSkills,
+          injectedSkills: manifestResult!.injectedSkills,
+          reasons: normalizeReasons(manifestResult!.reasons),
+        },
+        liveScan: {
+          matchedSkills: liveScanResult!.matchedSkills,
+          injectedSkills: liveScanResult!.injectedSkills,
+          reasons: normalizeReasons(liveScanResult!.reasons),
+        },
+      };
+
+      // Emit normalized comparison JSON for agent observability
+      console.error(JSON.stringify({
+        event: "parity.comparison",
+        tool: "Bash",
+        input: "npx next dev",
+        ...comparison,
+      }));
+
+      expect(comparison.manifest.matchedSkills).toEqual(comparison.liveScan.matchedSkills);
+      expect(comparison.manifest.injectedSkills).toEqual(comparison.liveScan.injectedSkills);
+      expect(comparison.manifest.reasons).toEqual(comparison.liveScan.reasons);
+    } finally {
+      renameSync(backupPath, MANIFEST_PATH);
+    }
+
+    // Cleanup trace dirs
+    try { rmSync(traceDir(sid1), { recursive: true, force: true }); } catch {}
+  });
+
+  test("identical matched/injected skills for a Read next.config input", async () => {
+    const { renameSync } = await import("node:fs");
+    const backupPath = MANIFEST_PATH + ".bak";
+
+    const sid1 = paritySession();
+    const withManifest = await runPreToolUseHook(
+      "Read",
+      { file_path: "next.config.ts" },
+      { VERCEL_PLUGIN_LOG_LEVEL: "off" },
+      sid1,
+    );
+    expect(withManifest.code).toBe(0);
+    const manifestResult = parseSkillInjection(withManifest.stdout);
+    expect(manifestResult).not.toBeNull();
+
+    renameSync(MANIFEST_PATH, backupPath);
+    try {
+      const sid2 = paritySession();
+      const withoutManifest = await runPreToolUseHook(
+        "Read",
+        { file_path: "next.config.ts" },
+        { VERCEL_PLUGIN_LOG_LEVEL: "off" },
+        sid2,
+      );
+      expect(withoutManifest.code).toBe(0);
+      const liveScanResult = parseSkillInjection(withoutManifest.stdout);
+      expect(liveScanResult).not.toBeNull();
+
+      const comparison = {
+        manifest: {
+          matchedSkills: manifestResult!.matchedSkills,
+          injectedSkills: manifestResult!.injectedSkills,
+        },
+        liveScan: {
+          matchedSkills: liveScanResult!.matchedSkills,
+          injectedSkills: liveScanResult!.injectedSkills,
+        },
+      };
+
+      console.error(JSON.stringify({
+        event: "parity.comparison",
+        tool: "Read",
+        input: "next.config.ts",
+        ...comparison,
+      }));
+
+      expect(comparison.manifest.matchedSkills).toEqual(comparison.liveScan.matchedSkills);
+      expect(comparison.manifest.injectedSkills).toEqual(comparison.liveScan.injectedSkills);
+    } finally {
+      renameSync(backupPath, MANIFEST_PATH);
+    }
+
+    try { rmSync(traceDir(sid1), { recursive: true, force: true }); } catch {}
+  });
+});
+
+/** Sort reason keys for deterministic comparison */
+function normalizeReasons(
+  reasons: Record<string, { pattern: string; matchType: string }>,
+): Record<string, { pattern: string; matchType: string }> {
+  const sorted: Record<string, { pattern: string; matchType: string }> = {};
+  for (const key of Object.keys(reasons).sort()) {
+    sorted[key] = reasons[key];
+  }
+  return sorted;
+}

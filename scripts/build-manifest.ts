@@ -17,12 +17,19 @@ import type { SkillEntry, ManifestSkill } from "../hooks/patterns.mjs";
 import type { ChainToRule, ValidationRule } from "../hooks/skill-map-frontmatter.mjs";
 import { loadValidatedSkillMap } from "../src/shared/skill-map-loader.ts";
 
-export { buildManifest, writeManifestFile, synthesizeChainToFromValidate };
+export { buildManifest, writeManifestFile, synthesizeChainToFromValidate, EXCLUDED_SKILL_PATTERN };
 
 const ROOT = resolve(import.meta.dir, "..");
 const SKILLS_DIR = join(ROOT, "skills");
 const OUT_DIR = join(ROOT, "generated");
 const OUT_FILE = join(OUT_DIR, "skill-manifest.json");
+
+/**
+ * Skills matching this pattern are test-only fixtures and must not appear
+ * in the runtime manifest. The pattern matches slugs prefixed with "fake-"
+ * or suffixed with "-test-skill".
+ */
+const EXCLUDED_SKILL_PATTERN = /^fake-|-test-skill$/;
 
 interface ManifestSkillWithBody extends ManifestSkill {
   bodyPath: string;
@@ -154,8 +161,20 @@ function buildManifest(skillsDir: string): { manifest: Manifest; warnings: strin
     allWarnings.push(...validation.warnings);
   }
 
-  // Auto-synthesize chainTo from upgradeToSkill validate rules
+  // Filter out test-only / fake skills before building the runtime manifest
   const normalizedSkills = validation.normalizedSkillMap.skills as Record<string, SkillEntry>;
+  const excludedSlugs: string[] = [];
+  for (const slug of Object.keys(normalizedSkills)) {
+    if (EXCLUDED_SKILL_PATTERN.test(slug)) {
+      delete normalizedSkills[slug];
+      excludedSlugs.push(slug);
+    }
+  }
+  if (excludedSlugs.length > 0) {
+    console.error(`  ⤳ Excluded ${excludedSlugs.length} test-only skill(s): ${excludedSlugs.join(", ")}`);
+  }
+
+  // Auto-synthesize chainTo from upgradeToSkill validate rules
   const allSlugs = new Set(Object.keys(normalizedSkills));
   const { count: synthCount, warnings: synthWarnings } =
     synthesizeChainToFromValidate(normalizedSkills, allSlugs);

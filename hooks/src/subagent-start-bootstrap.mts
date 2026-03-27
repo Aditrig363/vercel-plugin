@@ -611,12 +611,12 @@ export {
   buildStandardContext,
   buildVerificationContext,
   buildVerificationContextFromPlan,
+  buildVerificationDirective,
+  buildVerificationEnv,
   resolveVerificationPlan,
   getLikelySkills,
   resolveBudgetCategory,
   main,
 };
-// Re-export shared directive helpers so existing consumers don't break
-export { buildVerificationDirective, buildVerificationEnv } from "./verification-directive.mjs";
 export type { VerificationDirective } from "./verification-directive.mjs";
 export type { SubagentStartInput, ProfileCache, BudgetCategory };
