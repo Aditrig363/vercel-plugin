@@ -425,6 +425,129 @@ describe("verification → routing-policy closure", () => {
     });
   });
 
+  describe("route-scoped policy bucket persistence", () => {
+    test("one exact-route exposure/outcome cycle writes exact-route, wildcard, and legacy buckets", () => {
+      appendSkillExposure(exposure("route-bucket-e1", {
+        route: "/settings",
+        targetBoundary: "clientRequest",
+        createdAt: T0,
+      }));
+
+      resolveBoundaryOutcome({
+        sessionId: SESSION_ID,
+        boundary: "clientRequest",
+        matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/settings",
+        now: T1,
+      });
+
+      const policy = loadProjectRoutingPolicy(PROJECT_ROOT);
+
+      // Exact-route bucket
+      const exactKey = "PreToolUse|flow-verification|clientRequest|Bash|/settings";
+      const exactStats = policy.scenarios[exactKey]?.["agent-browser-verify"];
+      expect(exactStats).toBeDefined();
+      expect(exactStats!.exposures).toBe(1);
+      expect(exactStats!.wins).toBe(1);
+
+      // Wildcard-route bucket
+      const wildcardKey = "PreToolUse|flow-verification|clientRequest|Bash|*";
+      const wildcardStats = policy.scenarios[wildcardKey]?.["agent-browser-verify"];
+      expect(wildcardStats).toBeDefined();
+      expect(wildcardStats!.exposures).toBe(1);
+      expect(wildcardStats!.wins).toBe(1);
+
+      // Legacy 4-part bucket
+      const legacyKey = "PreToolUse|flow-verification|clientRequest|Bash";
+      const legacyStats = policy.scenarios[legacyKey]?.["agent-browser-verify"];
+      expect(legacyStats).toBeDefined();
+      expect(legacyStats!.exposures).toBe(1);
+      expect(legacyStats!.wins).toBe(1);
+    });
+
+    test("/settings outcomes do not over-credit /dashboard exposures in policy", () => {
+      // Expose on /dashboard
+      appendSkillExposure(exposure("dash-policy-e1", {
+        route: "/dashboard",
+        targetBoundary: "clientRequest",
+        createdAt: T0,
+      }));
+
+      // Expose on /settings
+      appendSkillExposure(exposure("settings-policy-e1", {
+        route: "/settings",
+        targetBoundary: "clientRequest",
+        createdAt: T1,
+      }));
+
+      // Resolve only /settings as a win
+      resolveBoundaryOutcome({
+        sessionId: SESSION_ID,
+        boundary: "clientRequest",
+        matchedSuggestedAction: true,
+        storyId: "story-1",
+        route: "/settings",
+        now: T2,
+      });
+
+      const policy = loadProjectRoutingPolicy(PROJECT_ROOT);
+
+      // /settings exact-route bucket has the win
+      const settingsKey = "PreToolUse|flow-verification|clientRequest|Bash|/settings";
+      const settingsStats = policy.scenarios[settingsKey]?.["agent-browser-verify"];
+      expect(settingsStats!.wins).toBe(1);
+      expect(settingsStats!.directiveWins).toBe(1);
+
+      // /dashboard exact-route bucket has only the exposure, no win
+      const dashKey = "PreToolUse|flow-verification|clientRequest|Bash|/dashboard";
+      const dashStats = policy.scenarios[dashKey]?.["agent-browser-verify"];
+      expect(dashStats).toBeDefined();
+      expect(dashStats!.exposures).toBe(1);
+      expect(dashStats!.wins).toBe(0);
+      expect(dashStats!.directiveWins).toBe(0);
+
+      // Wildcard and legacy buckets see both exposures but only the /settings win
+      const wildcardKey = "PreToolUse|flow-verification|clientRequest|Bash|*";
+      const wildcardStats = policy.scenarios[wildcardKey]?.["agent-browser-verify"];
+      expect(wildcardStats!.exposures).toBe(2);
+      expect(wildcardStats!.wins).toBe(1);
+
+      const legacyKey = "PreToolUse|flow-verification|clientRequest|Bash";
+      const legacyStats = policy.scenarios[legacyKey]?.["agent-browser-verify"];
+      expect(legacyStats!.exposures).toBe(2);
+      expect(legacyStats!.wins).toBe(1);
+    });
+
+    test("stale-miss finalization writes route-scoped policy for each exposure route", () => {
+      appendSkillExposure(exposure("stale-dash-e1", {
+        route: "/dashboard",
+        targetBoundary: "clientRequest",
+        createdAt: T0,
+      }));
+      appendSkillExposure(exposure("stale-settings-e1", {
+        route: "/settings",
+        targetBoundary: "clientRequest",
+        createdAt: T1,
+      }));
+
+      finalizeStaleExposures(SESSION_ID, T_END);
+
+      const policy = loadProjectRoutingPolicy(PROJECT_ROOT);
+
+      // Each route's exact bucket gets its own stale-miss
+      const dashKey = "PreToolUse|flow-verification|clientRequest|Bash|/dashboard";
+      expect(policy.scenarios[dashKey]?.["agent-browser-verify"]?.staleMisses).toBe(1);
+
+      const settingsKey = "PreToolUse|flow-verification|clientRequest|Bash|/settings";
+      expect(policy.scenarios[settingsKey]?.["agent-browser-verify"]?.staleMisses).toBe(1);
+
+      // Wildcard accumulates both
+      const wildcardKey = "PreToolUse|flow-verification|clientRequest|Bash|*";
+      expect(policy.scenarios[wildcardKey]?.["agent-browser-verify"]?.staleMisses).toBe(2);
+    });
+  });
+
   describe("PostToolUse closure traces", () => {
     const TRACE_SESSION = "closure-trace-test-" + Date.now();
 

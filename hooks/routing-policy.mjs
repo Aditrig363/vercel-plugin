@@ -13,6 +13,35 @@ function scenarioKey(input) {
     input.toolName
   ].join("|");
 }
+function scenarioKeyWithRoute(input) {
+  return [
+    input.hook,
+    input.storyKind ?? "none",
+    input.targetBoundary ?? "none",
+    input.toolName,
+    input.routeScope ?? "*"
+  ].join("|");
+}
+function scenarioKeyCandidates(input) {
+  const keys = [];
+  if (input.routeScope && input.routeScope !== "*") {
+    keys.push(scenarioKeyWithRoute(input));
+  }
+  keys.push(scenarioKeyWithRoute({ ...input, routeScope: "*" }));
+  keys.push(scenarioKey(input));
+  return [...new Set(keys)];
+}
+function computePolicySuccessRate(stats) {
+  const weightedWins = stats.wins + stats.directiveWins * 0.25;
+  return weightedWins / Math.max(stats.exposures, 1);
+}
+function lookupPolicyStats(policy, input, skill) {
+  for (const key of scenarioKeyCandidates(input)) {
+    const stats = policy.scenarios[key]?.[skill];
+    if (stats) return { scenario: key, stats };
+  }
+  return { scenario: null, stats: void 0 };
+}
 function ensureScenario(policy, scenario, skill, now) {
   if (!policy.scenarios[scenario]) policy.scenarios[scenario] = {};
   if (!policy.scenarios[scenario][skill]) {
@@ -28,25 +57,27 @@ function ensureScenario(policy, scenario, skill, now) {
 }
 function recordExposure(policy, input) {
   const now = input.now ?? (/* @__PURE__ */ new Date()).toISOString();
-  const scenario = scenarioKey(input);
-  const stats = ensureScenario(policy, scenario, input.skill, now);
-  stats.exposures += 1;
-  stats.lastUpdatedAt = now;
+  for (const key of scenarioKeyCandidates(input)) {
+    const stats = ensureScenario(policy, key, input.skill, now);
+    stats.exposures += 1;
+    stats.lastUpdatedAt = now;
+  }
   return policy;
 }
 function recordOutcome(policy, input) {
   const now = input.now ?? (/* @__PURE__ */ new Date()).toISOString();
-  const scenario = scenarioKey(input);
-  const stats = ensureScenario(policy, scenario, input.skill, now);
-  if (input.outcome === "win") {
-    stats.wins += 1;
-  } else if (input.outcome === "directive-win") {
-    stats.wins += 1;
-    stats.directiveWins += 1;
-  } else {
-    stats.staleMisses += 1;
+  for (const key of scenarioKeyCandidates(input)) {
+    const stats = ensureScenario(policy, key, input.skill, now);
+    if (input.outcome === "win") {
+      stats.wins += 1;
+    } else if (input.outcome === "directive-win") {
+      stats.wins += 1;
+      stats.directiveWins += 1;
+    } else {
+      stats.staleMisses += 1;
+    }
+    stats.lastUpdatedAt = now;
   }
-  stats.lastUpdatedAt = now;
   return policy;
 }
 function derivePolicyBoost(stats) {
@@ -61,26 +92,28 @@ function derivePolicyBoost(stats) {
   return 0;
 }
 function applyPolicyBoosts(entries, policy, scenarioInput) {
-  const scenario = scenarioKey(scenarioInput);
-  const bucket = policy.scenarios[scenario] ?? {};
   return entries.map((entry) => {
-    const stats = bucket[entry.skill];
+    const { scenario, stats } = lookupPolicyStats(policy, scenarioInput, entry.skill);
     const boost = derivePolicyBoost(stats);
     const base = typeof entry.effectivePriority === "number" ? entry.effectivePriority : entry.priority;
     return {
       ...entry,
       effectivePriority: base + boost,
       policyBoost: boost,
-      policyReason: stats ? `${scenario}: ${stats.wins} wins / ${stats.exposures} exposures, ${stats.directiveWins} directive wins, ${stats.staleMisses} stale misses` : null
+      policyReason: stats && scenario ? `${scenario}: ${stats.wins} wins / ${stats.exposures} exposures, ${stats.directiveWins} directive wins, ${stats.staleMisses} stale misses` : null
     };
   });
 }
 export {
   applyPolicyBoosts,
+  computePolicySuccessRate,
   createEmptyRoutingPolicy,
   derivePolicyBoost,
   ensureScenario,
+  lookupPolicyStats,
   recordExposure,
   recordOutcome,
-  scenarioKey
+  scenarioKey,
+  scenarioKeyCandidates,
+  scenarioKeyWithRoute
 };

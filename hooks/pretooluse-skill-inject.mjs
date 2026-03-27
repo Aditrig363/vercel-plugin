@@ -43,6 +43,7 @@ import {
   appendSkillExposure,
   loadProjectRoutingPolicy
 } from "./routing-policy-ledger.mjs";
+import { selectPolicyRecallCandidates } from "./policy-recall.mjs";
 import {
   appendRoutingDecisionTrace,
   createDecisionId
@@ -1026,6 +1027,50 @@ function run() {
       log.debug("ai-sdk-companion-inject", { skill: companion });
     }
   }
+  const policyRecallSynthetic = /* @__PURE__ */ new Set();
+  if (cwd && sessionId) {
+    const recallPlan = loadCachedPlanResult(sessionId, log);
+    const recallStory = recallPlan ? selectPrimaryStory(recallPlan.stories ?? []) : null;
+    const recallBoundary = recallPlan?.primaryNextAction?.targetBoundary ?? null;
+    if (recallStory && recallBoundary) {
+      const policy = loadProjectRoutingPolicy(cwd);
+      const recalled = selectPolicyRecallCandidates(
+        policy,
+        {
+          hook: "PreToolUse",
+          storyKind: recallStory.kind ?? null,
+          targetBoundary: recallBoundary,
+          toolName,
+          routeScope: recallStory.route ?? null
+        },
+        {
+          maxCandidates: 1,
+          excludeSkills: /* @__PURE__ */ new Set([...rankedSkills, ...injectedSkills])
+        }
+      );
+      for (const candidate of recalled) {
+        if (rankedSkills.includes(candidate.skill)) continue;
+        rankedSkills.unshift(candidate.skill);
+        matched.add(candidate.skill);
+        forceSummarySkills.add(candidate.skill);
+        policyRecallSynthetic.add(candidate.skill);
+        log.debug("policy-recall-injected", {
+          skill: candidate.skill,
+          scenario: candidate.scenario,
+          exposures: candidate.exposures,
+          wins: candidate.wins,
+          directiveWins: candidate.directiveWins,
+          successRate: candidate.successRate,
+          policyBoost: candidate.policyBoost,
+          recallScore: candidate.recallScore
+        });
+      }
+    } else {
+      log.debug("policy-recall-skipped", {
+        reason: !recallStory ? "no_active_verification_story" : "no_target_boundary"
+      });
+    }
+  }
   let vercelEnvHelpInjected = false;
   if (vercelEnvHelp.triggered) {
     let helpClaimed = true;
@@ -1200,6 +1245,12 @@ function run() {
       }
     }
   }
+  for (const skill of policyRecallSynthetic) {
+    reasons[skill] = {
+      trigger: "policy-recall",
+      reasonCode: "route-scoped-verified-policy-recall"
+    };
+  }
   for (const skill of loaded) {
     if (!reasons[skill] && matchReasons?.[skill]) {
       reasons[skill] = {
@@ -1302,6 +1353,9 @@ function run() {
           syntheticSkills.add(companion);
         }
       }
+    }
+    for (const skill of policyRecallSynthetic) {
+      syntheticSkills.add(skill);
     }
     const traceRanked = [];
     const trackedSkills = /* @__PURE__ */ new Set();

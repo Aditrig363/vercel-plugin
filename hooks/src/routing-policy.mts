@@ -29,6 +29,7 @@ export interface RoutingPolicyScenario {
   storyKind: string | null;
   targetBoundary: RoutingBoundary | null;
   toolName: RoutingToolName;
+  routeScope?: string | null;
 }
 
 export interface RoutingPolicyStats {
@@ -81,6 +82,49 @@ export function scenarioKey(input: RoutingPolicyScenario): string {
   ].join("|");
 }
 
+export function scenarioKeyWithRoute(input: RoutingPolicyScenario): string {
+  return [
+    input.hook,
+    input.storyKind ?? "none",
+    input.targetBoundary ?? "none",
+    input.toolName,
+    input.routeScope ?? "*",
+  ].join("|");
+}
+
+/**
+ * Deterministic candidate lookup order:
+ * 1. Exact route key (if routeScope is a non-wildcard string)
+ * 2. Wildcard route key (hook|story|boundary|tool|*)
+ * 3. Legacy 4-part key (hook|story|boundary|tool)
+ */
+export function scenarioKeyCandidates(input: RoutingPolicyScenario): string[] {
+  const keys: string[] = [];
+  if (input.routeScope && input.routeScope !== "*") {
+    keys.push(scenarioKeyWithRoute(input));
+  }
+  keys.push(scenarioKeyWithRoute({ ...input, routeScope: "*" }));
+  keys.push(scenarioKey(input)); // legacy fallback
+  return [...new Set(keys)];
+}
+
+export function computePolicySuccessRate(stats: RoutingPolicyStats): number {
+  const weightedWins = stats.wins + stats.directiveWins * 0.25;
+  return weightedWins / Math.max(stats.exposures, 1);
+}
+
+export function lookupPolicyStats(
+  policy: RoutingPolicyFile,
+  input: RoutingPolicyScenario,
+  skill: string,
+): { scenario: string | null; stats: RoutingPolicyStats | undefined } {
+  for (const key of scenarioKeyCandidates(input)) {
+    const stats = policy.scenarios[key]?.[skill];
+    if (stats) return { scenario: key, stats };
+  }
+  return { scenario: null, stats: undefined };
+}
+
 // ---------------------------------------------------------------------------
 // Ensure scenario + skill slot exists
 // ---------------------------------------------------------------------------
@@ -113,10 +157,11 @@ export function recordExposure(
   input: RoutingPolicyScenario & { skill: string; now?: string },
 ): RoutingPolicyFile {
   const now = input.now ?? new Date().toISOString();
-  const scenario = scenarioKey(input);
-  const stats = ensureScenario(policy, scenario, input.skill, now);
-  stats.exposures += 1;
-  stats.lastUpdatedAt = now;
+  for (const key of scenarioKeyCandidates(input)) {
+    const stats = ensureScenario(policy, key, input.skill, now);
+    stats.exposures += 1;
+    stats.lastUpdatedAt = now;
+  }
   return policy;
 }
 
@@ -135,19 +180,20 @@ export function recordOutcome(
   },
 ): RoutingPolicyFile {
   const now = input.now ?? new Date().toISOString();
-  const scenario = scenarioKey(input);
-  const stats = ensureScenario(policy, scenario, input.skill, now);
+  for (const key of scenarioKeyCandidates(input)) {
+    const stats = ensureScenario(policy, key, input.skill, now);
 
-  if (input.outcome === "win") {
-    stats.wins += 1;
-  } else if (input.outcome === "directive-win") {
-    stats.wins += 1;
-    stats.directiveWins += 1;
-  } else {
-    stats.staleMisses += 1;
+    if (input.outcome === "win") {
+      stats.wins += 1;
+    } else if (input.outcome === "directive-win") {
+      stats.wins += 1;
+      stats.directiveWins += 1;
+    } else {
+      stats.staleMisses += 1;
+    }
+
+    stats.lastUpdatedAt = now;
   }
-
-  stats.lastUpdatedAt = now;
   return policy;
 }
 
@@ -179,11 +225,8 @@ export function applyPolicyBoosts<T extends RankableSkill>(
   policy: RoutingPolicyFile,
   scenarioInput: RoutingPolicyScenario,
 ): Array<T & { policyBoost: number; policyReason: string | null }> {
-  const scenario = scenarioKey(scenarioInput);
-  const bucket = policy.scenarios[scenario] ?? {};
-
   return entries.map((entry) => {
-    const stats = bucket[entry.skill];
+    const { scenario, stats } = lookupPolicyStats(policy, scenarioInput, entry.skill);
     const boost = derivePolicyBoost(stats);
     const base = typeof entry.effectivePriority === "number"
       ? entry.effectivePriority
@@ -193,7 +236,7 @@ export function applyPolicyBoosts<T extends RankableSkill>(
       ...entry,
       effectivePriority: base + boost,
       policyBoost: boost,
-      policyReason: stats
+      policyReason: stats && scenario
         ? `${scenario}: ${stats.wins} wins / ${stats.exposures} exposures, ${stats.directiveWins} directive wins, ${stats.staleMisses} stale misses`
         : null,
     };

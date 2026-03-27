@@ -2,6 +2,10 @@ import { describe, test, expect } from "bun:test";
 import {
   createEmptyRoutingPolicy,
   scenarioKey,
+  scenarioKeyWithRoute,
+  scenarioKeyCandidates,
+  computePolicySuccessRate,
+  lookupPolicyStats,
   ensureScenario,
   recordExposure,
   recordOutcome,
@@ -297,6 +301,331 @@ describe("routing-policy core", () => {
       expect(boosted[0].effectivePriority).toBe(9);
       expect(boosted[0].policyReason).toContain("1 wins / 3 exposures");
       expect(boosted[0].policyReason).toContain("1 directive wins");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Route-scoped policy (routeScope dimension)
+  // ---------------------------------------------------------------------------
+
+  describe("scenarioKeyWithRoute", () => {
+    test("appends routeScope as fifth pipe segment", () => {
+      expect(
+        scenarioKeyWithRoute({ ...BASE_SCENARIO, routeScope: "/settings" }),
+      ).toBe("PreToolUse|flow-verification|uiRender|Bash|/settings");
+    });
+
+    test("defaults to wildcard when routeScope is null", () => {
+      expect(
+        scenarioKeyWithRoute({ ...BASE_SCENARIO, routeScope: null }),
+      ).toBe("PreToolUse|flow-verification|uiRender|Bash|*");
+    });
+
+    test("defaults to wildcard when routeScope is undefined", () => {
+      expect(scenarioKeyWithRoute(BASE_SCENARIO)).toBe(
+        "PreToolUse|flow-verification|uiRender|Bash|*",
+      );
+    });
+  });
+
+  describe("scenarioKeyCandidates", () => {
+    test("exact route → wildcard → legacy for non-null routeScope", () => {
+      const input = { ...BASE_SCENARIO, routeScope: "/settings" };
+      expect(scenarioKeyCandidates(input)).toEqual([
+        "PreToolUse|flow-verification|uiRender|Bash|/settings",
+        "PreToolUse|flow-verification|uiRender|Bash|*",
+        "PreToolUse|flow-verification|uiRender|Bash",
+      ]);
+    });
+
+    test("wildcard → legacy for null routeScope", () => {
+      expect(scenarioKeyCandidates(BASE_SCENARIO)).toEqual([
+        "PreToolUse|flow-verification|uiRender|Bash|*",
+        "PreToolUse|flow-verification|uiRender|Bash",
+      ]);
+    });
+
+    test("wildcard → legacy for explicit '*' routeScope (deduped)", () => {
+      const input = { ...BASE_SCENARIO, routeScope: "*" };
+      expect(scenarioKeyCandidates(input)).toEqual([
+        "PreToolUse|flow-verification|uiRender|Bash|*",
+        "PreToolUse|flow-verification|uiRender|Bash",
+      ]);
+    });
+  });
+
+  describe("computePolicySuccessRate", () => {
+    test("returns weighted success rate", () => {
+      const rate = computePolicySuccessRate({
+        exposures: 10,
+        wins: 7,
+        directiveWins: 2,
+        staleMisses: 3,
+        lastUpdatedAt: T0,
+      });
+      // weightedWins = 7 + 2*0.25 = 7.5, rate = 7.5/10 = 0.75
+      expect(rate).toBeCloseTo(0.75);
+    });
+
+    test("returns 0 for zero exposures", () => {
+      expect(
+        computePolicySuccessRate({
+          exposures: 0,
+          wins: 0,
+          directiveWins: 0,
+          staleMisses: 0,
+          lastUpdatedAt: T0,
+        }),
+      ).toBe(0);
+    });
+  });
+
+  describe("lookupPolicyStats", () => {
+    test("prefers exact route over wildcard", () => {
+      const policy: RoutingPolicyFile = {
+        version: 1,
+        scenarios: {
+          "PreToolUse|flow-verification|uiRender|Bash|/settings": {
+            verification: {
+              exposures: 5,
+              wins: 4,
+              directiveWins: 2,
+              staleMisses: 1,
+              lastUpdatedAt: T0,
+            },
+          },
+          "PreToolUse|flow-verification|uiRender|Bash|*": {
+            verification: {
+              exposures: 10,
+              wins: 6,
+              directiveWins: 1,
+              staleMisses: 4,
+              lastUpdatedAt: T0,
+            },
+          },
+        },
+      };
+
+      const { scenario, stats } = lookupPolicyStats(
+        policy,
+        { ...BASE_SCENARIO, routeScope: "/settings" },
+        "verification",
+      );
+      expect(scenario).toBe("PreToolUse|flow-verification|uiRender|Bash|/settings");
+      expect(stats!.exposures).toBe(5);
+    });
+
+    test("falls back to wildcard when exact route absent", () => {
+      const policy: RoutingPolicyFile = {
+        version: 1,
+        scenarios: {
+          "PreToolUse|flow-verification|uiRender|Bash|*": {
+            verification: {
+              exposures: 8,
+              wins: 6,
+              directiveWins: 1,
+              staleMisses: 2,
+              lastUpdatedAt: T0,
+            },
+          },
+        },
+      };
+
+      const { scenario, stats } = lookupPolicyStats(
+        policy,
+        { ...BASE_SCENARIO, routeScope: "/settings" },
+        "verification",
+      );
+      expect(scenario).toBe("PreToolUse|flow-verification|uiRender|Bash|*");
+      expect(stats!.exposures).toBe(8);
+    });
+
+    test("falls back to legacy key when no route keys exist", () => {
+      const policy: RoutingPolicyFile = {
+        version: 1,
+        scenarios: {
+          "PreToolUse|flow-verification|uiRender|Bash": {
+            verification: {
+              exposures: 3,
+              wins: 2,
+              directiveWins: 0,
+              staleMisses: 1,
+              lastUpdatedAt: T0,
+            },
+          },
+        },
+      };
+
+      const { scenario, stats } = lookupPolicyStats(
+        policy,
+        { ...BASE_SCENARIO, routeScope: "/settings" },
+        "verification",
+      );
+      expect(scenario).toBe("PreToolUse|flow-verification|uiRender|Bash");
+      expect(stats!.exposures).toBe(3);
+    });
+
+    test("returns null scenario for missing skill", () => {
+      const policy = createEmptyRoutingPolicy();
+      const { scenario, stats } = lookupPolicyStats(
+        policy,
+        BASE_SCENARIO,
+        "nonexistent",
+      );
+      expect(scenario).toBeNull();
+      expect(stats).toBeUndefined();
+    });
+  });
+
+  describe("route-scoped recordExposure", () => {
+    test("writes to exact route, wildcard, and legacy keys", () => {
+      const policy = createEmptyRoutingPolicy();
+      recordExposure(policy, {
+        ...BASE_SCENARIO,
+        routeScope: "/settings",
+        skill: "verification",
+        now: T0,
+      });
+
+      const keys = Object.keys(policy.scenarios);
+      expect(keys).toContain("PreToolUse|flow-verification|uiRender|Bash|/settings");
+      expect(keys).toContain("PreToolUse|flow-verification|uiRender|Bash|*");
+      expect(keys).toContain("PreToolUse|flow-verification|uiRender|Bash");
+
+      // All three have the same exposure count
+      for (const key of keys) {
+        expect(policy.scenarios[key]["verification"].exposures).toBe(1);
+      }
+    });
+
+    test("null routeScope writes to wildcard and legacy only", () => {
+      const policy = createEmptyRoutingPolicy();
+      recordExposure(policy, {
+        ...BASE_SCENARIO,
+        routeScope: null,
+        skill: "verification",
+        now: T0,
+      });
+
+      const keys = Object.keys(policy.scenarios);
+      expect(keys).toHaveLength(2);
+      expect(keys).toContain("PreToolUse|flow-verification|uiRender|Bash|*");
+      expect(keys).toContain("PreToolUse|flow-verification|uiRender|Bash");
+    });
+  });
+
+  describe("route-scoped recordOutcome", () => {
+    test("writes outcome to all candidate keys", () => {
+      const policy = createEmptyRoutingPolicy();
+      recordOutcome(policy, {
+        ...BASE_SCENARIO,
+        routeScope: "/dashboard",
+        skill: "verification",
+        outcome: "win",
+        now: T0,
+      });
+
+      for (const key of [
+        "PreToolUse|flow-verification|uiRender|Bash|/dashboard",
+        "PreToolUse|flow-verification|uiRender|Bash|*",
+        "PreToolUse|flow-verification|uiRender|Bash",
+      ]) {
+        const stats = policy.scenarios[key]["verification"];
+        expect(stats.wins).toBe(1);
+        expect(stats.directiveWins).toBe(0);
+      }
+    });
+  });
+
+  describe("route-scoped applyPolicyBoosts", () => {
+    test("prefers exact-route stats for boost calculation", () => {
+      const policy: RoutingPolicyFile = {
+        version: 1,
+        scenarios: {
+          "PreToolUse|flow-verification|uiRender|Bash|/settings": {
+            verification: {
+              exposures: 5,
+              wins: 5,
+              directiveWins: 3,
+              staleMisses: 0,
+              lastUpdatedAt: T0,
+            },
+          },
+          "PreToolUse|flow-verification|uiRender|Bash|*": {
+            verification: {
+              exposures: 10,
+              wins: 3,
+              directiveWins: 0,
+              staleMisses: 7,
+              lastUpdatedAt: T0,
+            },
+          },
+        },
+      };
+
+      const result = applyPolicyBoosts(
+        [{ skill: "verification", priority: 6 }],
+        policy,
+        { ...BASE_SCENARIO, routeScope: "/settings" },
+      );
+
+      // Exact route: 5 wins / 5 exposures + 3*0.25 → rate > 0.80 → boost 8
+      expect(result[0].policyBoost).toBe(8);
+      expect(result[0].effectivePriority).toBe(14);
+      expect(result[0].policyReason).toContain("|/settings");
+    });
+
+    test("falls back to wildcard when exact route has no data for skill", () => {
+      const policy: RoutingPolicyFile = {
+        version: 1,
+        scenarios: {
+          "PreToolUse|flow-verification|uiRender|Bash|*": {
+            verification: {
+              exposures: 5,
+              wins: 4,
+              directiveWins: 2,
+              staleMisses: 1,
+              lastUpdatedAt: T0,
+            },
+          },
+        },
+      };
+
+      const result = applyPolicyBoosts(
+        [{ skill: "verification", priority: 6 }],
+        policy,
+        { ...BASE_SCENARIO, routeScope: "/settings" },
+      );
+
+      // Falls back to wildcard: 4+2*0.25=4.5/5=0.90 → boost 8
+      expect(result[0].policyBoost).toBe(8);
+      expect(result[0].policyReason).toContain("|*");
+    });
+
+    test("backward-compatible: no routeScope still works with legacy keys", () => {
+      const policy: RoutingPolicyFile = {
+        version: 1,
+        scenarios: {
+          "PreToolUse|flow-verification|uiRender|Bash": {
+            verification: {
+              exposures: 5,
+              wins: 4,
+              directiveWins: 2,
+              staleMisses: 1,
+              lastUpdatedAt: T0,
+            },
+          },
+        },
+      };
+
+      const result = applyPolicyBoosts(
+        [{ skill: "verification", priority: 6 }],
+        policy,
+        BASE_SCENARIO,
+      );
+
+      expect(result[0].policyBoost).toBe(8);
+      expect(result[0].policyReason).toContain("PreToolUse|flow-verification|uiRender|Bash:");
     });
   });
 });

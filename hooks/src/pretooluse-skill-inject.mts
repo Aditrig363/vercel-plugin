@@ -68,6 +68,7 @@ import {
   appendSkillExposure,
   loadProjectRoutingPolicy,
 } from "./routing-policy-ledger.mjs";
+import { selectPolicyRecallCandidates } from "./policy-recall.mjs";
 import {
   appendRoutingDecisionTrace,
   createDecisionId,
@@ -1580,6 +1581,61 @@ function run(): string {
     }
   }
 
+  // Stage 4.95: Route-scoped policy recall — inject historically verified winners
+  // that pattern matching missed. Only fires when an active verification story
+  // and target boundary exist. Phase 1: max 1 recalled skill, summary-only.
+  const policyRecallSynthetic = new Set<string>();
+  if (cwd && sessionId) {
+    const recallPlan = loadCachedPlanResult(sessionId, log);
+    const recallStory = recallPlan ? selectPrimaryStory(recallPlan.stories ?? []) : null;
+    const recallBoundary = (recallPlan?.primaryNextAction?.targetBoundary as
+      | "uiRender"
+      | "clientRequest"
+      | "serverHandler"
+      | "environment"
+      | null) ?? null;
+
+    if (recallStory && recallBoundary) {
+      const policy = loadProjectRoutingPolicy(cwd);
+      const recalled = selectPolicyRecallCandidates(
+        policy,
+        {
+          hook: "PreToolUse",
+          storyKind: recallStory.kind ?? null,
+          targetBoundary: recallBoundary,
+          toolName: toolName as RoutingToolName,
+          routeScope: recallStory.route ?? null,
+        },
+        {
+          maxCandidates: 1,
+          excludeSkills: new Set([...rankedSkills, ...injectedSkills]),
+        },
+      );
+
+      for (const candidate of recalled) {
+        if (rankedSkills.includes(candidate.skill)) continue;
+        rankedSkills.unshift(candidate.skill);
+        matched.add(candidate.skill);
+        forceSummarySkills.add(candidate.skill);
+        policyRecallSynthetic.add(candidate.skill);
+        log.debug("policy-recall-injected", {
+          skill: candidate.skill,
+          scenario: candidate.scenario,
+          exposures: candidate.exposures,
+          wins: candidate.wins,
+          directiveWins: candidate.directiveWins,
+          successRate: candidate.successRate,
+          policyBoost: candidate.policyBoost,
+          recallScore: candidate.recallScore,
+        });
+      }
+    } else {
+      log.debug("policy-recall-skipped", {
+        reason: !recallStory ? "no_active_verification_story" : "no_target_boundary",
+      });
+    }
+  }
+
   let vercelEnvHelpInjected = false;
   if (vercelEnvHelp.triggered) {
     let helpClaimed = true;
@@ -1776,6 +1832,13 @@ function run(): string {
       }
     }
   }
+  // Add policy-recall reasons
+  for (const skill of policyRecallSynthetic) {
+    reasons[skill] = {
+      trigger: "policy-recall",
+      reasonCode: "route-scoped-verified-policy-recall",
+    };
+  }
   // Add pattern-match reasons for remaining skills
   for (const skill of loaded) {
     if (!reasons[skill] && matchReasons?.[skill]) {
@@ -1890,6 +1953,9 @@ function run(): string {
           syntheticSkills.add(companion);
         }
       }
+    }
+    for (const skill of policyRecallSynthetic) {
+      syntheticSkills.add(skill);
     }
 
     // Build ranked entries: pattern-matched entries + synthetic injections + deduped candidates

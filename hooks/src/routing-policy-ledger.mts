@@ -122,6 +122,7 @@ export function appendSkillExposure(exposure: SkillExposure): void {
     storyKind: exposure.storyKind,
     targetBoundary: exposure.targetBoundary,
     toolName: exposure.toolName,
+    routeScope: exposure.route,
     skill: exposure.skill,
     now: exposure.createdAt,
   });
@@ -132,6 +133,7 @@ export function appendSkillExposure(exposure: SkillExposure): void {
     skill: exposure.skill,
     hook: exposure.hook,
     targetBoundary: exposure.targetBoundary,
+    route: exposure.route,
     outcome: exposure.outcome,
   });
 }
@@ -250,6 +252,7 @@ export function resolveBoundaryOutcome(params: {
         storyKind: e.storyKind,
         targetBoundary: e.targetBoundary,
         toolName: e.toolName,
+        routeScope: e.route,
         skill: e.skill,
         outcome: outcome as RoutingOutcome,
         now,
@@ -325,6 +328,7 @@ export function finalizeStaleExposures(
         storyKind: e.storyKind,
         targetBoundary: e.targetBoundary,
         toolName: e.toolName,
+        routeScope: e.route,
         skill: e.skill,
         outcome: "stale-miss",
         now: timestamp,
