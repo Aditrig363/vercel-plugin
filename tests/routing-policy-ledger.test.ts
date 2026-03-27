@@ -163,7 +163,7 @@ describe("routing-policy-ledger", () => {
   });
 
   describe("resolveBoundaryOutcome", () => {
-    test("resolves pending exposures matching boundary as win", () => {
+    test("resolves pending exposures matching boundary, story, and route as win", () => {
       appendSkillExposure(makeExposure({ id: "e1", createdAt: T0 }));
       appendSkillExposure(makeExposure({ id: "e2", createdAt: T1 }));
 
@@ -171,6 +171,8 @@ describe("routing-policy-ledger", () => {
         sessionId: TEST_SESSION,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T2,
       });
 
@@ -191,6 +193,8 @@ describe("routing-policy-ledger", () => {
         sessionId: TEST_SESSION,
         boundary: "uiRender",
         matchedSuggestedAction: true,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T2,
       });
 
@@ -209,6 +213,8 @@ describe("routing-policy-ledger", () => {
         sessionId: TEST_SESSION,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T2,
       });
 
@@ -230,6 +236,8 @@ describe("routing-policy-ledger", () => {
         sessionId: TEST_SESSION,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T2,
       });
 
@@ -243,6 +251,8 @@ describe("routing-policy-ledger", () => {
         sessionId: TEST_SESSION,
         boundary: "uiRender",
         matchedSuggestedAction: true,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T2,
       });
 
@@ -339,7 +349,7 @@ describe("routing-policy-ledger", () => {
       appendSkillExposure(makeExposure({
         id: "story2-e1",
         storyId: "story-2",
-        route: "/dashboard",
+        route: "/settings",
         createdAt: T1,
       }));
 
@@ -348,6 +358,7 @@ describe("routing-policy-ledger", () => {
         boundary: "uiRender",
         matchedSuggestedAction: false,
         storyId: "story-1",
+        route: "/settings",
         now: T2,
       });
 
@@ -379,6 +390,7 @@ describe("routing-policy-ledger", () => {
         sessionId: TEST_SESSION,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
         route: "/settings",
         now: T2,
       });
@@ -427,15 +439,16 @@ describe("routing-policy-ledger", () => {
       expect(all.find((e) => e.id === "wrong-route")!.outcome).toBe("pending");
     });
 
-    test("null storyId/route resolves all matching boundary exposures (backward compat)", () => {
+    test("null observed route/storyId only resolves exposures with null route/storyId (strict matching)", () => {
+      // Exposures with specific routes should NOT be resolved by a null observed route
       appendSkillExposure(makeExposure({
-        id: "any-story-e1",
+        id: "specific-route-e1",
         storyId: "story-1",
         route: "/settings",
         createdAt: T0,
       }));
       appendSkillExposure(makeExposure({
-        id: "any-story-e2",
+        id: "specific-route-e2",
         storyId: "story-2",
         route: "/dashboard",
         createdAt: T1,
@@ -448,8 +461,42 @@ describe("routing-policy-ledger", () => {
         now: T2,
       });
 
-      // Without storyId/route filter, both resolve
-      expect(resolved).toHaveLength(2);
+      // Strict null matching: null route/storyId does NOT match non-null exposures
+      expect(resolved).toHaveLength(0);
+
+      // All remain pending
+      const all = loadSessionExposures(TEST_SESSION);
+      expect(all.every((e) => e.outcome === "pending")).toBe(true);
+    });
+
+    test("null observed route/storyId resolves exposures that also have null route/storyId", () => {
+      appendSkillExposure(makeExposure({
+        id: "null-route-e1",
+        storyId: null,
+        route: null,
+        createdAt: T0,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "specific-route-e1",
+        storyId: "story-1",
+        route: "/settings",
+        createdAt: T1,
+      }));
+
+      const resolved = resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: false,
+        now: T2,
+      });
+
+      // Only the null-route exposure is resolved
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0].id).toBe("null-route-e1");
+
+      // The specific-route exposure remains pending
+      const all = loadSessionExposures(TEST_SESSION);
+      expect(all.find((e) => e.id === "specific-route-e1")!.outcome).toBe("pending");
     });
   });
 
@@ -483,11 +530,13 @@ describe("routing-policy-ledger", () => {
       const loaded = loadSessionExposures(UNSAFE_SESSION);
       expect(loaded).toHaveLength(2);
 
-      // Resolve clientRequest
+      // Resolve clientRequest (must match storyId/route from makeExposure defaults)
       const resolved = resolveBoundaryOutcome({
         sessionId: UNSAFE_SESSION,
         boundary: "clientRequest",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T2,
       });
       expect(resolved).toHaveLength(1);
@@ -507,6 +556,270 @@ describe("routing-policy-ledger", () => {
     });
   });
 
+  describe("null-route attribution guardrails", () => {
+    test("null observed route does not over-credit exposures with specific routes", () => {
+      appendSkillExposure(makeExposure({
+        id: "route-a",
+        route: "/settings",
+        storyId: "story-1",
+        createdAt: T0,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "route-b",
+        route: "/dashboard",
+        storyId: "story-1",
+        createdAt: T1,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "route-c",
+        route: "/api/users",
+        storyId: "story-1",
+        createdAt: T2,
+      }));
+
+      // Observed route is null — should NOT resolve any of these
+      const resolved = resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: null,
+        now: T3,
+      });
+
+      expect(resolved).toHaveLength(0);
+
+      // All remain pending
+      const all = loadSessionExposures(TEST_SESSION);
+      expect(all.every((e) => e.outcome === "pending")).toBe(true);
+    });
+
+    test("null observed storyId does not over-credit exposures with specific storyIds", () => {
+      appendSkillExposure(makeExposure({
+        id: "story-a",
+        storyId: "story-1",
+        route: "/settings",
+        createdAt: T0,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "story-b",
+        storyId: "story-2",
+        route: "/settings",
+        createdAt: T1,
+      }));
+
+      // Observed storyId is null — should NOT resolve any
+      const resolved = resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: false,
+        storyId: null,
+        route: "/settings",
+        now: T3,
+      });
+
+      expect(resolved).toHaveLength(0);
+    });
+
+    test("mixed null and non-null: only exact matches resolve", () => {
+      // Exposure with null route
+      appendSkillExposure(makeExposure({
+        id: "null-route",
+        storyId: "story-1",
+        route: null,
+        createdAt: T0,
+      }));
+      // Exposure with specific route
+      appendSkillExposure(makeExposure({
+        id: "specific-route",
+        storyId: "story-1",
+        route: "/settings",
+        createdAt: T1,
+      }));
+
+      // Resolve with null route — only matches null-route exposure
+      const resolved = resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: null,
+        now: T2,
+      });
+
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0].id).toBe("null-route");
+
+      // specific-route remains pending
+      const all = loadSessionExposures(TEST_SESSION);
+      expect(all.find((e) => e.id === "specific-route")!.outcome).toBe("pending");
+    });
+  });
+
+  describe("outcome distinguishability", () => {
+    test("directive-win and plain win are persisted distinctly in exposures", () => {
+      appendSkillExposure(makeExposure({
+        id: "directive-e1",
+        storyId: "story-1",
+        route: "/a",
+        createdAt: T0,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "plain-e1",
+        storyId: "story-1",
+        route: "/b",
+        createdAt: T1,
+      }));
+
+      // Directive win for /a
+      resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: true,
+        storyId: "story-1",
+        route: "/a",
+        now: T2,
+      });
+
+      // Plain win for /b
+      resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/b",
+        now: T3,
+      });
+
+      const all = loadSessionExposures(TEST_SESSION);
+      expect(all.find((e) => e.id === "directive-e1")!.outcome).toBe("directive-win");
+      expect(all.find((e) => e.id === "plain-e1")!.outcome).toBe("win");
+    });
+
+    test("directive-win, win, and stale-miss coexist in the same session ledger", () => {
+      appendSkillExposure(makeExposure({
+        id: "dw-e1",
+        storyId: "story-1",
+        route: "/a",
+        targetBoundary: "uiRender",
+        createdAt: T0,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "w-e1",
+        storyId: "story-1",
+        route: "/b",
+        targetBoundary: "uiRender",
+        createdAt: T1,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "sm-e1",
+        storyId: "story-1",
+        route: "/c",
+        targetBoundary: "clientRequest",
+        createdAt: T2,
+      }));
+
+      // Directive win
+      resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: true,
+        storyId: "story-1",
+        route: "/a",
+        now: T3,
+      });
+
+      // Plain win
+      resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/b",
+        now: T3,
+      });
+
+      // Stale-miss the rest
+      finalizeStaleExposures(TEST_SESSION, T4);
+
+      const all = loadSessionExposures(TEST_SESSION);
+      const outcomes = all.map((e) => ({ id: e.id, outcome: e.outcome }));
+      expect(outcomes).toEqual([
+        { id: "dw-e1", outcome: "directive-win" },
+        { id: "w-e1", outcome: "win" },
+        { id: "sm-e1", outcome: "stale-miss" },
+      ]);
+    });
+
+    test("policy correctly distinguishes directive-win from plain win counts", () => {
+      appendSkillExposure(makeExposure({
+        id: "dw",
+        storyId: "story-1",
+        route: "/a",
+        createdAt: T0,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "pw",
+        storyId: "story-1",
+        route: "/b",
+        createdAt: T1,
+      }));
+
+      resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: true,
+        storyId: "story-1",
+        route: "/a",
+        now: T2,
+      });
+      resolveBoundaryOutcome({
+        sessionId: TEST_SESSION,
+        boundary: "uiRender",
+        matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/b",
+        now: T3,
+      });
+
+      const policy = loadProjectRoutingPolicy(TEST_PROJECT);
+      const stats = policy.scenarios["PreToolUse|flow-verification|uiRender|Bash"]?.["agent-browser-verify"];
+      expect(stats!.wins).toBe(2);
+      expect(stats!.directiveWins).toBe(1);
+    });
+  });
+
+  describe("stale-miss finalization determinism", () => {
+    test("repeated finalization calls produce identical results", () => {
+      appendSkillExposure(makeExposure({
+        id: "det-e1",
+        storyId: "s1",
+        route: "/x",
+        createdAt: T0,
+      }));
+      appendSkillExposure(makeExposure({
+        id: "det-e2",
+        storyId: "s1",
+        route: "/y",
+        createdAt: T1,
+      }));
+
+      const first = finalizeStaleExposures(TEST_SESSION, T3);
+      expect(first).toHaveLength(2);
+      expect(first.every((e) => e.outcome === "stale-miss")).toBe(true);
+
+      // Second call should be a no-op
+      const second = finalizeStaleExposures(TEST_SESSION, T4);
+      expect(second).toHaveLength(0);
+
+      // Ledger is identical after both calls
+      const all = loadSessionExposures(TEST_SESSION);
+      expect(all).toHaveLength(2);
+      expect(all[0].resolvedAt).toBe(T3);
+      expect(all[1].resolvedAt).toBe(T3);
+    });
+  });
+
   describe("idempotency", () => {
     test("resolveBoundaryOutcome is safe to call twice", () => {
       appendSkillExposure(makeExposure({ id: "e1", createdAt: T0 }));
@@ -515,6 +828,8 @@ describe("routing-policy-ledger", () => {
         sessionId: TEST_SESSION,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T2,
       });
 
@@ -523,6 +838,8 @@ describe("routing-policy-ledger", () => {
         sessionId: TEST_SESSION,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T3,
       });
 

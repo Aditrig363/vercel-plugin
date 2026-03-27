@@ -209,7 +209,7 @@ function run(rawInput) {
       timestamp: boundaryEvent.timestamp
     });
     appendRoutingDecisionTrace({
-      version: 1,
+      version: 2,
       decisionId,
       sessionId,
       hook: "PostToolUse",
@@ -219,9 +219,10 @@ function run(rawInput) {
       primaryStory: {
         id: primaryStory?.id ?? null,
         kind: primaryStory?.kind ?? null,
-        route: inferredRoute,
+        storyRoute: primaryStory?.route ?? null,
         targetBoundary: boundaryEvent.boundary === "unknown" ? null : boundaryEvent.boundary
       },
+      observedRoute: inferredRoute,
       policyScenario: primaryStory ? `PostToolUse|${primaryStory.kind ?? "none"}|${boundaryEvent.boundary}|Bash` : null,
       matchedSkills: [],
       injectedSkills: [],

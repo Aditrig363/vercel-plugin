@@ -1268,7 +1268,7 @@ export function run(): string {
       timestamp: traceTimestamp,
     });
     appendRoutingDecisionTrace({
-      version: 1,
+      version: 2,
       decisionId,
       sessionId,
       hook: "UserPromptSubmit",
@@ -1278,9 +1278,10 @@ export function run(): string {
       primaryStory: {
         id: traceStory?.id ?? null,
         kind: traceStory?.kind ?? null,
-        route: traceStory?.route ?? null,
+        storyRoute: traceStory?.route ?? null,
         targetBoundary: null,
       },
+      observedRoute: null, // UserPromptSubmit fires before execution; no observed route
       policyScenario: traceStory
         ? `UserPromptSubmit|${traceStory.kind ?? "none"}|none|Prompt`
         : null,

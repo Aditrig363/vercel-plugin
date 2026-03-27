@@ -1261,8 +1261,84 @@ function run() {
       toolTarget: traceToolTarget,
       timestamp: traceTimestamp
     });
+    const syntheticSkills = /* @__PURE__ */ new Set();
+    if (tsxReviewInjected && tsxReview.triggered) syntheticSkills.add(TSX_REVIEW_SKILL);
+    if (devServerVerifyInjected && devServerVerify.triggered) syntheticSkills.add(DEV_SERVER_VERIFY_SKILL);
+    if (devServerVerify.triggered && !devServerVerify.unavailable) {
+      for (const companion of DEV_SERVER_COMPANION_SKILLS) {
+        if (rankedSkills.includes(companion) && !newEntries.some((e) => e.skill === companion)) {
+          syntheticSkills.add(companion);
+        }
+      }
+    }
+    if (devServerVerify.loopGuardHit && !devServerVerify.unavailable) {
+      for (const companion of DEV_SERVER_COMPANION_SKILLS) {
+        if (rankedSkills.includes(companion)) syntheticSkills.add(companion);
+      }
+    }
+    if (aiSdkCompanionInjected) {
+      for (const companion of AI_SDK_COMPANION_SKILLS) {
+        if (rankedSkills.includes(companion) && !newEntries.some((e) => e.skill === companion)) {
+          syntheticSkills.add(companion);
+        }
+      }
+    }
+    const traceRanked = [];
+    const trackedSkills = /* @__PURE__ */ new Set();
+    for (const entry of newEntries) {
+      const match = matchReasons?.[entry.skill];
+      const policy = policyBoosted.find((p) => p.skill === entry.skill);
+      trackedSkills.add(entry.skill);
+      traceRanked.push({
+        skill: entry.skill,
+        basePriority: entry.priority,
+        effectivePriority: typeof entry.effectivePriority === "number" ? entry.effectivePriority : entry.priority,
+        pattern: match ? { type: match.matchType, value: match.pattern } : null,
+        profilerBoost: profilerBoosted.includes(entry.skill) ? 5 : 0,
+        policyBoost: policy?.boost ?? 0,
+        policyReason: policy?.reason ?? null,
+        summaryOnly: summaryOnly.includes(entry.skill),
+        synthetic: syntheticSkills.has(entry.skill),
+        droppedReason: droppedByCap.includes(entry.skill) ? "cap_exceeded" : droppedByBudget.includes(entry.skill) ? "budget_exhausted" : null
+      });
+    }
+    for (const skill of syntheticSkills) {
+      if (trackedSkills.has(skill)) continue;
+      trackedSkills.add(skill);
+      const reason = reasons[skill];
+      traceRanked.push({
+        skill,
+        basePriority: 0,
+        effectivePriority: 0,
+        pattern: reason ? { type: reason.trigger, value: reason.reasonCode } : null,
+        profilerBoost: 0,
+        policyBoost: 0,
+        policyReason: null,
+        summaryOnly: summaryOnly.includes(skill),
+        synthetic: true,
+        droppedReason: droppedByCap.includes(skill) ? "cap_exceeded" : droppedByBudget.includes(skill) ? "budget_exhausted" : null
+      });
+    }
+    for (const entry of matchedEntries) {
+      if (trackedSkills.has(entry.skill)) continue;
+      if (!injectedSkills.has(entry.skill)) continue;
+      trackedSkills.add(entry.skill);
+      const match = matchReasons?.[entry.skill];
+      traceRanked.push({
+        skill: entry.skill,
+        basePriority: entry.priority,
+        effectivePriority: typeof entry.effectivePriority === "number" ? entry.effectivePriority : entry.priority,
+        pattern: match ? { type: match.matchType, value: match.pattern } : null,
+        profilerBoost: profilerBoosted.includes(entry.skill) ? 5 : 0,
+        policyBoost: 0,
+        policyReason: null,
+        summaryOnly: false,
+        synthetic: false,
+        droppedReason: "deduped"
+      });
+    }
     appendRoutingDecisionTrace({
-      version: 1,
+      version: 2,
       decisionId,
       sessionId,
       hook: "PreToolUse",
@@ -1272,9 +1348,11 @@ function run() {
       primaryStory: {
         id: traceStory?.id ?? null,
         kind: traceStory?.kind ?? null,
-        route: traceStory?.route ?? null,
+        storyRoute: traceStory?.route ?? null,
         targetBoundary: tracePlan?.primaryNextAction?.targetBoundary ?? null
       },
+      observedRoute: null,
+      // PreToolUse fires before execution; no observed route yet
       policyScenario: traceStory ? `PreToolUse|${traceStory.kind ?? "none"}|${tracePlan?.primaryNextAction?.targetBoundary ?? "none"}|${toolName}` : null,
       matchedSkills: [...matched],
       injectedSkills: loaded,
@@ -1283,22 +1361,7 @@ function run() {
         ...droppedByCap.map((skill) => `cap_exceeded:${skill}`),
         ...droppedByBudget.map((skill) => `budget_exhausted:${skill}`)
       ],
-      ranked: newEntries.map((entry) => {
-        const match = matchReasons?.[entry.skill];
-        const policy = policyBoosted.find((p) => p.skill === entry.skill);
-        return {
-          skill: entry.skill,
-          basePriority: entry.priority,
-          effectivePriority: typeof entry.effectivePriority === "number" ? entry.effectivePriority : entry.priority,
-          pattern: match ? { type: match.matchType, value: match.pattern } : null,
-          profilerBoost: profilerBoosted.includes(entry.skill) ? 5 : 0,
-          policyBoost: policy?.boost ?? 0,
-          policyReason: policy?.reason ?? null,
-          summaryOnly: summaryOnly.includes(entry.skill),
-          synthetic: false,
-          droppedReason: droppedByCap.includes(entry.skill) ? "cap_exceeded" : droppedByBudget.includes(entry.skill) ? "budget_exhausted" : null
-        };
-      }),
+      ranked: traceRanked,
       verification: verificationId ? { verificationId, observedBoundary: null, matchedSuggestedAction: null } : null
     });
     log.summary("routing.decision_trace_written", {

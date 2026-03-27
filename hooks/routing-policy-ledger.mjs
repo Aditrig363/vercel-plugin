@@ -85,12 +85,23 @@ function resolveBoundaryOutcome(params) {
   const exposures = loadSessionExposures(sessionId);
   const resolved = [];
   const pending = exposures.filter(
-    (e) => e.outcome === "pending" && e.sessionId === sessionId && e.targetBoundary === boundary && (storyId === null || e.storyId === storyId) && (route === null || e.route === route)
+    (e) => e.outcome === "pending" && e.sessionId === sessionId && e.targetBoundary === boundary && e.storyId === storyId && e.route === route
   );
+  log.summary("routing-policy-ledger.resolve-filter", {
+    sessionId,
+    boundary,
+    storyId,
+    route,
+    totalExposures: exposures.length,
+    pendingCount: exposures.filter((e) => e.outcome === "pending").length,
+    matchedCount: pending.length
+  });
   if (pending.length === 0) {
     log.trace("routing-policy-ledger.resolve-skip", {
       sessionId,
       boundary,
+      storyId,
+      route,
       reason: "no_matching_pending_exposures"
     });
     return [];
@@ -100,6 +111,14 @@ function resolveBoundaryOutcome(params) {
     exposure.outcome = outcome;
     exposure.resolvedAt = now;
     resolved.push(exposure);
+    log.summary("routing-policy-ledger.exposure-resolved", {
+      id: exposure.id,
+      skill: exposure.skill,
+      outcome,
+      storyId: exposure.storyId,
+      route: exposure.route,
+      boundary
+    });
   }
   const path = sessionExposurePath(sessionId);
   const lines = exposures.map((e) => JSON.stringify(e)).join("\n") + "\n";
@@ -148,6 +167,14 @@ function finalizeStaleExposures(sessionId, now) {
   for (const exposure of stale) {
     exposure.outcome = "stale-miss";
     exposure.resolvedAt = timestamp;
+    log.summary("routing-policy-ledger.exposure-stale", {
+      id: exposure.id,
+      skill: exposure.skill,
+      outcome: "stale-miss",
+      storyId: exposure.storyId,
+      route: exposure.route,
+      targetBoundary: exposure.targetBoundary
+    });
   }
   const path = sessionExposurePath(sessionId);
   const lines = exposures.map((e) => JSON.stringify(e)).join("\n") + "\n";

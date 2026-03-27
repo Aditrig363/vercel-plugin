@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { rmSync, existsSync, readFileSync } from "node:fs";
+import { rmSync, existsSync, readFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import {
@@ -22,7 +22,7 @@ function makeTrace(
   overrides: Partial<RoutingDecisionTrace> = {},
 ): RoutingDecisionTrace {
   return {
-    version: 1,
+    version: 2,
     decisionId: "deadbeef01234567",
     sessionId: TEST_SESSION,
     hook: "PreToolUse",
@@ -32,9 +32,10 @@ function makeTrace(
     primaryStory: {
       id: "story-1",
       kind: "flow-verification",
-      route: "/settings",
+      storyRoute: "/settings",
       targetBoundary: "uiRender",
     },
+    observedRoute: null,
     policyScenario: "PreToolUse|flow-verification|uiRender|Bash",
     matchedSkills: ["agent-browser-verify"],
     injectedSkills: ["agent-browser-verify"],
@@ -250,6 +251,7 @@ describe("routing-decision-trace", () => {
         decisionId: "aaaa000000000003",
         timestamp: "2026-03-27T08:02:00.000Z",
         hook: "PostToolUse",
+        observedRoute: "/dashboard",
         verification: {
           verificationId: "verif-1",
           observedBoundary: "uiRender",
@@ -313,9 +315,10 @@ describe("routing-decision-trace", () => {
       expect(existsSync(traceDir(TEST_SESSION))).toBe(true);
     });
 
-    test("preserves all trace fields", () => {
+    test("preserves all v2 trace fields", () => {
       const trace = makeTrace({
         policyScenario: "PreToolUse|flow-verification|uiRender|Bash",
+        observedRoute: "/dashboard",
         skippedReasons: [
           "no_active_verification_story",
           "cap_exceeded:some-skill",
@@ -342,7 +345,7 @@ describe("routing-decision-trace", () => {
             policyBoost: 0,
             policyReason: null,
             summaryOnly: true,
-            synthetic: false,
+            synthetic: true,
             droppedReason: "budget_exhausted",
           },
         ],
@@ -356,11 +359,12 @@ describe("routing-decision-trace", () => {
       appendRoutingDecisionTrace(trace);
       const [read] = readRoutingDecisionTrace(TEST_SESSION);
 
-      expect(read.version).toBe(1);
+      expect(read.version).toBe(2);
       expect(read.primaryStory.id).toBe("story-1");
       expect(read.primaryStory.kind).toBe("flow-verification");
-      expect(read.primaryStory.route).toBe("/settings");
+      expect(read.primaryStory.storyRoute).toBe("/settings");
       expect(read.primaryStory.targetBoundary).toBe("uiRender");
+      expect(read.observedRoute).toBe("/dashboard");
       expect(read.policyScenario).toBe(
         "PreToolUse|flow-verification|uiRender|Bash",
       );
@@ -370,9 +374,30 @@ describe("routing-decision-trace", () => {
       ]);
       expect(read.ranked).toHaveLength(2);
       expect(read.ranked[0].policyBoost).toBe(8);
+      expect(read.ranked[0].synthetic).toBe(false);
       expect(read.ranked[1].droppedReason).toBe("budget_exhausted");
+      expect(read.ranked[1].synthetic).toBe(true);
       expect(read.verification?.verificationId).toBe("verif-abc");
       expect(read.verification?.matchedSuggestedAction).toBe(true);
+    });
+
+    test("v2 storyRoute and observedRoute are independent", () => {
+      const trace = makeTrace({
+        hook: "PostToolUse",
+        primaryStory: {
+          id: "story-1",
+          kind: "flow-verification",
+          storyRoute: "/settings",
+          targetBoundary: "uiRender",
+        },
+        observedRoute: "/api/users",
+      });
+
+      appendRoutingDecisionTrace(trace);
+      const [read] = readRoutingDecisionTrace(TEST_SESSION);
+
+      expect(read.primaryStory.storyRoute).toBe("/settings");
+      expect(read.observedRoute).toBe("/api/users");
     });
 
     test("idempotent: appending same trace twice yields two records", () => {
@@ -383,6 +408,279 @@ describe("routing-decision-trace", () => {
       const traces = readRoutingDecisionTrace(TEST_SESSION);
       expect(traces).toHaveLength(2);
       expect(traces[0]).toEqual(traces[1]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // V1 backward compatibility
+  // -------------------------------------------------------------------------
+
+  describe("v1 backward compatibility", () => {
+    test("v1 traces are normalized to v2 on read", () => {
+      // Write a raw v1 trace directly to the JSONL file
+      const v1Trace = {
+        version: 1,
+        decisionId: "v1-trace-0000001",
+        sessionId: TEST_SESSION,
+        hook: "PreToolUse",
+        toolName: "Bash",
+        toolTarget: "npm run dev",
+        timestamp: "2026-03-27T08:00:00.000Z",
+        primaryStory: {
+          id: "story-1",
+          kind: "flow-verification",
+          route: "/settings",
+          targetBoundary: "uiRender",
+        },
+        policyScenario: "PreToolUse|flow-verification|uiRender|Bash",
+        matchedSkills: ["agent-browser-verify"],
+        injectedSkills: ["agent-browser-verify"],
+        skippedReasons: [],
+        ranked: [],
+        verification: null,
+      };
+
+      mkdirSync(traceDir(TEST_SESSION), { recursive: true });
+      appendFileSync(
+        tracePath(TEST_SESSION),
+        JSON.stringify(v1Trace) + "\n",
+        "utf8",
+      );
+
+      const traces = readRoutingDecisionTrace(TEST_SESSION);
+      expect(traces).toHaveLength(1);
+      const read = traces[0];
+
+      // Normalized to v2
+      expect(read.version).toBe(2);
+      expect(read.primaryStory.storyRoute).toBe("/settings");
+      expect(read.observedRoute).toBe("/settings"); // best-effort from v1 route
+      expect((read.primaryStory as any).route).toBeUndefined();
+    });
+
+    test("mixed v1 and v2 traces are all normalized to v2", () => {
+      const v1Trace = {
+        version: 1,
+        decisionId: "v1-trace-0000001",
+        sessionId: TEST_SESSION,
+        hook: "PreToolUse",
+        toolName: "Bash",
+        toolTarget: "npm run dev",
+        timestamp: "2026-03-27T08:00:00.000Z",
+        primaryStory: {
+          id: "story-1",
+          kind: "flow-verification",
+          route: "/old-route",
+          targetBoundary: "uiRender",
+        },
+        policyScenario: null,
+        matchedSkills: [],
+        injectedSkills: [],
+        skippedReasons: [],
+        ranked: [],
+        verification: null,
+      };
+
+      const v2Trace = makeTrace({
+        decisionId: "v2-trace-0000002",
+        primaryStory: {
+          id: "story-2",
+          kind: "flow-verification",
+          storyRoute: "/new-route",
+          targetBoundary: "clientRequest",
+        },
+        observedRoute: "/api/data",
+      });
+
+      mkdirSync(traceDir(TEST_SESSION), { recursive: true });
+      appendFileSync(
+        tracePath(TEST_SESSION),
+        JSON.stringify(v1Trace) + "\n",
+        "utf8",
+      );
+      appendFileSync(
+        tracePath(TEST_SESSION),
+        JSON.stringify(v2Trace) + "\n",
+        "utf8",
+      );
+
+      const traces = readRoutingDecisionTrace(TEST_SESSION);
+      expect(traces).toHaveLength(2);
+      expect(traces[0].version).toBe(2);
+      expect(traces[1].version).toBe(2);
+      expect(traces[0].primaryStory.storyRoute).toBe("/old-route");
+      expect(traces[1].primaryStory.storyRoute).toBe("/new-route");
+      expect(traces[1].observedRoute).toBe("/api/data");
+    });
+
+    test("v1 trace with null route normalizes correctly", () => {
+      const v1Trace = {
+        version: 1,
+        decisionId: "v1-null-route",
+        sessionId: TEST_SESSION,
+        hook: "UserPromptSubmit",
+        toolName: "Prompt",
+        toolTarget: "deploy",
+        timestamp: "2026-03-27T08:00:00.000Z",
+        primaryStory: {
+          id: null,
+          kind: null,
+          route: null,
+          targetBoundary: null,
+        },
+        policyScenario: null,
+        matchedSkills: [],
+        injectedSkills: [],
+        skippedReasons: ["no_active_verification_story"],
+        ranked: [],
+        verification: null,
+      };
+
+      mkdirSync(traceDir(TEST_SESSION), { recursive: true });
+      appendFileSync(
+        tracePath(TEST_SESSION),
+        JSON.stringify(v1Trace) + "\n",
+        "utf8",
+      );
+
+      const [read] = readRoutingDecisionTrace(TEST_SESSION);
+      expect(read.version).toBe(2);
+      expect(read.primaryStory.storyRoute).toBeNull();
+      expect(read.observedRoute).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Synthetic injection tracking
+  // -------------------------------------------------------------------------
+
+  describe("synthetic injection tracking", () => {
+    test("synthetic flag distinguishes pattern-matched from synthetic injections", () => {
+      const trace = makeTrace({
+        ranked: [
+          {
+            skill: "agent-browser-verify",
+            basePriority: 7,
+            effectivePriority: 15,
+            pattern: { type: "bashPattern", value: "dev server" },
+            profilerBoost: 0,
+            policyBoost: 8,
+            policyReason: "4/5 wins",
+            summaryOnly: false,
+            synthetic: false,
+            droppedReason: null,
+          },
+          {
+            skill: "verification",
+            basePriority: 0,
+            effectivePriority: 0,
+            pattern: { type: "dev-server-companion", value: "dev-server-co-inject" },
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: false,
+            synthetic: true,
+            droppedReason: null,
+          },
+          {
+            skill: "react-best-practices",
+            basePriority: 0,
+            effectivePriority: 0,
+            pattern: { type: "tsx-edit-threshold", value: "tsx-review-trigger" },
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: false,
+            synthetic: true,
+            droppedReason: "cap_exceeded",
+          },
+        ],
+      });
+
+      appendRoutingDecisionTrace(trace);
+      const [read] = readRoutingDecisionTrace(TEST_SESSION);
+
+      const patternMatched = read.ranked.filter((r) => !r.synthetic);
+      const synthetic = read.ranked.filter((r) => r.synthetic);
+
+      expect(patternMatched).toHaveLength(1);
+      expect(patternMatched[0].skill).toBe("agent-browser-verify");
+      expect(synthetic).toHaveLength(2);
+      expect(synthetic.map((s) => s.skill).sort()).toEqual([
+        "react-best-practices",
+        "verification",
+      ]);
+    });
+
+    test("one trace line reconstructs final injected set plus dropped candidates", () => {
+      const trace = makeTrace({
+        injectedSkills: ["agent-browser-verify", "verification"],
+        ranked: [
+          {
+            skill: "agent-browser-verify",
+            basePriority: 7,
+            effectivePriority: 15,
+            pattern: { type: "bashPattern", value: "dev" },
+            profilerBoost: 0,
+            policyBoost: 8,
+            policyReason: "4/5 wins",
+            summaryOnly: false,
+            synthetic: false,
+            droppedReason: null,
+          },
+          {
+            skill: "verification",
+            basePriority: 0,
+            effectivePriority: 0,
+            pattern: null,
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: false,
+            synthetic: true,
+            droppedReason: null,
+          },
+          {
+            skill: "react-best-practices",
+            basePriority: 6,
+            effectivePriority: 6,
+            pattern: null,
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: false,
+            synthetic: true,
+            droppedReason: "cap_exceeded",
+          },
+          {
+            skill: "nextjs-basics",
+            basePriority: 5,
+            effectivePriority: 5,
+            pattern: { type: "pathPattern", value: "**/*.tsx" },
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: false,
+            synthetic: false,
+            droppedReason: "deduped",
+          },
+        ],
+      });
+
+      appendRoutingDecisionTrace(trace);
+      const [read] = readRoutingDecisionTrace(TEST_SESSION);
+
+      // Reconstruct final injected set from ranked
+      const injected = read.ranked.filter((r) => r.droppedReason === null);
+      expect(injected.map((r) => r.skill).sort()).toEqual(
+        [...read.injectedSkills].sort(),
+      );
+
+      // Reconstruct dropped candidates
+      const dropped = read.ranked.filter((r) => r.droppedReason !== null);
+      expect(dropped).toHaveLength(2);
+      expect(dropped.find((r) => r.skill === "react-best-practices")?.droppedReason).toBe("cap_exceeded");
+      expect(dropped.find((r) => r.skill === "nextjs-basics")?.droppedReason).toBe("deduped");
     });
   });
 

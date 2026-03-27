@@ -9,7 +9,9 @@
  * Each routing event appends one JSON object per line. Reads return all traces
  * in append order. Missing files return `[]` without throwing.
  *
- * v1 — covers PreToolUse, UserPromptSubmit, and PostToolUse hooks.
+ * v2 — separates storyRoute from observedRoute, marks synthetic injections,
+ *       and encodes explicit drop reasons for all non-selected candidates.
+ *       Backward-compatible: v1 lines are normalized to v2 on read.
  */
 
 import {
@@ -58,6 +60,37 @@ export interface RankedSkillTrace {
 }
 
 export interface RoutingDecisionTrace {
+  version: 2;
+  decisionId: string;
+  sessionId: string | null;
+  hook: DecisionHook;
+  toolName: string;
+  toolTarget: string;
+  timestamp: string;
+  primaryStory: {
+    id: string | null;
+    kind: string | null;
+    storyRoute: string | null;
+    targetBoundary: string | null;
+  };
+  observedRoute: string | null;
+  policyScenario: string | null;
+  matchedSkills: string[];
+  injectedSkills: string[];
+  skippedReasons: string[];
+  ranked: RankedSkillTrace[];
+  verification: {
+    verificationId: string | null;
+    observedBoundary: string | null;
+    matchedSuggestedAction: boolean | null;
+  } | null;
+}
+
+/**
+ * V1 trace shape for backward-compatible reads. V1 stored `route` inside
+ * primaryStory and had no top-level `observedRoute`.
+ */
+interface RoutingDecisionTraceV1 {
   version: 1;
   decisionId: string;
   sessionId: string | null;
@@ -81,6 +114,30 @@ export interface RoutingDecisionTrace {
     observedBoundary: string | null;
     matchedSuggestedAction: boolean | null;
   } | null;
+}
+
+type PersistedTrace = RoutingDecisionTrace | RoutingDecisionTraceV1;
+
+// ---------------------------------------------------------------------------
+// V1 → V2 normalization
+// ---------------------------------------------------------------------------
+
+function normalizeTrace(raw: PersistedTrace): RoutingDecisionTrace {
+  if (raw.version === 2) return raw as RoutingDecisionTrace;
+
+  // V1 → V2: move primaryStory.route to storyRoute, add observedRoute
+  const v1 = raw as RoutingDecisionTraceV1;
+  return {
+    ...v1,
+    version: 2,
+    primaryStory: {
+      id: v1.primaryStory.id,
+      kind: v1.primaryStory.kind,
+      storyRoute: v1.primaryStory.route,
+      targetBoundary: v1.primaryStory.targetBoundary,
+    },
+    observedRoute: v1.primaryStory.route, // best-effort: v1 conflated the two
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +198,7 @@ export function appendRoutingDecisionTrace(
 
 // ---------------------------------------------------------------------------
 // Read — returns all traces in append order, [] on missing file
+// Normalizes v1 lines to v2 for backward compatibility.
 // ---------------------------------------------------------------------------
 
 export function readRoutingDecisionTrace(
@@ -151,7 +209,7 @@ export function readRoutingDecisionTrace(
     return content
       .split("\n")
       .filter((line) => line.trim() !== "")
-      .map((line) => JSON.parse(line) as RoutingDecisionTrace);
+      .map((line) => normalizeTrace(JSON.parse(line) as PersistedTrace));
   } catch {
     return [];
   }

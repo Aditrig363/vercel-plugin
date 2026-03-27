@@ -387,7 +387,7 @@ export function run(rawInput?: string): string {
     });
 
     appendRoutingDecisionTrace({
-      version: 1,
+      version: 2,
       decisionId,
       sessionId,
       hook: "PostToolUse",
@@ -397,9 +397,10 @@ export function run(rawInput?: string): string {
       primaryStory: {
         id: primaryStory?.id ?? null,
         kind: primaryStory?.kind ?? null,
-        route: inferredRoute,
+        storyRoute: primaryStory?.route ?? null,
         targetBoundary: boundaryEvent.boundary === "unknown" ? null : boundaryEvent.boundary,
       },
+      observedRoute: inferredRoute,
       policyScenario: primaryStory
         ? `PostToolUse|${primaryStory.kind ?? "none"}|${boundaryEvent.boundary}|Bash`
         : null,

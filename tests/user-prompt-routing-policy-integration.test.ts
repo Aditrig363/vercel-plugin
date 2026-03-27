@@ -424,7 +424,7 @@ describe("user-prompt-submit routing decision trace", () => {
     const traces = readRoutingDecisionTrace(traceSession);
     expect(traces).toHaveLength(1);
     expect(traces[0].hook).toBe("UserPromptSubmit");
-    expect(traces[0].version).toBe(1);
+    expect(traces[0].version).toBe(2);
     expect(traces[0].toolName).toBe("Prompt");
     expect(traces[0].sessionId).toBe(traceSession);
     expect(traces[0].decisionId).toMatch(/^[0-9a-f]{16}$/);

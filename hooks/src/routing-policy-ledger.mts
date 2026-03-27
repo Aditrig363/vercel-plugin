@@ -182,19 +182,35 @@ export function resolveBoundaryOutcome(params: {
   const exposures = loadSessionExposures(sessionId);
   const resolved: SkillExposure[] = [];
 
+  // Strict null matching: a null observed route/storyId only resolves
+  // exposures that also have null route/storyId. This prevents
+  // over-crediting exposures across unrelated routes or stories when
+  // the observed route is null, inferred, or missing.
   const pending = exposures.filter(
     (e) =>
       e.outcome === "pending" &&
       e.sessionId === sessionId &&
       e.targetBoundary === boundary &&
-      (storyId === null || e.storyId === storyId) &&
-      (route === null || e.route === route),
+      e.storyId === storyId &&
+      e.route === route,
   );
+
+  log.summary("routing-policy-ledger.resolve-filter", {
+    sessionId,
+    boundary,
+    storyId,
+    route,
+    totalExposures: exposures.length,
+    pendingCount: exposures.filter((e) => e.outcome === "pending").length,
+    matchedCount: pending.length,
+  });
 
   if (pending.length === 0) {
     log.trace("routing-policy-ledger.resolve-skip", {
       sessionId,
       boundary,
+      storyId,
+      route,
       reason: "no_matching_pending_exposures",
     });
     return [];
@@ -209,6 +225,14 @@ export function resolveBoundaryOutcome(params: {
     exposure.outcome = outcome;
     exposure.resolvedAt = now;
     resolved.push(exposure);
+    log.summary("routing-policy-ledger.exposure-resolved", {
+      id: exposure.id,
+      skill: exposure.skill,
+      outcome,
+      storyId: exposure.storyId,
+      route: exposure.route,
+      boundary,
+    });
   }
 
   // Rewrite the full session ledger with updated outcomes
@@ -276,6 +300,14 @@ export function finalizeStaleExposures(
   for (const exposure of stale) {
     exposure.outcome = "stale-miss";
     exposure.resolvedAt = timestamp;
+    log.summary("routing-policy-ledger.exposure-stale", {
+      id: exposure.id,
+      skill: exposure.skill,
+      outcome: "stale-miss",
+      storyId: exposure.storyId,
+      route: exposure.route,
+      targetBoundary: exposure.targetBoundary,
+    });
   }
 
   // Rewrite ledger

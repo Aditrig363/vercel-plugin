@@ -13,6 +13,22 @@ function safeSessionSegment(sessionId) {
   if (SAFE_SESSION_ID_RE.test(sessionId)) return sessionId;
   return createHash("sha256").update(sessionId).digest("hex");
 }
+function normalizeTrace(raw) {
+  if (raw.version === 2) return raw;
+  const v1 = raw;
+  return {
+    ...v1,
+    version: 2,
+    primaryStory: {
+      id: v1.primaryStory.id,
+      kind: v1.primaryStory.kind,
+      storyRoute: v1.primaryStory.route,
+      targetBoundary: v1.primaryStory.targetBoundary
+    },
+    observedRoute: v1.primaryStory.route
+    // best-effort: v1 conflated the two
+  };
+}
 function traceDir(sessionId) {
   return join(
     tmpdir(),
@@ -45,7 +61,7 @@ function appendRoutingDecisionTrace(trace) {
 function readRoutingDecisionTrace(sessionId) {
   try {
     const content = readFileSync(tracePath(sessionId), "utf8");
-    return content.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line));
+    return content.split("\n").filter((line) => line.trim() !== "").map((line) => normalizeTrace(JSON.parse(line)));
   } catch {
     return [];
   }

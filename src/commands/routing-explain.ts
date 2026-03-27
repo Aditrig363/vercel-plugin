@@ -64,7 +64,7 @@ function formatRoutingExplainText(
     `Hook: ${latest.hook}`,
     `Tool: ${latest.toolName}`,
     `Target: ${latest.toolTarget}`,
-    `Story: ${latest.primaryStory.kind ?? "none"}${latest.primaryStory.route ? ` (${latest.primaryStory.route})` : ""}`,
+    `Story: ${latest.primaryStory.kind ?? "none"}${latest.primaryStory.storyRoute ? ` (${latest.primaryStory.storyRoute})` : ""}`,
     `Injected: ${latest.injectedSkills.join(", ") || "none"}`,
     `Total traces: ${traces.length}`,
   ];

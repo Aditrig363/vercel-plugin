@@ -73,11 +73,13 @@ describe("verification → routing-policy closure", () => {
       appendSkillExposure(exposure("e2", { createdAt: T1 }));
       appendSkillExposure(exposure("e3", { createdAt: T2 }));
 
-      // Simulate: observer sees a uiRender boundary match
+      // Simulate: observer sees a uiRender boundary match (scoped to story + route)
       const resolved = resolveBoundaryOutcome({
         sessionId: SESSION_ID,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T3,
       });
 
@@ -99,6 +101,8 @@ describe("verification → routing-policy closure", () => {
         sessionId: SESSION_ID,
         boundary: "uiRender",
         matchedSuggestedAction: true,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T3,
       });
 
@@ -115,11 +119,13 @@ describe("verification → routing-policy closure", () => {
       appendSkillExposure(exposure("e1", { createdAt: T0 }));
       appendSkillExposure(exposure("e2", { targetBoundary: "clientRequest", createdAt: T1 }));
 
-      // Resolve only uiRender
+      // Resolve only uiRender (scoped to story + route)
       resolveBoundaryOutcome({
         sessionId: SESSION_ID,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T3,
       });
 
@@ -153,6 +159,8 @@ describe("verification → routing-policy closure", () => {
         sessionId: SESSION_ID,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T5,
       });
 
@@ -169,11 +177,13 @@ describe("verification → routing-policy closure", () => {
         createdAt: "2026-03-27T04:04:00.000Z",
       }));
 
-      // Resolve 4 uiRender wins
+      // Resolve 4 uiRender wins (scoped to story + route)
       resolveBoundaryOutcome({
         sessionId: SESSION_ID,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T5,
       });
 
@@ -232,6 +242,7 @@ describe("verification → routing-policy closure", () => {
         sessionId: SESSION_ID,
         boundary: "clientRequest",
         matchedSuggestedAction: true,
+        storyId: "story-1",
         route: "/settings",
         now: T3,
       });
@@ -290,11 +301,13 @@ describe("verification → routing-policy closure", () => {
       appendSkillExposure(exposure("cr-1", { targetBoundary: "clientRequest", createdAt: T1 }));
       appendSkillExposure(exposure("sh-1", { targetBoundary: "serverHandler", createdAt: T2 }));
 
-      // Resolve only clientRequest
+      // Resolve only clientRequest (scoped to story + route)
       const resolved = resolveBoundaryOutcome({
         sessionId: SESSION_ID,
         boundary: "clientRequest",
         matchedSuggestedAction: true,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T3,
       });
 
@@ -330,6 +343,8 @@ describe("verification → routing-policy closure", () => {
         sessionId: SESSION_ID,
         boundary: "uiRender",
         matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: "/dashboard",
         now: T3,
       });
 
@@ -360,6 +375,56 @@ describe("verification → routing-policy closure", () => {
     });
   });
 
+  describe("null-route attribution in closure", () => {
+    test("null inferred route does not over-credit route-specific exposures", () => {
+      // Exposure scoped to /dashboard
+      appendSkillExposure(exposure("scoped-e1", {
+        storyId: "story-1",
+        route: "/dashboard",
+        targetBoundary: "clientRequest",
+        createdAt: T0,
+      }));
+
+      // Resolution with null route (e.g., no route inferrable from command)
+      const resolved = resolveBoundaryOutcome({
+        sessionId: SESSION_ID,
+        boundary: "clientRequest",
+        matchedSuggestedAction: false,
+        storyId: "story-1",
+        route: null,
+        now: T3,
+      });
+
+      // Should NOT resolve: exposure has route="/dashboard", observed route is null
+      expect(resolved).toHaveLength(0);
+
+      const all = loadSessionExposures(SESSION_ID);
+      expect(all[0].outcome).toBe("pending");
+    });
+
+    test("null-route exposures ARE resolved by null-route observations", () => {
+      // Exposure with null route (e.g., from UserPromptSubmit)
+      appendSkillExposure(exposure("null-route-e1", {
+        storyId: null,
+        route: null,
+        targetBoundary: "clientRequest",
+        createdAt: T0,
+      }));
+
+      const resolved = resolveBoundaryOutcome({
+        sessionId: SESSION_ID,
+        boundary: "clientRequest",
+        matchedSuggestedAction: true,
+        storyId: null,
+        route: null,
+        now: T3,
+      });
+
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0].outcome).toBe("directive-win");
+    });
+  });
+
   describe("PostToolUse closure traces", () => {
     const TRACE_SESSION = "closure-trace-test-" + Date.now();
 
@@ -387,7 +452,7 @@ describe("verification → routing-policy closure", () => {
 
         const postTrace = traces.find((t) => t.hook === "PostToolUse");
         expect(postTrace).toBeDefined();
-        expect(postTrace!.version).toBe(1);
+        expect(postTrace!.version).toBe(2);
         expect(postTrace!.hook).toBe("PostToolUse");
         expect(postTrace!.toolName).toBe("Bash");
         expect(postTrace!.verification).not.toBeNull();
@@ -433,7 +498,7 @@ describe("verification → routing-policy closure", () => {
 
         // Trace carries the same story identity as policy resolution
         expect(postTrace!.primaryStory.kind).toBe("flow-verification");
-        expect(postTrace!.primaryStory.route).not.toBeNull();
+        expect(postTrace!.primaryStory.storyRoute).not.toBeNull();
         expect(postTrace!.verification!.verificationId).toBeTruthy();
         expect(postTrace!.verification!.observedBoundary).toBe("uiRender");
 

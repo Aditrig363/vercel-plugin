@@ -1831,7 +1831,7 @@ function run(): string {
     }
   }
 
-  // Stage 7: Emit routing decision trace
+  // Stage 7: Emit routing decision trace (v2)
   {
     const tracePlan = sessionId ? loadCachedPlanResult(sessionId, log) : null;
     const traceStory = tracePlan ? selectPrimaryStory(tracePlan.stories ?? []) : null;
@@ -1844,8 +1844,118 @@ function run(): string {
       toolTarget: traceToolTarget,
       timestamp: traceTimestamp,
     });
+
+    // Build synthetic skill set for accurate trace marking
+    const syntheticSkills = new Set<string>();
+    if (tsxReviewInjected && tsxReview.triggered) syntheticSkills.add(TSX_REVIEW_SKILL);
+    if (devServerVerifyInjected && devServerVerify.triggered) syntheticSkills.add(DEV_SERVER_VERIFY_SKILL);
+    if (devServerVerify.triggered && !devServerVerify.unavailable) {
+      for (const companion of DEV_SERVER_COMPANION_SKILLS) {
+        if (rankedSkills.includes(companion) && !newEntries.some((e) => e.skill === companion)) {
+          syntheticSkills.add(companion);
+        }
+      }
+    }
+    if (devServerVerify.loopGuardHit && !devServerVerify.unavailable) {
+      for (const companion of DEV_SERVER_COMPANION_SKILLS) {
+        if (rankedSkills.includes(companion)) syntheticSkills.add(companion);
+      }
+    }
+    if (aiSdkCompanionInjected) {
+      for (const companion of AI_SDK_COMPANION_SKILLS) {
+        if (rankedSkills.includes(companion) && !newEntries.some((e) => e.skill === companion)) {
+          syntheticSkills.add(companion);
+        }
+      }
+    }
+
+    // Build ranked entries: pattern-matched entries + synthetic injections + deduped candidates
+    const traceRanked: Array<{
+      skill: string;
+      basePriority: number;
+      effectivePriority: number;
+      pattern: { type: string; value: string } | null;
+      profilerBoost: number;
+      policyBoost: number;
+      policyReason: string | null;
+      summaryOnly: boolean;
+      synthetic: boolean;
+      droppedReason: "deduped" | "cap_exceeded" | "budget_exhausted" | "concurrent_claim" | null;
+    }> = [];
+    const trackedSkills = new Set<string>();
+
+    // 1. Pattern-matched entries (from newEntries, post-dedup)
+    for (const entry of newEntries) {
+      const match = matchReasons?.[entry.skill];
+      const policy = policyBoosted.find((p) => p.skill === entry.skill);
+      trackedSkills.add(entry.skill);
+      traceRanked.push({
+        skill: entry.skill,
+        basePriority: entry.priority,
+        effectivePriority: typeof entry.effectivePriority === "number"
+          ? entry.effectivePriority
+          : entry.priority,
+        pattern: match ? { type: match.matchType, value: match.pattern } : null,
+        profilerBoost: profilerBoosted.includes(entry.skill) ? 5 : 0,
+        policyBoost: policy?.boost ?? 0,
+        policyReason: policy?.reason ?? null,
+        summaryOnly: summaryOnly.includes(entry.skill),
+        synthetic: syntheticSkills.has(entry.skill),
+        droppedReason: droppedByCap.includes(entry.skill)
+          ? "cap_exceeded"
+          : droppedByBudget.includes(entry.skill)
+            ? "budget_exhausted"
+            : null,
+      });
+    }
+
+    // 2. Synthetic injections not already in newEntries
+    for (const skill of syntheticSkills) {
+      if (trackedSkills.has(skill)) continue;
+      trackedSkills.add(skill);
+      const reason = reasons[skill];
+      traceRanked.push({
+        skill,
+        basePriority: 0,
+        effectivePriority: 0,
+        pattern: reason ? { type: reason.trigger, value: reason.reasonCode } : null,
+        profilerBoost: 0,
+        policyBoost: 0,
+        policyReason: null,
+        summaryOnly: summaryOnly.includes(skill),
+        synthetic: true,
+        droppedReason: droppedByCap.includes(skill)
+          ? "cap_exceeded"
+          : droppedByBudget.includes(skill)
+            ? "budget_exhausted"
+            : null,
+      });
+    }
+
+    // 3. Deduped candidates (matched but filtered by seen-skills)
+    for (const entry of matchedEntries) {
+      if (trackedSkills.has(entry.skill)) continue;
+      if (!injectedSkills.has(entry.skill)) continue; // only mark actually-deduped ones
+      trackedSkills.add(entry.skill);
+      const match = matchReasons?.[entry.skill];
+      traceRanked.push({
+        skill: entry.skill,
+        basePriority: entry.priority,
+        effectivePriority: typeof entry.effectivePriority === "number"
+          ? entry.effectivePriority
+          : entry.priority,
+        pattern: match ? { type: match.matchType, value: match.pattern } : null,
+        profilerBoost: profilerBoosted.includes(entry.skill) ? 5 : 0,
+        policyBoost: 0,
+        policyReason: null,
+        summaryOnly: false,
+        synthetic: false,
+        droppedReason: "deduped",
+      });
+    }
+
     appendRoutingDecisionTrace({
-      version: 1,
+      version: 2,
       decisionId,
       sessionId,
       hook: "PreToolUse",
@@ -1855,9 +1965,10 @@ function run(): string {
       primaryStory: {
         id: traceStory?.id ?? null,
         kind: traceStory?.kind ?? null,
-        route: traceStory?.route ?? null,
+        storyRoute: traceStory?.route ?? null,
         targetBoundary: tracePlan?.primaryNextAction?.targetBoundary ?? null,
       },
+      observedRoute: null, // PreToolUse fires before execution; no observed route yet
       policyScenario: traceStory
         ? `PreToolUse|${traceStory.kind ?? "none"}|${tracePlan?.primaryNextAction?.targetBoundary ?? "none"}|${toolName}`
         : null,
@@ -1868,28 +1979,7 @@ function run(): string {
         ...droppedByCap.map((skill) => `cap_exceeded:${skill}`),
         ...droppedByBudget.map((skill) => `budget_exhausted:${skill}`),
       ],
-      ranked: newEntries.map((entry) => {
-        const match = matchReasons?.[entry.skill];
-        const policy = policyBoosted.find((p) => p.skill === entry.skill);
-        return {
-          skill: entry.skill,
-          basePriority: entry.priority,
-          effectivePriority: typeof entry.effectivePriority === "number"
-            ? entry.effectivePriority
-            : entry.priority,
-          pattern: match ? { type: match.matchType, value: match.pattern } : null,
-          profilerBoost: profilerBoosted.includes(entry.skill) ? 5 : 0,
-          policyBoost: policy?.boost ?? 0,
-          policyReason: policy?.reason ?? null,
-          summaryOnly: summaryOnly.includes(entry.skill),
-          synthetic: false,
-          droppedReason: droppedByCap.includes(entry.skill)
-            ? "cap_exceeded"
-            : droppedByBudget.includes(entry.skill)
-              ? "budget_exhausted"
-              : null,
-        };
-      }),
+      ranked: traceRanked,
       verification: verificationId
         ? { verificationId, observedBoundary: null, matchedSuggestedAction: null }
         : null,
