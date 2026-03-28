@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { rmSync, unlinkSync } from "node:fs";
 import {
   buildBoundaryEvent,
   buildLedgerObservation,
@@ -15,12 +15,23 @@ import {
   recordStory,
   removeLedgerArtifacts,
 } from "../hooks/src/verification-ledger.mts";
+import { storyId as computeStoryId } from "../hooks/src/verification-ledger.mts";
 import { verifyPlanSnapshot } from "../src/commands/verify-plan.ts";
 import {
   readRoutingDecisionTrace,
   createDecisionId,
   traceDir,
 } from "../hooks/src/routing-decision-trace.mts";
+import {
+  appendSkillExposure,
+  sessionExposurePath,
+  type SkillExposure,
+} from "../hooks/src/routing-policy-ledger.mts";
+import {
+  inspectLocalVerificationUrl,
+  evaluateResolutionGate,
+  diagnosePendingExposureMatch,
+} from "../hooks/src/verification-closure-diagnosis.mts";
 
 describe("posttooluse verification closed loop", () => {
   const sessionId = `verification-loop-${Date.now()}`;
@@ -629,5 +640,380 @@ describe("fixture matrix: tool_name -> observer_reached", () => {
       }));
       expect(output).toBe("{}");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Verification Closure Diagnosis — inspectLocalVerificationUrl
+// ---------------------------------------------------------------------------
+
+describe("inspectLocalVerificationUrl", () => {
+  test("localhost returns loopback match", () => {
+    const result = inspectLocalVerificationUrl("http://localhost:3000/settings", {});
+    expect(result.applicable).toBe(true);
+    expect(result.parseable).toBe(true);
+    expect(result.isLocal).toBe(true);
+    expect(result.matchSource).toBe("loopback");
+    expect(result.observedHost).toBe("localhost:3000");
+  });
+
+  test("127.0.0.1 returns loopback match", () => {
+    const result = inspectLocalVerificationUrl("http://127.0.0.1:4000/api", {});
+    expect(result.isLocal).toBe(true);
+    expect(result.matchSource).toBe("loopback");
+  });
+
+  test("[::1] returns loopback match", () => {
+    const result = inspectLocalVerificationUrl("http://[::1]:3000/", {});
+    expect(result.isLocal).toBe(true);
+    expect(result.matchSource).toBe("loopback");
+  });
+
+  test("external host returns non-local", () => {
+    const result = inspectLocalVerificationUrl("https://example.com/dashboard", {});
+    expect(result.isLocal).toBe(false);
+    expect(result.matchSource).toBeNull();
+    expect(result.observedHost).toBe("example.com");
+  });
+
+  test("configured origin matches", () => {
+    const env = { VERCEL_PLUGIN_LOCAL_DEV_ORIGIN: "http://myapp.local:4000" };
+    const result = inspectLocalVerificationUrl("http://myapp.local:4000/settings", env);
+    expect(result.isLocal).toBe(true);
+    expect(result.matchSource).toBe("configured-origin");
+    expect(result.configuredOrigin).toBe("http://myapp.local:4000");
+  });
+
+  test("non-http protocol returns non-local", () => {
+    const result = inspectLocalVerificationUrl("ftp://localhost:21/data", {});
+    expect(result.parseable).toBe(true);
+    expect(result.isLocal).toBe(false);
+  });
+
+  test("invalid URL returns unparseable", () => {
+    const result = inspectLocalVerificationUrl("not-a-url", {});
+    expect(result.parseable).toBe(false);
+    expect(result.isLocal).toBeNull();
+    expect(result.observedHost).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Verification Closure Diagnosis — evaluateResolutionGate
+// ---------------------------------------------------------------------------
+
+describe("evaluateResolutionGate", () => {
+  test("strong signal + known boundary + Bash → eligible", () => {
+    const gate = evaluateResolutionGate({
+      boundary: "clientRequest",
+      signalStrength: "strong",
+      toolName: "Bash",
+      command: "curl http://localhost:3000/settings",
+    }, {});
+    expect(gate.eligible).toBe(true);
+    expect(gate.passedChecks).toContain("known_boundary");
+    expect(gate.passedChecks).toContain("strong_signal");
+    expect(gate.blockingReasonCodes).toHaveLength(0);
+    expect(gate.locality.applicable).toBe(false);
+  });
+
+  test("soft signal blocks with soft_signal code", () => {
+    const gate = evaluateResolutionGate({
+      boundary: "environment",
+      signalStrength: "soft",
+      toolName: "Read",
+      command: ".env",
+    }, {});
+    expect(gate.eligible).toBe(false);
+    expect(gate.blockingReasonCodes).toContain("soft_signal");
+    expect(gate.passedChecks).toContain("known_boundary");
+  });
+
+  test("unknown boundary blocks with unknown_boundary code", () => {
+    const gate = evaluateResolutionGate({
+      boundary: "unknown",
+      signalStrength: "strong",
+      toolName: "Bash",
+      command: "ls",
+    }, {});
+    expect(gate.eligible).toBe(false);
+    expect(gate.blockingReasonCodes).toContain("unknown_boundary");
+  });
+
+  test("remote WebFetch blocks with remote_web_fetch code", () => {
+    const gate = evaluateResolutionGate({
+      boundary: "clientRequest",
+      signalStrength: "strong",
+      toolName: "WebFetch",
+      command: "https://example.com/dashboard",
+    }, {});
+    expect(gate.eligible).toBe(false);
+    expect(gate.passedChecks).toContain("known_boundary");
+    expect(gate.passedChecks).toContain("strong_signal");
+    expect(gate.blockingReasonCodes).toContain("remote_web_fetch");
+    expect(gate.locality.applicable).toBe(true);
+    expect(gate.locality.isLocal).toBe(false);
+    expect(gate.locality.observedHost).toBe("example.com");
+  });
+
+  test("local WebFetch is eligible", () => {
+    const gate = evaluateResolutionGate({
+      boundary: "clientRequest",
+      signalStrength: "strong",
+      toolName: "WebFetch",
+      command: "http://localhost:3000/api/health",
+    }, {});
+    expect(gate.eligible).toBe(true);
+    expect(gate.passedChecks).toContain("local_verification_url");
+    expect(gate.locality.isLocal).toBe(true);
+    expect(gate.locality.matchSource).toBe("loopback");
+  });
+
+  test("WebFetch with configured origin is eligible", () => {
+    const gate = evaluateResolutionGate({
+      boundary: "clientRequest",
+      signalStrength: "strong",
+      toolName: "WebFetch",
+      command: "http://myapp.test:4000/dashboard",
+    }, { VERCEL_PLUGIN_LOCAL_DEV_ORIGIN: "http://myapp.test:4000" });
+    expect(gate.eligible).toBe(true);
+    expect(gate.locality.matchSource).toBe("configured-origin");
+  });
+
+  test("soft + unknown accumulates multiple blocking codes", () => {
+    const gate = evaluateResolutionGate({
+      boundary: "unknown",
+      signalStrength: "soft",
+      toolName: "Bash",
+      command: "ls",
+    }, {});
+    expect(gate.eligible).toBe(false);
+    expect(gate.blockingReasonCodes).toContain("unknown_boundary");
+    expect(gate.blockingReasonCodes).toContain("soft_signal");
+    expect(gate.blockingReasonCodes).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Verification Closure Diagnosis — diagnosePendingExposureMatch
+// ---------------------------------------------------------------------------
+
+describe("diagnosePendingExposureMatch", () => {
+  const SESSION = "diagnosis-test-" + Date.now();
+
+  function makeExposure(id: string, overrides: Partial<SkillExposure> = {}): SkillExposure {
+    return {
+      id,
+      sessionId: SESSION,
+      projectRoot: "/tmp/project",
+      storyId: null,
+      storyKind: "flow-verification",
+      route: null,
+      hook: "PreToolUse",
+      toolName: "Bash",
+      skill: "agent-browser-verify",
+      targetBoundary: "clientRequest",
+      exposureGroupId: "group-1",
+      attributionRole: "candidate",
+      candidateSkill: "agent-browser-verify",
+      createdAt: "2026-03-28T11:00:00.000Z",
+      resolvedAt: null,
+      outcome: "pending",
+      ...overrides,
+    };
+  }
+
+  test("exact match returns matched exposure IDs with no unresolved codes", () => {
+    const exposures = [
+      makeExposure("exp-1", { storyId: "story-1", route: "/settings" }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: "story-1",
+      route: "/settings",
+      exposures,
+    });
+    expect(result.exactMatchCount).toBe(1);
+    expect(result.exactMatchExposureIds).toEqual(["exp-1"]);
+    expect(result.unresolvedReasonCodes).toHaveLength(0);
+  });
+
+  test("route mismatch diagnosed when same story different route", () => {
+    const exposures = [
+      makeExposure("exp-2", { storyId: "story-1", route: "/settings" }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: "story-1",
+      route: "/dashboard",
+      exposures,
+    });
+    expect(result.exactMatchCount).toBe(0);
+    expect(result.unresolvedReasonCodes).toContain("route_mismatch");
+    expect(result.sameStoryDifferentRouteExposureIds).toEqual(["exp-2"]);
+  });
+
+  test("story mismatch diagnosed when same route different story", () => {
+    const exposures = [
+      makeExposure("exp-3", { storyId: "story-other", route: "/settings" }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: "story-1",
+      route: "/settings",
+      exposures,
+    });
+    expect(result.exactMatchCount).toBe(0);
+    expect(result.unresolvedReasonCodes).toContain("story_mismatch");
+    expect(result.sameRouteDifferentStoryExposureIds).toEqual(["exp-3"]);
+  });
+
+  test("missing story scope diagnosed when storyId is null", () => {
+    const exposures = [
+      makeExposure("exp-4", { storyId: "story-1", route: "/settings" }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: null,
+      route: "/settings",
+      exposures,
+    });
+    expect(result.unresolvedReasonCodes).toContain("missing_story_scope");
+    expect(result.unresolvedReasonCodes).toContain("story_mismatch");
+  });
+
+  test("missing route scope diagnosed when route is null", () => {
+    const exposures = [
+      makeExposure("exp-5", { storyId: "story-1", route: "/settings" }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: "story-1",
+      route: null,
+      exposures,
+    });
+    expect(result.unresolvedReasonCodes).toContain("missing_route_scope");
+    expect(result.unresolvedReasonCodes).toContain("route_mismatch");
+  });
+
+  test("no pending for boundary diagnosed when boundary doesn't match", () => {
+    const exposures = [
+      makeExposure("exp-6", {
+        storyId: "story-1",
+        route: "/settings",
+        targetBoundary: "serverHandler",
+      }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: "story-1",
+      route: "/settings",
+      exposures,
+    });
+    expect(result.pendingBoundaryCount).toBe(0);
+    expect(result.unresolvedReasonCodes).toContain("no_pending_for_boundary");
+  });
+
+  test("already-resolved exposures are excluded from pending", () => {
+    const exposures = [
+      makeExposure("exp-7", {
+        storyId: "story-1",
+        route: "/settings",
+        outcome: "win",
+        resolvedAt: "2026-03-28T12:00:00.000Z",
+      }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: "story-1",
+      route: "/settings",
+      exposures,
+    });
+    expect(result.pendingTotal).toBe(0);
+    expect(result.pendingBoundaryCount).toBe(0);
+    expect(result.unresolvedReasonCodes).toContain("no_pending_for_boundary");
+  });
+
+  test("no exact pending match as fallback when no specific reason applies", () => {
+    const exposures = [
+      makeExposure("exp-8", {
+        storyId: "story-x",
+        route: "/other",
+      }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: "story-1",
+      route: "/settings",
+      exposures,
+    });
+    expect(result.exactMatchCount).toBe(0);
+    expect(result.unresolvedReasonCodes).toContain("no_exact_pending_match");
+  });
+
+  test("active-story fallback: pending on same boundary with null storyId matches null", () => {
+    const exposures = [
+      makeExposure("exp-9", { storyId: null, route: "/settings" }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: null,
+      route: "/settings",
+      exposures,
+    });
+    expect(result.exactMatchCount).toBe(1);
+    expect(result.exactMatchExposureIds).toEqual(["exp-9"]);
+    expect(result.unresolvedReasonCodes).toHaveLength(0);
+  });
+
+  test("ambiguous route: multiple stories on same route", () => {
+    const exposures = [
+      makeExposure("exp-10a", { storyId: "story-a", route: "/shared" }),
+      makeExposure("exp-10b", { storyId: "story-b", route: "/shared" }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: "story-a",
+      route: "/shared",
+      exposures,
+    });
+    expect(result.exactMatchCount).toBe(1);
+    expect(result.exactMatchExposureIds).toEqual(["exp-10a"]);
+    expect(result.sameRouteDifferentStoryExposureIds).toEqual(["exp-10b"]);
+  });
+
+  test("pendingTotal counts across all boundaries", () => {
+    const exposures = [
+      makeExposure("exp-11a", {
+        storyId: "story-1",
+        route: "/settings",
+        targetBoundary: "clientRequest",
+      }),
+      makeExposure("exp-11b", {
+        storyId: "story-1",
+        route: "/settings",
+        targetBoundary: "serverHandler",
+      }),
+    ];
+    const result = diagnosePendingExposureMatch({
+      sessionId: SESSION,
+      boundary: "clientRequest",
+      storyId: "story-1",
+      route: "/settings",
+      exposures,
+    });
+    expect(result.pendingTotal).toBe(2);
+    expect(result.pendingBoundaryCount).toBe(1);
+    expect(result.exactMatchCount).toBe(1);
   });
 });

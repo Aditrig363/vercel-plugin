@@ -832,7 +832,7 @@ describe("verification.routing-policy-resolution-gate telemetry", () => {
     expect(gate!.boundary).toBe("clientRequest");
     expect(gate!.inferredRoute).toBe("/settings");
     expect(gate!.resolutionEligible).toBe(false);
-    expect(gate!.reason).toBe("non_local_webfetch");
+    expect(gate!.blockingReasonCodes).toContain("remote_web_fetch");
   });
 
   test("local WebFetch emits resolution-gate with resolutionEligible: true", () => {
@@ -870,7 +870,7 @@ describe("verification.routing-policy-resolution-gate telemetry", () => {
     expect(gate!.toolName).toBe("Read");
     expect(gate!.boundary).toBe("environment");
     expect(gate!.resolutionEligible).toBe(false);
-    expect(gate!.reason).toBe("soft_signal_or_unknown_boundary");
+    expect(gate!.blockingReasonCodes).toContain("soft_signal");
   });
 
   test("resolvedStoryId reflects route-matched story, not merely active story", () => {

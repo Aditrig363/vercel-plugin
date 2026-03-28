@@ -31,7 +31,7 @@ import {
   recordObservation,
   type VerificationObservation,
 } from "./verification-ledger.mjs";
-import { resolveBoundaryOutcome } from "./routing-policy-ledger.mjs";
+import { resolveBoundaryOutcome, type SkillExposure } from "./routing-policy-ledger.mjs";
 import { selectActiveStory } from "./verification-plan.mjs";
 import {
   appendRoutingDecisionTrace,
@@ -40,6 +40,14 @@ import {
 import {
   classifyVerificationSignal,
 } from "./verification-signal.mjs";
+import {
+  evaluateResolutionGate,
+  diagnosePendingExposureMatch,
+} from "./verification-closure-diagnosis.mjs";
+import {
+  buildVerificationClosureCapsule,
+  persistVerificationClosureCapsule,
+} from "./verification-closure-capsule.mjs";
 
 export { redactCommand };
 export { classifyVerificationSignal };
@@ -150,13 +158,46 @@ export function isLocalVerificationUrl(
 // Story-ID resolution from observed route
 // ---------------------------------------------------------------------------
 
+export interface ObservedStoryResolution {
+  storyId: string | null;
+  method: "explicit-env" | "exact-route" | "active-story" | "none";
+}
+
 /**
- * Resolve the story ID that owns the observed route.
+ * Resolve the story ID that owns the observed route, with method tracking.
  *
  * Priority:
  * 1. Explicit env override (VERCEL_PLUGIN_VERIFICATION_STORY_ID)
  * 2. Unique exact-match story whose route === observedRoute
  * 3. Fallback to plan.activeStoryId
+ */
+export function resolveObservedStory(
+  plan: {
+    stories: Array<{ id: string; route: string | null }>;
+    activeStoryId: string | null;
+  },
+  observedRoute: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): ObservedStoryResolution {
+  const explicit = envString(env, "VERCEL_PLUGIN_VERIFICATION_STORY_ID");
+  if (explicit) return { storyId: explicit, method: "explicit-env" };
+
+  if (observedRoute) {
+    const exact = plan.stories.filter((story) => story.route === observedRoute);
+    if (exact.length === 1) {
+      return { storyId: exact[0]!.id, method: "exact-route" };
+    }
+  }
+
+  if (plan.activeStoryId) {
+    return { storyId: plan.activeStoryId, method: "active-story" };
+  }
+
+  return { storyId: null, method: "none" };
+}
+
+/**
+ * @deprecated Use resolveObservedStory instead.
  */
 export function resolveObservedStoryId(
   plan: {
@@ -166,15 +207,7 @@ export function resolveObservedStoryId(
   observedRoute: string | null,
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  const explicit = envString(env, "VERCEL_PLUGIN_VERIFICATION_STORY_ID");
-  if (explicit) return explicit;
-
-  if (!observedRoute) return plan.activeStoryId ?? null;
-
-  const exact = plan.stories.filter((story) => story.route === observedRoute);
-  if (exact.length === 1) return exact[0]!.id;
-
-  return plan.activeStoryId ?? null;
+  return resolveObservedStory(plan, observedRoute, env).storyId;
 }
 
 // ---------------------------------------------------------------------------
@@ -715,69 +748,161 @@ export function run(rawInput?: string): string {
       blockedReasons: [...plan.blockedReasons],
     });
 
-    // Resolve story ID from observed route, preferring exact match over active story
-    const primaryStory = plan.stories.length > 0
+    // Resolve story from observed route, preferring exact match over active story
+    const activeStory = plan.stories.length > 0
       ? selectActiveStory(plan)
       : null;
 
-    const resolvedStoryId = resolveObservedStoryId(
+    const storyResolution = resolveObservedStory(
       {
         stories: plan.stories.map((s) => ({ id: s.id, route: s.route })),
-        activeStoryId: primaryStory?.id ?? null,
+        activeStoryId: activeStory?.id ?? null,
       },
       inferredRoute,
       env,
     );
 
-    // Gate routing policy resolution: provenance + locality + strength
-    const resolutionEligible = shouldResolveRoutingOutcome(boundaryEvent, env);
+    // Structured gate evaluation with explicit blocking reason codes
+    const gate = evaluateResolutionGate(
+      {
+        boundary: boundaryEvent.boundary,
+        signalStrength,
+        toolName,
+        command: boundaryEvent.command,
+      },
+      env,
+    );
 
-    if (resolutionEligible) {
-      const resolved = resolveBoundaryOutcome({
+    // Diagnose pending exposure matches (skip for unknown boundaries)
+    const exposureDiagnosis =
+      boundaryEvent.boundary === "unknown"
+        ? null
+        : diagnosePendingExposureMatch({
+            sessionId,
+            boundary: boundaryEvent.boundary as
+              | "uiRender"
+              | "clientRequest"
+              | "serverHandler"
+              | "environment",
+            storyId: storyResolution.storyId,
+            route: inferredRoute,
+          });
+
+    // Resolve routing policy only when the gate passes
+    let resolved: SkillExposure[] = [];
+    if (gate.eligible && boundaryEvent.boundary !== "unknown") {
+      resolved = resolveBoundaryOutcome({
         sessionId,
-        boundary: boundaryEvent.boundary as "uiRender" | "clientRequest" | "serverHandler" | "environment",
+        boundary: boundaryEvent.boundary as
+          | "uiRender"
+          | "clientRequest"
+          | "serverHandler"
+          | "environment",
         matchedSuggestedAction: boundaryEvent.matchedSuggestedAction,
-        storyId: resolvedStoryId,
+        storyId: storyResolution.storyId,
         route: inferredRoute,
         now: boundaryEvent.timestamp,
       });
-
-      log.summary("verification.routing-policy-resolution-gate", {
-        verificationId,
-        toolName,
-        boundary: boundaryEvent.boundary,
-        inferredRoute,
-        resolvedStoryId,
-        resolutionEligible: true,
-      });
-
-      if (resolved.length > 0) {
-        const outcomeKind = boundaryEvent.matchedSuggestedAction ? "directive-win" : "win";
-        log.summary("verification.routing-policy-resolved", {
-          verificationId,
-          boundary: boundaryEvent.boundary,
-          storyId: resolvedStoryId,
-          route: inferredRoute,
-          resolvedCount: resolved.length,
-          outcomeKind,
-          skills: resolved.map((e) => e.skill),
-        });
-      }
     } else {
-      log.summary("verification.routing-policy-resolution-gate", {
+      log.debug("verification.routing-policy-skipped", {
         verificationId,
-        toolName,
         boundary: boundaryEvent.boundary,
-        inferredRoute,
-        resolvedStoryId,
-        resolutionEligible: false,
-        reason: boundaryEvent.toolName === "WebFetch"
-          ? "non_local_webfetch"
-          : "soft_signal_or_unknown_boundary",
+        toolName,
+        blockingReasonCodes: gate.blockingReasonCodes,
+        signalStrength,
       });
     }
 
-    // Emit routing decision trace for this PostToolUse boundary observation
+    if (gate.eligible && resolved.length === 0) {
+      log.debug("verification.routing-policy-unresolved", {
+        verificationId,
+        boundary: boundaryEvent.boundary,
+        toolName,
+        storyId: storyResolution.storyId,
+        route: inferredRoute,
+        unresolvedReasonCodes:
+          exposureDiagnosis?.unresolvedReasonCodes ?? [
+            "no_exact_pending_match",
+          ],
+        pendingBoundaryCount:
+          exposureDiagnosis?.pendingBoundaryCount ?? 0,
+      });
+    }
+
+    // Build and persist the closure capsule
+    const closureCapsule = buildVerificationClosureCapsule({
+      sessionId,
+      verificationId,
+      toolName,
+      createdAt: boundaryEvent.timestamp,
+      observation: {
+        boundary: boundaryEvent.boundary,
+        signalStrength,
+        evidenceSource,
+        matchedPattern,
+        command: boundaryEvent.command,
+        inferredRoute,
+        matchedSuggestedAction: boundaryEvent.matchedSuggestedAction,
+      },
+      storyResolution: {
+        resolvedStoryId: storyResolution.storyId,
+        method: storyResolution.method,
+        activeStoryId: activeStory?.id ?? null,
+        activeStoryKind: activeStory?.kind ?? null,
+        activeStoryRoute: activeStory?.route ?? null,
+      },
+      gate,
+      exposureDiagnosis,
+      resolvedExposures: resolved,
+      plan: {
+        activeStoryId: plan.activeStoryId ?? null,
+        satisfiedBoundaries: plan.satisfiedBoundaries,
+        missingBoundaries: [...plan.missingBoundaries],
+        blockedReasons: [...plan.blockedReasons],
+        primaryNextAction: plan.primaryNextAction
+          ? {
+              action: plan.primaryNextAction.action,
+              targetBoundary: plan.primaryNextAction.targetBoundary,
+              reason: plan.primaryNextAction.reason,
+            }
+          : null,
+      },
+    });
+
+    const capsulePath = persistVerificationClosureCapsule(
+      closureCapsule,
+      log,
+    );
+
+    log.summary("verification.routing-policy-resolution-gate", {
+      verificationId,
+      toolName,
+      boundary: boundaryEvent.boundary,
+      inferredRoute,
+      resolvedStoryId: storyResolution.storyId,
+      storyResolutionMethod: storyResolution.method,
+      resolutionEligible: gate.eligible,
+      blockingReasonCodes: gate.blockingReasonCodes,
+      exactPendingMatchCount: exposureDiagnosis?.exactMatchCount ?? 0,
+      capsulePath,
+    });
+
+    if (resolved.length > 0) {
+      const outcomeKind = boundaryEvent.matchedSuggestedAction
+        ? "directive-win"
+        : "win";
+      log.summary("verification.routing-policy-resolved", {
+        verificationId,
+        boundary: boundaryEvent.boundary,
+        storyId: storyResolution.storyId,
+        route: inferredRoute,
+        resolvedCount: resolved.length,
+        outcomeKind,
+        skills: resolved.map((e) => e.skill),
+      });
+    }
+
+    // Emit routing decision trace with diagnostic skipped reasons
     const redactedTarget = toolName === "Bash"
       ? redactCommand(summary).slice(0, 200)
       : summary.slice(0, 200);
@@ -798,18 +923,26 @@ export function run(rawInput?: string): string {
       toolTarget: redactedTarget,
       timestamp: boundaryEvent.timestamp,
       primaryStory: {
-        id: resolvedStoryId,
-        kind: primaryStory?.kind ?? null,
-        storyRoute: primaryStory?.route ?? inferredRoute,
+        id: storyResolution.storyId,
+        kind: activeStory?.kind ?? null,
+        storyRoute: activeStory?.route ?? inferredRoute,
         targetBoundary: boundaryEvent.boundary === "unknown" ? null : boundaryEvent.boundary,
       },
       observedRoute: inferredRoute,
-      policyScenario: resolvedStoryId
-        ? `PostToolUse|${primaryStory?.kind ?? "none"}|${boundaryEvent.boundary}|${toolName}`
+      policyScenario: storyResolution.storyId
+        ? `PostToolUse|${activeStory?.kind ?? "none"}|${boundaryEvent.boundary}|${toolName}`
         : null,
       matchedSkills: [],
       injectedSkills: [],
-      skippedReasons: resolvedStoryId ? [] : ["no_active_verification_story"],
+      skippedReasons: [
+        ...(storyResolution.storyId ? [] : ["no_active_verification_story"]),
+        ...gate.blockingReasonCodes.map((code) => `gate:${code}`),
+        ...(gate.eligible && resolved.length === 0
+          ? (exposureDiagnosis?.unresolvedReasonCodes ?? ["no_exact_pending_match"]).map(
+              (code) => `resolution:${code}`,
+            )
+          : []),
+      ],
       ranked: [],
       verification: {
         verificationId,
