@@ -108,6 +108,19 @@ function formatRoutingExplainText(
     }
   }
 
+  // Companion recall: detect ranked entries injected via verified-companion
+  const companions = latest.ranked.filter(
+    (r) => r.pattern?.type === "verified-companion",
+  );
+  if (companions.length > 0) {
+    lines.push("");
+    lines.push("Companions recalled:");
+    for (const c of companions) {
+      const suffix = c.summaryOnly ? " (summary-only)" : "";
+      lines.push(`  - ${c.skill}${suffix}`);
+    }
+  }
+
   // Policy scenario for diagnostic context
   if (latest.policyScenario) {
     lines.push("");

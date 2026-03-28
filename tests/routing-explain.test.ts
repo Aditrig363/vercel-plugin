@@ -365,3 +365,137 @@ describe("routing-explain diagnostic completeness", () => {
     expect(output).toContain("budget_exhausted:skill-b");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Companion recall in routing-explain
+// ---------------------------------------------------------------------------
+
+describe("routing-explain companion recall", () => {
+  test("text mode shows recalled companions from trace", () => {
+    appendRoutingDecisionTrace(
+      makeTrace({
+        ranked: [
+          {
+            skill: "verification",
+            basePriority: 7,
+            effectivePriority: 15,
+            pattern: { type: "bashPattern", value: "dev server" },
+            profilerBoost: 0,
+            policyBoost: 8,
+            policyReason: "4/5 wins",
+            summaryOnly: false,
+            synthetic: false,
+            droppedReason: null,
+          },
+          {
+            skill: "agent-browser-verify",
+            basePriority: 0,
+            effectivePriority: 0,
+            pattern: { type: "verified-companion", value: "scenario-companion-rulebook" },
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: false,
+            synthetic: true,
+            droppedReason: null,
+          },
+        ],
+      }),
+    );
+
+    const output = runRoutingExplain(TEST_SESSION, false);
+
+    expect(output).toContain("Companions recalled:");
+    expect(output).toContain("agent-browser-verify");
+  });
+
+  test("text mode shows summary-only tag for dedup-bypassed companions", () => {
+    appendRoutingDecisionTrace(
+      makeTrace({
+        ranked: [
+          {
+            skill: "verification",
+            basePriority: 7,
+            effectivePriority: 7,
+            pattern: { type: "bashPattern", value: "npm run dev" },
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: false,
+            synthetic: false,
+            droppedReason: null,
+          },
+          {
+            skill: "agent-browser-verify",
+            basePriority: 0,
+            effectivePriority: 0,
+            pattern: { type: "verified-companion", value: "scenario-companion-rulebook" },
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: true,
+            synthetic: true,
+            droppedReason: null,
+          },
+        ],
+      }),
+    );
+
+    const output = runRoutingExplain(TEST_SESSION, false);
+
+    expect(output).toContain("Companions recalled:");
+    expect(output).toContain("agent-browser-verify (summary-only)");
+  });
+
+  test("text mode omits companions section when none recalled", () => {
+    appendRoutingDecisionTrace(makeTrace());
+
+    const output = runRoutingExplain(TEST_SESSION, false);
+
+    expect(output).not.toContain("Companions recalled:");
+  });
+
+  test("JSON mode includes companion entries in ranked array", () => {
+    appendRoutingDecisionTrace(
+      makeTrace({
+        ranked: [
+          {
+            skill: "verification",
+            basePriority: 7,
+            effectivePriority: 7,
+            pattern: null,
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: false,
+            synthetic: false,
+            droppedReason: null,
+          },
+          {
+            skill: "agent-browser-verify",
+            basePriority: 0,
+            effectivePriority: 0,
+            pattern: { type: "verified-companion", value: "scenario-companion-rulebook" },
+            profilerBoost: 0,
+            policyBoost: 0,
+            policyReason: null,
+            summaryOnly: false,
+            synthetic: true,
+            droppedReason: null,
+          },
+        ],
+      }),
+    );
+
+    const output = runRoutingExplain(TEST_SESSION, true);
+    const result: RoutingExplainResult = JSON.parse(output);
+
+    expect(result.latest).not.toBeNull();
+    const companionEntry = result.latest!.ranked.find(
+      (r) => r.pattern?.type === "verified-companion",
+    );
+    expect(companionEntry).toBeDefined();
+    expect(companionEntry!.skill).toBe("agent-browser-verify");
+    expect(companionEntry!.synthetic).toBe(true);
+  });
+});

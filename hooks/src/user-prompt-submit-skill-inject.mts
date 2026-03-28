@@ -58,6 +58,7 @@ import {
 } from "./routing-policy-ledger.mjs";
 import { loadRulebook, rulebookPath } from "./learned-routing-rulebook.mjs";
 import { applyPromptPolicyRecall } from "./prompt-policy-recall.mjs";
+import { recallVerifiedCompanions } from "./companion-recall.mjs";
 import { buildAttributionDecision } from "./routing-attribution.mjs";
 import {
   appendRoutingDecisionTrace,
@@ -1281,6 +1282,68 @@ export function run(): string {
     }
   }
 
+  // Stage 3f: Verified companion recall — insert learned companion skills
+  // immediately after their candidate in the selected list. Symmetric with
+  // PreToolUse Stage 4.96.
+  const promptCompanionRecallReasons: Record<string, { trigger: string; reasonCode: string }> = {};
+  const promptForceSummarySkills = new Set<string>();
+  if (cwd && promptBinding.storyId && promptBinding.targetBoundary) {
+    const companionRecall = recallVerifiedCompanions({
+      projectRoot: cwd,
+      scenario: {
+        hook: "UserPromptSubmit" as RoutingHookName,
+        storyKind: promptBinding.storyKind,
+        targetBoundary: promptBinding.targetBoundary,
+        toolName: "Prompt" as RoutingToolName,
+        routeScope: promptBinding.route ?? null,
+      },
+      candidateSkills: [...report.selectedSkills],
+      excludeSkills: new Set([
+        ...report.selectedSkills,
+        ...(dedupOff ? [] : parseSeenSkills(seenState)),
+      ]),
+      maxCompanions: 1,
+    });
+
+    for (const recall of companionRecall.selected) {
+      const candidateIdx = report.selectedSkills.indexOf(recall.candidateSkill);
+      if (candidateIdx === -1) continue;
+      report.selectedSkills.splice(candidateIdx + 1, 0, recall.companionSkill);
+      matchedSkills.push(recall.companionSkill);
+
+      const seenSkills = dedupOff ? new Set<string>() : parseSeenSkills(seenState);
+      const alreadySeen = !dedupOff && seenSkills.has(recall.companionSkill);
+      if (alreadySeen) {
+        promptForceSummarySkills.add(recall.companionSkill);
+      }
+
+      promptCompanionRecallReasons[recall.companionSkill] = {
+        trigger: "verified-companion",
+        reasonCode: "scenario-companion-rulebook",
+      };
+
+      log.debug("prompt-companion-recall-injected", {
+        candidateSkill: recall.candidateSkill,
+        companionSkill: recall.companionSkill,
+        scenario: recall.scenario,
+        lift: recall.confidence,
+        summaryOnly: alreadySeen,
+      });
+    }
+
+    if (companionRecall.rejected.length > 0) {
+      log.debug("prompt-companion-recall-rejected", {
+        rejected: companionRecall.rejected,
+      });
+    }
+  } else if (cwd) {
+    log.debug("prompt-companion-recall-skipped", {
+      reason: !promptBinding.storyId
+        ? "no_active_verification_story"
+        : "no_target_boundary",
+    });
+  }
+
   // Stage 4: inject selected skills (file I/O for SKILL.md bodies)
   const tInject = log.active ? log.now() : 0;
   const injectedSkills = dedupOff ? new Set<string>() : parseSeenSkills(seenState);
@@ -1294,6 +1357,7 @@ export function run(): string {
     maxSkills: MAX_SKILLS,
     skillMap: skills.skillMap,
     logger: log,
+    forceSummarySkills: promptForceSummarySkills.size > 0 ? promptForceSummarySkills : undefined,
     platform: platform as "claude-code" | "cursor",
   });
   if (log.active) timing.inject = Math.round(log.now() - tInject);
@@ -1450,14 +1514,17 @@ export function run(): string {
         const result = report.perSkillResults[skill];
         const policy = promptPolicyBoosted.find((p) => p.skill === skill);
         const rb = promptRulebookBoosted.find((r) => r.skill === skill);
-        const synthetic = promptPolicyRecallSynthetic.has(skill);
+        const companionReason = promptCompanionRecallReasons[skill];
+        const synthetic = promptPolicyRecallSynthetic.has(skill) || Boolean(companionReason);
         const baseScore = result?.score ?? 0;
         const effectiveBoost = rb ? rb.ruleBoost : (policy?.boost ?? 0);
         return {
           skill,
           basePriority: baseScore,
           effectivePriority: baseScore + effectiveBoost,
-          pattern: synthetic
+          pattern: companionReason
+            ? { type: companionReason.trigger, value: companionReason.reasonCode }
+            : promptPolicyRecallSynthetic.has(skill)
             ? { type: "policy-recall", value: promptPolicyRecallReasons[skill] }
             : result?.reason
               ? { type: "prompt-signal", value: result.reason }

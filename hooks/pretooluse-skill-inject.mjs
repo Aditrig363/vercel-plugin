@@ -50,6 +50,7 @@ import {
   appendRoutingDecisionTrace,
   createDecisionId
 } from "./routing-decision-trace.mjs";
+import { recallVerifiedCompanions } from "./companion-recall.mjs";
 var MAX_SKILLS = 3;
 var DEFAULT_INJECTION_BUDGET_BYTES = 18e3;
 var SETUP_MODE_BOOTSTRAP_SKILL = "bootstrap";
@@ -1143,6 +1144,57 @@ function run() {
       });
     }
   }
+  const companionRecallReasons = {};
+  if (cwd && sessionId) {
+    const companionPlan = loadCachedPlanResult(sessionId, log);
+    const companionStory = companionPlan ? selectActiveStory(companionPlan) : null;
+    const companionBoundary = companionPlan?.primaryNextAction?.targetBoundary ?? null;
+    if (companionStory && companionBoundary) {
+      const companionRecall = recallVerifiedCompanions({
+        projectRoot: cwd,
+        scenario: {
+          hook: "PreToolUse",
+          storyKind: companionStory.kind ?? null,
+          targetBoundary: companionBoundary,
+          toolName,
+          routeScope: companionStory.route ?? null
+        },
+        candidateSkills: [...rankedSkills],
+        excludeSkills: /* @__PURE__ */ new Set([...rankedSkills, ...injectedSkills]),
+        maxCompanions: 1
+      });
+      for (const recall of companionRecall.selected) {
+        const candidateIdx = rankedSkills.indexOf(recall.candidateSkill);
+        if (candidateIdx === -1) continue;
+        rankedSkills.splice(candidateIdx + 1, 0, recall.companionSkill);
+        matched.add(recall.companionSkill);
+        const alreadySeen = !dedupOff && injectedSkills.has(recall.companionSkill);
+        if (alreadySeen) {
+          forceSummarySkills.add(recall.companionSkill);
+        }
+        companionRecallReasons[recall.companionSkill] = {
+          trigger: "verified-companion",
+          reasonCode: "scenario-companion-rulebook"
+        };
+        log.debug("companion-recall-injected", {
+          candidateSkill: recall.candidateSkill,
+          companionSkill: recall.companionSkill,
+          scenario: recall.scenario,
+          lift: recall.confidence,
+          summaryOnly: alreadySeen
+        });
+      }
+      if (companionRecall.rejected.length > 0) {
+        log.debug("companion-recall-rejected", {
+          rejected: companionRecall.rejected
+        });
+      }
+    } else {
+      log.debug("companion-recall-skipped", {
+        reason: !companionStory ? "no_active_verification_story" : "no_target_boundary"
+      });
+    }
+  }
   let vercelEnvHelpInjected = false;
   if (vercelEnvHelp.triggered) {
     let helpClaimed = true;
@@ -1338,6 +1390,9 @@ function run() {
       reasonCode: "route-scoped-verified-policy-recall"
     };
   }
+  for (const [skill, reason] of Object.entries(companionRecallReasons)) {
+    reasons[skill] = reason;
+  }
   for (const skill of loaded) {
     if (!reasons[skill] && matchReasons?.[skill]) {
       reasons[skill] = {
@@ -1444,18 +1499,22 @@ function run() {
     for (const skill of policyRecallSynthetic) {
       syntheticSkills.add(skill);
     }
+    for (const skill of Object.keys(companionRecallReasons)) {
+      syntheticSkills.add(skill);
+    }
     const traceRanked = [];
     const trackedSkills = /* @__PURE__ */ new Set();
     for (const entry of newEntries) {
       const match = matchReasons?.[entry.skill];
       const policy = policyBoosted.find((p) => p.skill === entry.skill);
       const rb = rulebookBoosted.find((r) => r.skill === entry.skill);
+      const companionReason = companionRecallReasons[entry.skill];
       trackedSkills.add(entry.skill);
       traceRanked.push({
         skill: entry.skill,
         basePriority: entry.priority,
         effectivePriority: typeof entry.effectivePriority === "number" ? entry.effectivePriority : entry.priority,
-        pattern: match ? { type: match.matchType, value: match.pattern } : null,
+        pattern: companionReason ? { type: companionReason.trigger, value: companionReason.reasonCode } : match ? { type: match.matchType, value: match.pattern } : null,
         profilerBoost: profilerBoosted.includes(entry.skill) ? 5 : 0,
         policyBoost: policy?.boost ?? 0,
         policyReason: policy?.reason ?? null,

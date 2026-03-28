@@ -17,7 +17,13 @@ import { tmpdir } from "node:os";
 import { readRoutingDecisionTrace } from "../../hooks/src/routing-decision-trace.mts";
 import { loadSessionExposures, loadProjectRoutingPolicy } from "../../hooks/src/routing-policy-ledger.mts";
 import { distillRulesFromTrace } from "../../hooks/src/rule-distillation.mts";
+import { distillCompanionRules } from "../../hooks/src/companion-distillation.mts";
+import {
+  companionRulebookPath,
+  saveCompanionRulebook,
+} from "../../hooks/src/learned-companion-rulebook.mts";
 import type { LearnedRoutingRulesFile } from "../../hooks/src/rule-distillation.mts";
+import type { LearnedCompanionRulebook } from "../../hooks/src/learned-companion-rulebook.mts";
 import type { RoutingDecisionTrace } from "../../hooks/src/routing-decision-trace.mts";
 import type { SkillExposure } from "../../hooks/src/routing-policy-ledger.mts";
 
@@ -33,6 +39,12 @@ export interface LearnCommandOptions {
   minSupport?: number;
   minPrecision?: number;
   minLift?: number;
+}
+
+export interface LearnCommandOutput {
+  rules: LearnedRoutingRulesFile;
+  companions: LearnedCompanionRulebook;
+  companionPath: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,8 +165,18 @@ export async function runLearnCommand(options: LearnCommandOptions): Promise<num
       replay: { baselineWins: 0, baselineDirectiveWins: 0, learnedWins: 0, learnedDirectiveWins: 0, deltaWins: 0, deltaDirectiveWins: 0, regressions: [] },
       promotion: { accepted: true, errorCode: null, reason: "No traces to evaluate" },
     };
+    const emptyCompanions = distillCompanionRules({
+      projectRoot,
+      traces: [],
+      exposures: [],
+    });
+    const output: LearnCommandOutput = {
+      rules: result,
+      companions: emptyCompanions,
+      companionPath: companionRulebookPath(projectRoot),
+    };
     if (jsonOutput) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(output, null, 2));
     } else {
       console.error("No routing decision traces found. Run some sessions first.");
       // Still emit human-readable summary for consistent output
@@ -172,17 +194,22 @@ export async function runLearnCommand(options: LearnCommandOptions): Promise<num
         "  delta:                   0",
         "  delta directive:         0",
         "  regressions:             0",
+        "",
+        "Companion rules: 0",
+        "  promoted: 0",
       ].join("\n"));
     }
     if (writeOutput) {
       const outPath = learnedRulesPath(projectRoot);
       writeFileSync(outPath, JSON.stringify(result, null, 2) + "\n");
       console.error(JSON.stringify({ event: "learn_written", path: outPath }));
+      saveCompanionRulebook(projectRoot, emptyCompanions);
+      console.error(JSON.stringify({ event: "learn_companion_written", path: companionRulebookPath(projectRoot) }));
     }
     return 0;
   }
 
-  // Distill
+  // Distill single-skill rules
   const result = distillRulesFromTrace({
     projectRoot,
     traces,
@@ -193,9 +220,21 @@ export async function runLearnCommand(options: LearnCommandOptions): Promise<num
     minLift: options.minLift,
   });
 
+  // Distill companion rules
+  const companionRulebook = distillCompanionRules({
+    projectRoot,
+    traces,
+    exposures,
+    minSupport: options.minSupport ?? 4,
+    minPrecision: options.minPrecision ?? 0.75,
+    minLift: options.minLift ?? 1.25,
+  });
+
   const promoted = result.rules.filter((r) => r.confidence === "promote").length;
   const candidates = result.rules.filter((r) => r.confidence === "candidate").length;
   const holdoutFail = result.rules.filter((r) => r.confidence === "holdout-fail").length;
+  const companionPromoted = companionRulebook.rules.filter((r) => r.confidence === "promote").length;
+  const companionHoldoutFail = companionRulebook.rules.filter((r) => r.confidence === "holdout-fail").length;
 
   console.error(JSON.stringify({
     event: "learn_distill_complete",
@@ -205,11 +244,20 @@ export async function runLearnCommand(options: LearnCommandOptions): Promise<num
     holdoutFail,
     replayDelta: result.replay.deltaWins,
     regressions: result.replay.regressions.length,
+    companionRuleCount: companionRulebook.rules.length,
+    companionPromoted,
+    companionHoldoutFail,
   }));
+
+  const output: LearnCommandOutput = {
+    rules: result,
+    companions: companionRulebook,
+    companionPath: companionRulebookPath(projectRoot),
+  };
 
   // Output
   if (jsonOutput) {
-    console.log(JSON.stringify(result, null, 2));
+    console.log(JSON.stringify(output, null, 2));
   } else {
     // Human-readable summary
     const lines: string[] = [
@@ -252,6 +300,21 @@ export async function runLearnCommand(options: LearnCommandOptions): Promise<num
       }
     }
 
+    // Companion rules summary
+    lines.push("");
+    lines.push(`Companion rules: ${companionRulebook.rules.length}`);
+    lines.push(`  promoted: ${companionPromoted}`);
+    lines.push(`  holdout-fail: ${companionHoldoutFail}`);
+
+    if (companionPromoted > 0) {
+      lines.push("");
+      lines.push("Promoted companions:");
+      for (const rule of companionRulebook.rules) {
+        if (rule.confidence !== "promote") continue;
+        lines.push(`  ${rule.candidateSkill} -> ${rule.companionSkill} (precision=${rule.precisionWithCompanion}, lift=${rule.liftVsCandidateAlone}, support=${rule.support})`);
+      }
+    }
+
     console.log(lines.join("\n"));
   }
 
@@ -261,6 +324,9 @@ export async function runLearnCommand(options: LearnCommandOptions): Promise<num
     const payload = JSON.stringify(result, null, 2) + "\n";
     writeFileSync(outPath, payload);
     console.error(JSON.stringify({ event: "learn_written", path: outPath }));
+
+    saveCompanionRulebook(projectRoot, companionRulebook);
+    console.error(JSON.stringify({ event: "learn_companion_written", path: companionRulebookPath(projectRoot) }));
   }
 
   // Non-zero exit if regressions detected

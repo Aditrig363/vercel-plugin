@@ -75,6 +75,7 @@ import {
   appendRoutingDecisionTrace,
   createDecisionId,
 } from "./routing-decision-trace.mjs";
+import { recallVerifiedCompanions } from "./companion-recall.mjs";
 
 const MAX_SKILLS = 3;
 const DEFAULT_INJECTION_BUDGET_BYTES = 18_000;
@@ -1729,6 +1730,72 @@ function run(): string {
     }
   }
 
+  // Stage 4.96: Verified companion recall — insert learned companion skills
+  // immediately after their candidate in the ranked list. Separate from
+  // single-skill policy recall to keep causal credit clean.
+  const companionRecallReasons: Record<string, { trigger: string; reasonCode: string }> = {};
+  if (cwd && sessionId) {
+    const companionPlan = loadCachedPlanResult(sessionId, log);
+    const companionStory = companionPlan ? selectActiveStory(companionPlan) : null;
+    const companionBoundary = (companionPlan?.primaryNextAction?.targetBoundary as
+      | "uiRender"
+      | "clientRequest"
+      | "serverHandler"
+      | "environment"
+      | null) ?? null;
+
+    if (companionStory && companionBoundary) {
+      const companionRecall = recallVerifiedCompanions({
+        projectRoot: cwd,
+        scenario: {
+          hook: "PreToolUse" as RoutingHookName,
+          storyKind: companionStory.kind ?? null,
+          targetBoundary: companionBoundary,
+          toolName: toolName as RoutingToolName,
+          routeScope: companionStory.route ?? null,
+        },
+        candidateSkills: [...rankedSkills],
+        excludeSkills: new Set([...rankedSkills, ...injectedSkills]),
+        maxCompanions: 1,
+      });
+
+      for (const recall of companionRecall.selected) {
+        const candidateIdx = rankedSkills.indexOf(recall.candidateSkill);
+        if (candidateIdx === -1) continue;
+        rankedSkills.splice(candidateIdx + 1, 0, recall.companionSkill);
+        matched.add(recall.companionSkill);
+
+        const alreadySeen = !dedupOff && injectedSkills.has(recall.companionSkill);
+        if (alreadySeen) {
+          forceSummarySkills.add(recall.companionSkill);
+        }
+
+        companionRecallReasons[recall.companionSkill] = {
+          trigger: "verified-companion",
+          reasonCode: "scenario-companion-rulebook",
+        };
+
+        log.debug("companion-recall-injected", {
+          candidateSkill: recall.candidateSkill,
+          companionSkill: recall.companionSkill,
+          scenario: recall.scenario,
+          lift: recall.confidence,
+          summaryOnly: alreadySeen,
+        });
+      }
+
+      if (companionRecall.rejected.length > 0) {
+        log.debug("companion-recall-rejected", {
+          rejected: companionRecall.rejected,
+        });
+      }
+    } else {
+      log.debug("companion-recall-skipped", {
+        reason: !companionStory ? "no_active_verification_story" : "no_target_boundary",
+      });
+    }
+  }
+
   let vercelEnvHelpInjected = false;
   if (vercelEnvHelp.triggered) {
     let helpClaimed = true;
@@ -1949,6 +2016,9 @@ function run(): string {
       reasonCode: "route-scoped-verified-policy-recall",
     };
   }
+  for (const [skill, reason] of Object.entries(companionRecallReasons)) {
+    reasons[skill] = reason;
+  }
   // Add pattern-match reasons for remaining skills
   for (const skill of loaded) {
     if (!reasons[skill] && matchReasons?.[skill]) {
@@ -2067,6 +2137,9 @@ function run(): string {
     for (const skill of policyRecallSynthetic) {
       syntheticSkills.add(skill);
     }
+    for (const skill of Object.keys(companionRecallReasons)) {
+      syntheticSkills.add(skill);
+    }
 
     // Build ranked entries: pattern-matched entries + synthetic injections + deduped candidates
     const traceRanked: Array<{
@@ -2092,6 +2165,7 @@ function run(): string {
       const match = matchReasons?.[entry.skill];
       const policy = policyBoosted.find((p) => p.skill === entry.skill);
       const rb = rulebookBoosted.find((r) => r.skill === entry.skill);
+      const companionReason = companionRecallReasons[entry.skill];
       trackedSkills.add(entry.skill);
       traceRanked.push({
         skill: entry.skill,
@@ -2099,7 +2173,11 @@ function run(): string {
         effectivePriority: typeof entry.effectivePriority === "number"
           ? entry.effectivePriority
           : entry.priority,
-        pattern: match ? { type: match.matchType, value: match.pattern } : null,
+        pattern: companionReason
+          ? { type: companionReason.trigger, value: companionReason.reasonCode }
+          : match
+            ? { type: match.matchType, value: match.pattern }
+            : null,
         profilerBoost: profilerBoosted.includes(entry.skill) ? 5 : 0,
         policyBoost: policy?.boost ?? 0,
         policyReason: policy?.reason ?? null,
