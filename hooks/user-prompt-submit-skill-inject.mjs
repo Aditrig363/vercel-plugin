@@ -37,6 +37,11 @@ import {
   appendRoutingDecisionTrace,
   createDecisionId
 } from "./routing-decision-trace.mjs";
+import {
+  buildDecisionCapsule,
+  buildDecisionCapsuleEnv,
+  persistDecisionCapsule
+} from "./routing-decision-capsule.mjs";
 var MAX_SKILLS = 2;
 var DEFAULT_INJECTION_BUDGET_BYTES = 8e3;
 var MIN_PROMPT_LENGTH = 10;
@@ -779,11 +784,12 @@ function run() {
   const droppedByCap = [...injectResult.droppedByCap, ...report.droppedByCap];
   const droppedByBudget = [...injectResult.droppedByBudget, ...report.droppedByBudget];
   const matchedSkills = allMatched;
+  let promptAttribution = null;
   if (loaded.length > 0 && sessionId) {
     const exposurePlan = loadCachedPlanResult(sessionId, log);
     const exposureStory = exposurePlan ? selectActiveStory(exposurePlan) : null;
     if (exposureStory) {
-      const attribution = buildAttributionDecision({
+      promptAttribution = buildAttributionDecision({
         sessionId,
         hook: "UserPromptSubmit",
         storyId: exposureStory.id ?? null,
@@ -803,9 +809,9 @@ function run() {
           toolName: "Prompt",
           skill,
           targetBoundary: null,
-          exposureGroupId: attribution.exposureGroupId,
-          attributionRole: skill === attribution.candidateSkill ? "candidate" : "context",
-          candidateSkill: attribution.candidateSkill,
+          exposureGroupId: promptAttribution.exposureGroupId,
+          attributionRole: skill === promptAttribution.candidateSkill ? "candidate" : "context",
+          candidateSkill: promptAttribution.candidateSkill,
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
           resolvedAt: null,
           outcome: "pending"
@@ -817,8 +823,8 @@ function run() {
         storyId: exposureStory.id,
         storyKind: exposureStory.kind ?? null,
         policyBoosted: promptPolicyBoosted,
-        candidateSkill: attribution.candidateSkill,
-        exposureGroupId: attribution.exposureGroupId
+        candidateSkill: promptAttribution.candidateSkill,
+        exposureGroupId: promptAttribution.exposureGroupId
       });
     } else {
       log.debug("routing-policy-exposures-skipped", {
@@ -886,7 +892,7 @@ function run() {
       toolTarget: normalizedPrompt,
       timestamp: traceTimestamp
     });
-    appendRoutingDecisionTrace({
+    const promptTrace = {
       version: 2,
       decisionId,
       sessionId,
@@ -927,12 +933,34 @@ function run() {
         };
       }),
       verification: null
+    };
+    appendRoutingDecisionTrace(promptTrace);
+    const promptCapsule = buildDecisionCapsule({
+      sessionId,
+      hook: "UserPromptSubmit",
+      createdAt: traceTimestamp,
+      toolName: "Prompt",
+      toolTarget: normalizedPrompt,
+      platform,
+      trace: promptTrace,
+      directive: null,
+      // UserPromptSubmit has no verification directive
+      attribution: promptAttribution ? {
+        exposureGroupId: promptAttribution.exposureGroupId,
+        candidateSkill: promptAttribution.candidateSkill,
+        loadedSkills: promptAttribution.loadedSkills
+      } : null,
+      env: outputEnv
     });
+    const promptCapsulePath = persistDecisionCapsule(promptCapsule, log);
+    const capsuleEnv = buildDecisionCapsuleEnv(promptCapsule, promptCapsulePath);
+    outputEnv = { ...outputEnv ?? {}, ...capsuleEnv };
     log.summary("routing.decision_trace_written", {
       decisionId,
       hook: "UserPromptSubmit",
       matchedSkills,
-      injectedSkills: loaded
+      injectedSkills: loaded,
+      capsulePath: promptCapsulePath
     });
   }
   const promptMatchReasons = {};

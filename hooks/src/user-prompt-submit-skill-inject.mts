@@ -60,6 +60,12 @@ import {
   appendRoutingDecisionTrace,
   createDecisionId,
 } from "./routing-decision-trace.mjs";
+import type { RoutingDecisionTrace } from "./routing-decision-trace.mjs";
+import {
+  buildDecisionCapsule,
+  buildDecisionCapsuleEnv,
+  persistDecisionCapsule,
+} from "./routing-decision-capsule.mjs";
 
 const MAX_SKILLS = 2;
 const DEFAULT_INJECTION_BUDGET_BYTES = 8_000;
@@ -1167,11 +1173,12 @@ export function run(): string {
 
   // Record routing-policy exposures for actually injected skills
   // Only record when an active verification story exists to prevent none|none scenario pollution
+  let promptAttribution: ReturnType<typeof buildAttributionDecision> | null = null;
   if (loaded.length > 0 && sessionId) {
     const exposurePlan = loadCachedPlanResult(sessionId, log);
     const exposureStory = exposurePlan ? selectActiveStory(exposurePlan) : null;
     if (exposureStory) {
-      const attribution = buildAttributionDecision({
+      promptAttribution = buildAttributionDecision({
         sessionId,
         hook: "UserPromptSubmit",
         storyId: exposureStory.id ?? null,
@@ -1192,9 +1199,9 @@ export function run(): string {
           toolName: "Prompt",
           skill,
           targetBoundary: null,
-          exposureGroupId: attribution.exposureGroupId,
-          attributionRole: skill === attribution.candidateSkill ? "candidate" : "context",
-          candidateSkill: attribution.candidateSkill,
+          exposureGroupId: promptAttribution!.exposureGroupId,
+          attributionRole: skill === promptAttribution!.candidateSkill ? "candidate" : "context",
+          candidateSkill: promptAttribution!.candidateSkill,
           createdAt: new Date().toISOString(),
           resolvedAt: null,
           outcome: "pending",
@@ -1206,8 +1213,8 @@ export function run(): string {
         storyId: exposureStory.id,
         storyKind: exposureStory.kind ?? null,
         policyBoosted: promptPolicyBoosted,
-        candidateSkill: attribution.candidateSkill,
-        exposureGroupId: attribution.exposureGroupId,
+        candidateSkill: promptAttribution!.candidateSkill,
+        exposureGroupId: promptAttribution!.exposureGroupId,
       });
     } else {
       log.debug("routing-policy-exposures-skipped", {
@@ -1270,7 +1277,7 @@ export function run(): string {
     }
     outputEnv = finalizePromptEnvUpdates(platform, promptEnvBefore);
   }
-  // Stage 5a: Emit routing decision trace
+  // Stage 5a: Emit routing decision trace + decision capsule
   {
     const tracePlan = sessionId ? loadCachedPlanResult(sessionId, log) : null;
     const traceStory = tracePlan ? selectActiveStory(tracePlan) : null;
@@ -1282,7 +1289,7 @@ export function run(): string {
       toolTarget: normalizedPrompt,
       timestamp: traceTimestamp,
     });
-    appendRoutingDecisionTrace({
+    const promptTrace: RoutingDecisionTrace = {
       version: 2,
       decisionId,
       sessionId,
@@ -1330,12 +1337,38 @@ export function run(): string {
         };
       }),
       verification: null,
+    };
+    appendRoutingDecisionTrace(promptTrace);
+
+    // Build and persist decision capsule
+    const promptCapsule = buildDecisionCapsule({
+      sessionId,
+      hook: "UserPromptSubmit",
+      createdAt: traceTimestamp,
+      toolName: "Prompt",
+      toolTarget: normalizedPrompt,
+      platform,
+      trace: promptTrace,
+      directive: null, // UserPromptSubmit has no verification directive
+      attribution: promptAttribution
+        ? {
+            exposureGroupId: promptAttribution.exposureGroupId,
+            candidateSkill: promptAttribution.candidateSkill,
+            loadedSkills: promptAttribution.loadedSkills,
+          }
+        : null,
+      env: outputEnv,
     });
+    const promptCapsulePath = persistDecisionCapsule(promptCapsule, log);
+    const capsuleEnv = buildDecisionCapsuleEnv(promptCapsule, promptCapsulePath);
+    outputEnv = { ...(outputEnv ?? {}), ...capsuleEnv };
+
     log.summary("routing.decision_trace_written", {
       decisionId,
       hook: "UserPromptSubmit",
       matchedSkills,
       injectedSkills: loaded,
+      capsulePath: promptCapsulePath,
     });
   }
 

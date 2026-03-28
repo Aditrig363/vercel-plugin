@@ -13,6 +13,7 @@ import { explain, formatExplainResult } from "./explain.ts";
 import { doctor, formatDoctorResult } from "../commands/doctor.ts";
 import { runRoutingExplain } from "../commands/routing-explain.ts";
 import { runSessionExplain } from "../commands/session-explain.ts";
+import { runDecisionCat } from "../commands/decision-cat.ts";
 import { createEmptyRoutingPolicy, type RoutingPolicyFile } from "../../hooks/src/routing-policy.mts";
 
 function validateProjectRoot(projectRoot: string): void {
@@ -33,6 +34,7 @@ Commands:
   explain <target>    Show which skills match a file path or bash command
   routing-explain     Show the latest routing decision trace
   session-explain     Show manifest, routing, verification, and exposure state together
+  decision-cat <path> Read and display a decision capsule artifact
   doctor              Run self-diagnosis checks on the plugin setup
 
 Options for explain:
@@ -46,6 +48,10 @@ Options for explain:
 Options for routing-explain:
   --json              Output machine-readable JSON
   --session <id>      Session ID (reads traces from session trace dir)
+  --help, -h          Show this help message
+
+Options for decision-cat:
+  --json              Output machine-readable JSON
   --help, -h          Show this help message
 
 Options for session-explain:
@@ -74,6 +80,8 @@ if (command === "explain") {
   runRoutingExplainCmd(args.slice(1));
 } else if (command === "session-explain") {
   runSessionExplainCmd(args.slice(1));
+} else if (command === "decision-cat") {
+  runDecisionCatCmd(args.slice(1));
 } else if (command === "doctor") {
   runDoctor(args.slice(1));
 } else {
@@ -288,6 +296,49 @@ function runSessionExplainCmd(cmdArgs: string[]) {
     process.exit(0);
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
+    process.exit(2);
+  }
+}
+
+function runDecisionCatCmd(cmdArgs: string[]) {
+  let jsonOutput = false;
+  let artifactPath = "";
+
+  for (let i = 0; i < cmdArgs.length; i++) {
+    const arg = cmdArgs[i];
+    if (arg === "--json") {
+      jsonOutput = true;
+    } else if (arg === "--help" || arg === "-h") {
+      printUsage();
+      process.exit(0);
+    } else if (arg!.startsWith("-")) {
+      console.error(`Error: unexpected option "${arg}"`);
+      process.exit(1);
+    } else if (!artifactPath) {
+      artifactPath = resolve(arg!);
+    } else {
+      console.error(`Error: unexpected argument "${arg}"`);
+      process.exit(1);
+    }
+  }
+
+  if (!artifactPath) {
+    console.error("Error: decision-cat requires an <artifact-path> argument");
+    process.exit(1);
+  }
+
+  const { output, ok } = runDecisionCat(artifactPath, jsonOutput);
+
+  if (ok) {
+    console.log(output);
+    process.exit(0);
+  } else {
+    // For JSON mode, output goes to stdout (structured failure); for text, stderr
+    if (jsonOutput) {
+      console.log(output);
+    } else {
+      console.error(output);
+    }
     process.exit(2);
   }
 }
