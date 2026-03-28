@@ -48,7 +48,7 @@ import type { PromptAnalysisReport } from "./prompt-analysis.mjs";
 import { createLogger, logDecision } from "./logger.mjs";
 import type { Logger } from "./logger.mjs";
 import { trackBaseEvents } from "./telemetry.mjs";
-import { loadCachedPlanResult, selectPrimaryStory } from "./verification-plan.mjs";
+import { loadCachedPlanResult, selectActiveStory } from "./verification-plan.mjs";
 import { applyPolicyBoosts } from "./routing-policy.mjs";
 import type { RoutingHookName, RoutingToolName } from "./routing-policy.mjs";
 import {
@@ -1090,7 +1090,7 @@ export function run(): string {
   const promptPolicyBoosted: Array<{ skill: string; boost: number; reason: string | null }> = [];
   if (cwd && report.selectedSkills.length > 0) {
     const plan = sessionId ? loadCachedPlanResult(sessionId, log) : null;
-    const primaryStory = plan ? selectPrimaryStory(plan.stories ?? []) : null;
+    const primaryStory = plan ? selectActiveStory(plan) : null;
 
     if (primaryStory) {
       const promptPolicyScenario = {
@@ -1168,7 +1168,7 @@ export function run(): string {
   // Only record when an active verification story exists to prevent none|none scenario pollution
   if (loaded.length > 0 && sessionId) {
     const exposurePlan = loadCachedPlanResult(sessionId, log);
-    const exposureStory = exposurePlan ? selectPrimaryStory(exposurePlan.stories ?? []) : null;
+    const exposureStory = exposurePlan ? selectActiveStory(exposurePlan) : null;
     if (exposureStory) {
       for (const skill of loaded) {
         appendSkillExposure({
@@ -1258,7 +1258,7 @@ export function run(): string {
   // Stage 5a: Emit routing decision trace
   {
     const tracePlan = sessionId ? loadCachedPlanResult(sessionId, log) : null;
-    const traceStory = tracePlan ? selectPrimaryStory(tracePlan.stories ?? []) : null;
+    const traceStory = tracePlan ? selectActiveStory(tracePlan) : null;
     const traceTimestamp = new Date().toISOString();
     const decisionId = createDecisionId({
       hook: "UserPromptSubmit",

@@ -67,6 +67,7 @@ function makeObs(
     source: "bash",
     boundary,
     route: null,
+    storyId: null,
     summary: `obs-${id}`,
     ...opts,
   };
@@ -615,6 +616,78 @@ describe("directive-env fallback closes the routing policy loop", () => {
       const exposures = loadSessionExposures(testSessionId);
       expect(exposures).toHaveLength(1);
       expect(exposures[0].outcome).toBe("pending");
+    } finally {
+      for (const [key, val] of Object.entries(savedEnv)) {
+        if (val === undefined) delete process.env[key];
+        else process.env[key] = val;
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story-scoped observation isolation (E2E)
+// ---------------------------------------------------------------------------
+
+describe("story-scoped observation isolation", () => {
+  test("observation for /settings under story-settings does not redirect /dashboard active story", async () => {
+    const { storyId } = await import("../hooks/src/verification-ledger.mts");
+
+    // Create /settings story, record an observation under it
+    recordStory(testSessionId, "flow-verification", "/settings", "settings broken", ["verification"]);
+    recordObservation(testSessionId, makeObs("iso-settings-1", "clientRequest", {
+      route: "/settings",
+      storyId: storyId("flow-verification", "/settings"),
+      timestamp: "2026-03-27T22:00:00.000Z",
+      summary: "curl http://localhost:3000/settings",
+    }));
+
+    // Create newer /dashboard story (should become active)
+    recordStory(testSessionId, "flow-verification", "/dashboard", "dashboard broken", ["verification"]);
+
+    // Load the plan state and verify isolation
+    const state = loadPlanState(testSessionId);
+    expect(state).not.toBeNull();
+    expect(state!.activeStoryId).toBe(storyId("flow-verification", "/dashboard"));
+
+    // Top-level projection is the active story (/dashboard) which has no observations
+    expect(state!.satisfiedBoundaries).toHaveLength(0);
+    expect(state!.missingBoundaries).toHaveLength(4);
+
+    // The /settings story state should contain the observation
+    const settingsState = state!.storyStates.find((s) => s.route === "/settings");
+    expect(settingsState).toBeDefined();
+    expect(settingsState!.satisfiedBoundaries).toContain("clientRequest");
+
+    // The /dashboard story state should be clean
+    const dashboardState = state!.storyStates.find((s) => s.route === "/dashboard");
+    expect(dashboardState).toBeDefined();
+    expect(dashboardState!.satisfiedBoundaries).toHaveLength(0);
+  });
+
+  test("run() with VERCEL_PLUGIN_VERIFICATION_STORY_ID persists storyId on observation", () => {
+    const savedEnv = {
+      VERCEL_PLUGIN_VERIFICATION_STORY_ID: process.env.VERCEL_PLUGIN_VERIFICATION_STORY_ID,
+      VERCEL_PLUGIN_LOG_LEVEL: process.env.VERCEL_PLUGIN_LOG_LEVEL,
+    };
+
+    const storyIdValue = "explicit-story-123";
+    process.env.VERCEL_PLUGIN_VERIFICATION_STORY_ID = storyIdValue;
+    process.env.VERCEL_PLUGIN_LOG_LEVEL = "off";
+
+    try {
+      recordStory(testSessionId, "flow-verification", "/settings", "test story binding", []);
+
+      const stdinPayload = makeStdinPayload(
+        "curl http://localhost:3000/settings",
+        testSessionId,
+      );
+      run(stdinPayload);
+
+      const observations = loadObservations(testSessionId);
+      const obs = observations.find((o) => o.route === "/settings");
+      expect(obs).toBeDefined();
+      expect(obs!.storyId).toBe(storyIdValue);
     } finally {
       for (const [key, val] of Object.entries(savedEnv)) {
         if (val === undefined) delete process.env[key];

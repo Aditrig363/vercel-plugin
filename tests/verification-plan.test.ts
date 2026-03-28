@@ -40,6 +40,7 @@ function makeObs(
     source: "bash",
     boundary,
     route: null,
+    storyId: null,
     summary: `obs-${id}`,
     ...opts,
   };
@@ -278,7 +279,24 @@ describe("formatPlanHuman", () => {
   test("shows full plan details", () => {
     const result: VerificationPlanResult = {
       hasStories: true,
+      activeStoryId: "abc",
       stories: [{ id: "abc", kind: "flow-verification", route: "/settings", promptExcerpt: "save fails", createdAt: T0, updatedAt: T0 }],
+      storyStates: [{
+        storyId: "abc",
+        storyKind: "flow-verification",
+        route: "/settings",
+        observationIds: [],
+        satisfiedBoundaries: ["clientRequest", "serverHandler"],
+        missingBoundaries: ["environment", "uiRender"],
+        recentRoutes: ["/settings"],
+        primaryNextAction: {
+          action: "open /settings in agent-browser",
+          targetBoundary: "uiRender",
+          reason: "No UI render observation yet",
+        },
+        blockedReasons: [],
+        lastObservedAt: null,
+      }],
       observationCount: 2,
       satisfiedBoundaries: ["clientRequest", "serverHandler"],
       missingBoundaries: ["environment", "uiRender"],
@@ -291,13 +309,13 @@ describe("formatPlanHuman", () => {
       blockedReasons: [],
     };
     const output = formatPlanHuman(result);
-    expect(output).toContain("Stories:");
+    expect(output).toContain("Active story:");
     expect(output).toContain("flow-verification");
     expect(output).toContain("/settings");
-    expect(output).toContain("Observations: 2");
-    expect(output).toContain("clientRequest, serverHandler");
+    expect(output).toContain("2/4 boundaries satisfied");
     expect(output).toContain("Next action:");
     expect(output).toContain("open /settings in agent-browser");
+    expect(output).toContain("Reason:");
   });
 
   test("shows blocked reasons", () => {
@@ -320,7 +338,9 @@ describe("formatPlanHuman", () => {
   test("shows all satisfied message", () => {
     const result: VerificationPlanResult = {
       hasStories: true,
+      activeStoryId: "abc",
       stories: [{ id: "abc", kind: "flow-verification", route: null, promptExcerpt: "test", createdAt: T0, updatedAt: T0 }],
+      storyStates: [],
       observationCount: 4,
       satisfiedBoundaries: ["clientRequest", "environment", "serverHandler", "uiRender"],
       missingBoundaries: [],
@@ -547,5 +567,137 @@ describe("selectPrimaryStory", () => {
     const result = planToResult(plan);
     expect(result.stories[0].createdAt).toBe(T0);
     expect(result.stories[0].updatedAt).toBe(T1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story-scoped contamination regression tests
+// ---------------------------------------------------------------------------
+
+describe("story-scoped contamination prevention", () => {
+  test("primaryNextAction is scoped to the active story, not session-global evidence", () => {
+    // Record a /settings story and satisfy clientRequest for it
+    recordStory(testSessionId, "flow-verification", "/settings", "settings broken", ["verification"]);
+    recordObservation(testSessionId, makeObs("obs-settings-client", "clientRequest", {
+      route: "/settings",
+      storyId: storyId("flow-verification", "/settings"),
+      timestamp: "2026-03-27T22:00:00.000Z",
+      summary: "curl http://localhost:3000/settings",
+    }));
+
+    // Record a newer /dashboard story (no observations yet)
+    recordStory(testSessionId, "flow-verification", "/dashboard", "dashboard broken", ["verification"]);
+
+    const result = computePlan(testSessionId);
+
+    // Active story should be /dashboard (more missing boundaries → selectActiveStoryId)
+    expect(result.activeStoryId).toBe(storyId("flow-verification", "/dashboard"));
+
+    // The /settings clientRequest observation must NOT bleed into /dashboard's projection
+    expect(result.primaryNextAction).not.toBeNull();
+    expect(result.primaryNextAction!.targetBoundary).toBe("clientRequest");
+    expect(result.primaryNextAction!.action).toContain("/dashboard");
+
+    // Verify per-story state isolation
+    const settingsState = result.storyStates.find((s) => s.route === "/settings");
+    const dashboardState = result.storyStates.find((s) => s.route === "/dashboard");
+
+    expect(settingsState).toBeDefined();
+    expect(settingsState!.satisfiedBoundaries).toContain("clientRequest");
+    expect(settingsState!.observationIds).toContain("obs-settings-client");
+
+    expect(dashboardState).toBeDefined();
+    expect(dashboardState!.satisfiedBoundaries).toHaveLength(0);
+    expect(dashboardState!.observationIds).toHaveLength(0);
+  });
+
+  test("route-scoped policy recall uses the active story boundary, not a stale story", () => {
+    // Record a /settings story and satisfy serverHandler for it
+    recordStory(testSessionId, "flow-verification", "/settings", "settings broken", ["verification"]);
+    recordObservation(testSessionId, makeObs("obs-settings-server", "serverHandler", {
+      route: "/settings",
+      storyId: storyId("flow-verification", "/settings"),
+      timestamp: "2026-03-27T22:00:00.000Z",
+      summary: "vercel logs",
+    }));
+
+    // Record a newer /dashboard story (no observations yet)
+    recordStory(testSessionId, "flow-verification", "/dashboard", "dashboard broken", ["verification"]);
+
+    const result = computePlan(testSessionId);
+
+    // Active story is /dashboard — should have all 4 boundaries missing
+    expect(result.activeStoryId).toBe(storyId("flow-verification", "/dashboard"));
+    expect(result.missingBoundaries).toHaveLength(4);
+    expect(result.primaryNextAction!.targetBoundary).toBe("clientRequest");
+
+    // /settings should show serverHandler satisfied, not bleeding
+    const settingsState = result.storyStates.find((s) => s.route === "/settings");
+    expect(settingsState!.satisfiedBoundaries).toContain("serverHandler");
+    expect(settingsState!.missingBoundaries).not.toContain("serverHandler");
+  });
+
+  test("observation with explicit storyId does not attach to route-matched story", () => {
+    // Two stories with different routes
+    recordStory(testSessionId, "flow-verification", "/settings", "settings broken", []);
+    recordStory(testSessionId, "flow-verification", "/dashboard", "dashboard broken", []);
+
+    // Observation explicitly tagged for /settings story even though route says /dashboard
+    recordObservation(testSessionId, makeObs("obs-explicit", "clientRequest", {
+      route: "/dashboard",
+      storyId: storyId("flow-verification", "/settings"),
+      summary: "curl http://localhost:3000/dashboard",
+    }));
+
+    const result = computePlan(testSessionId);
+
+    // The observation should be attributed to /settings (explicit storyId wins)
+    const settingsState = result.storyStates.find((s) => s.route === "/settings");
+    const dashboardState = result.storyStates.find((s) => s.route === "/dashboard");
+
+    expect(settingsState!.observationIds).toContain("obs-explicit");
+    expect(settingsState!.satisfiedBoundaries).toContain("clientRequest");
+
+    expect(dashboardState!.observationIds).toHaveLength(0);
+    expect(dashboardState!.satisfiedBoundaries).toHaveLength(0);
+  });
+
+  test("buildLedgerObservation persists storyId from env", async () => {
+    const { buildBoundaryEvent, buildLedgerObservation } = await import("../hooks/src/posttooluse-verification-observe.mts");
+
+    const event = buildBoundaryEvent({
+      command: "curl http://localhost:3000/settings",
+      boundary: "clientRequest",
+      matchedPattern: "http-client",
+      inferredRoute: "/settings",
+      verificationId: "v-story-env-1",
+      timestamp: "2026-03-27T23:00:00.000Z",
+      env: {} as NodeJS.ProcessEnv,
+    });
+
+    const observation = buildLedgerObservation(event, {
+      VERCEL_PLUGIN_VERIFICATION_STORY_ID: "story-settings",
+    } as NodeJS.ProcessEnv);
+
+    expect(observation.storyId).toBe("story-settings");
+    expect(observation.route).toBe("/settings");
+    expect(observation.boundary).toBe("clientRequest");
+  });
+
+  test("buildLedgerObservation storyId is null when env is absent", async () => {
+    const { buildBoundaryEvent, buildLedgerObservation } = await import("../hooks/src/posttooluse-verification-observe.mts");
+
+    const event = buildBoundaryEvent({
+      command: "curl http://localhost:3000/settings",
+      boundary: "clientRequest",
+      matchedPattern: "http-client",
+      inferredRoute: "/settings",
+      verificationId: "v-story-env-2",
+      timestamp: "2026-03-27T23:00:00.000Z",
+      env: {} as NodeJS.ProcessEnv,
+    });
+
+    const observation = buildLedgerObservation(event, {} as NodeJS.ProcessEnv);
+    expect(observation.storyId).toBeNull();
   });
 });

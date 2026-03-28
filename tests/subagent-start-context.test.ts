@@ -370,6 +370,7 @@ function makeObs(
     source: "bash",
     boundary,
     route: null,
+    storyId: null,
     summary: `obs-${id}`,
     ...opts,
   };

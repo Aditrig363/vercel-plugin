@@ -27,7 +27,7 @@ import {
   type VerificationObservation,
 } from "./verification-ledger.mjs";
 import { resolveBoundaryOutcome } from "./routing-policy-ledger.mjs";
-import { selectPrimaryStory } from "./verification-plan.mjs";
+import { selectActiveStory } from "./verification-plan.mjs";
 import {
   appendRoutingDecisionTrace,
   createDecisionId,
@@ -184,13 +184,18 @@ export function buildBoundaryEvent(input: {
  */
 export function buildLedgerObservation(
   event: VerificationBoundaryEvent,
+  env: NodeJS.ProcessEnv = process.env,
 ): VerificationObservation {
+  const storyIdValue = env.VERCEL_PLUGIN_VERIFICATION_STORY_ID;
   return {
     id: event.verificationId,
     timestamp: event.timestamp,
     source: "bash",
     boundary: event.boundary === "unknown" ? null : event.boundary,
     route: event.inferredRoute,
+    storyId: typeof storyIdValue === "string" && storyIdValue.trim() !== ""
+      ? storyIdValue.trim()
+      : null,
     summary: event.command,
     meta: {
       matchedPattern: event.matchedPattern,
@@ -380,7 +385,7 @@ export function run(rawInput?: string): string {
     // Resolve routing policy exposures for this boundary, scoped to story + route.
     // Fall back to directive env for story and route when plan inference is unavailable.
     const primaryStory = plan.stories.length > 0
-      ? selectPrimaryStory(plan.stories)
+      ? selectActiveStory(plan)
       : null;
 
     const resolvedStoryId =

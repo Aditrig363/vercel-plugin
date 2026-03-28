@@ -20,7 +20,7 @@ import {
 import {
   computePlan,
   loadCachedPlanResult,
-  selectPrimaryStory,
+  selectActiveStory,
   type VerificationPlanResult,
 } from "../../hooks/src/verification-plan.mts";
 import {
@@ -150,7 +150,7 @@ function buildRoutingDoctor(
   const latestScenario = stringOrNull(trace.policyScenario);
   const parsedScenario = parsePolicyScenario(latestScenario);
 
-  const primaryStory = selectPrimaryStory(plan.stories);
+  const primaryStory = selectActiveStory(plan);
   const primaryStoryRecord = toRecord(trace.primaryStory);
   const routeScope =
     stringOrNull(trace.observedRoute) ??
@@ -281,7 +281,9 @@ export function runSessionExplain(
   // --- Verification plan ---
   const emptyPlan: VerificationPlanResult = {
     hasStories: false,
+    activeStoryId: null,
     stories: [],
+    storyStates: [],
     observationCount: 0,
     satisfiedBoundaries: [],
     missingBoundaries: [],

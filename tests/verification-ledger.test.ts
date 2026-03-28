@@ -8,8 +8,14 @@ import {
   type VerificationStory,
   type VerificationStoryKind,
   type VerificationPlan,
+  type SerializedPlanStateV1,
   appendObservation,
   derivePlan,
+  deriveStoryStates,
+  selectActiveStoryId,
+  resolveObservationStoryId,
+  collectRecentRoutes,
+  normalizeSerializedPlanState,
   serializePlanState,
   upsertStory,
   storyId,
@@ -46,6 +52,7 @@ function makeObs(
     source: "bash",
     boundary,
     route: null,
+    storyId: null,
     summary: `obs-${id}`,
     ...opts,
   };
@@ -362,7 +369,7 @@ describe("serializePlanState", () => {
     const plan = derivePlan([], []);
     const json = serializePlanState(plan);
     const parsed = JSON.parse(json);
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
     expect(Array.isArray(parsed.observationIds)).toBe(true);
     expect(Array.isArray(parsed.satisfiedBoundaries)).toBe(true);
   });
@@ -491,7 +498,7 @@ describe("plan state persistence", () => {
 
     const loaded = loadPlanState(testSessionId);
     expect(loaded).not.toBeNull();
-    expect(loaded!.version).toBe(1);
+    expect(loaded!.version).toBe(2);
     expect(loaded!.observationIds).toContain("s-1");
     expect(loaded!.satisfiedBoundaries).toContain("clientRequest");
   });
@@ -612,5 +619,362 @@ describe("bounded reads", () => {
     try {
       rmSync(join(tmpdir(), `vercel-plugin-${otherSession}-ledger`), { recursive: true, force: true });
     } catch { /* ignore */ }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story-scoped state derivation
+// ---------------------------------------------------------------------------
+
+describe("resolveObservationStoryId", () => {
+  test("returns explicit storyId when set", () => {
+    const stories = [makeStory("flow-verification", "/settings")];
+    const obs = makeObs("a", "clientRequest", {
+      storyId: "explicit-id",
+      route: "/settings",
+    });
+    expect(resolveObservationStoryId(obs, stories)).toBe("explicit-id");
+  });
+
+  test("resolves by exact route match when storyId is null", () => {
+    const stories = [makeStory("flow-verification", "/settings")];
+    const obs = makeObs("a", "clientRequest", { route: "/settings" });
+    expect(resolveObservationStoryId(obs, stories)).toBe(stories[0].id);
+  });
+
+  test("returns null when multiple stories share the same route", () => {
+    const stories = [
+      makeStory("flow-verification", "/settings"),
+      { ...makeStory("stuck-investigation", "/other"), route: "/settings", id: "other-id" },
+    ];
+    const obs = makeObs("a", "clientRequest", { route: "/settings" });
+    // Two stories with /settings route — ambiguous
+    expect(resolveObservationStoryId(obs, stories)).toBeNull();
+  });
+
+  test("returns null when no route and no storyId with multiple stories", () => {
+    const stories = [
+      makeStory("flow-verification", "/settings"),
+      makeStory("flow-verification", "/dashboard"),
+    ];
+    const obs = makeObs("a", "clientRequest");
+    expect(resolveObservationStoryId(obs, stories)).toBeNull();
+  });
+
+  test("falls back to single story when no route and no storyId", () => {
+    const stories = [makeStory("flow-verification", "/settings")];
+    const obs = makeObs("a", "clientRequest");
+    expect(resolveObservationStoryId(obs, stories)).toBe(stories[0].id);
+  });
+});
+
+describe("collectRecentRoutes", () => {
+  test("returns routes in most-recent-first order", () => {
+    const obs = [
+      makeObs("a", "clientRequest", { route: "/settings", timestamp: T0 }),
+      makeObs("b", "serverHandler", { route: "/dashboard", timestamp: T2 }),
+      makeObs("c", "environment", { route: "/settings", timestamp: T3 }),
+    ];
+    const routes = collectRecentRoutes(obs);
+    expect(routes).toEqual(["/settings", "/dashboard"]);
+  });
+
+  test("skips observations without routes", () => {
+    const obs = [
+      makeObs("a", "environment", { timestamp: T0 }),
+      makeObs("b", "clientRequest", { route: "/api", timestamp: T1 }),
+    ];
+    expect(collectRecentRoutes(obs)).toEqual(["/api"]);
+  });
+});
+
+describe("deriveStoryStates", () => {
+  test("initializes empty state for stories with no observations", () => {
+    const stories = [makeStory("flow-verification", "/settings")];
+    const states = deriveStoryStates([], stories);
+    const state = states[stories[0].id];
+    expect(state).toBeDefined();
+    expect(state!.satisfiedBoundaries).toEqual([]);
+    expect(state!.missingBoundaries).toHaveLength(4);
+    expect(state!.lastObservedAt).toBeNull();
+  });
+
+  test("groups observations into correct stories by route", () => {
+    const settingsStory = makeStory("flow-verification", "/settings");
+    const dashStory = makeStory("flow-verification", "/dashboard");
+    const stories = [settingsStory, dashStory];
+
+    const obs = [
+      makeObs("a", "clientRequest", { route: "/settings", timestamp: T0 }),
+      makeObs("b", "serverHandler", { route: "/dashboard", timestamp: T1 }),
+    ];
+
+    const states = deriveStoryStates(obs, stories);
+    expect(states[settingsStory.id]!.satisfiedBoundaries).toEqual(["clientRequest"]);
+    expect(states[dashStory.id]!.satisfiedBoundaries).toEqual(["serverHandler"]);
+  });
+
+  test("uses explicit storyId over route inference", () => {
+    const settingsStory = makeStory("flow-verification", "/settings");
+    const dashStory = makeStory("flow-verification", "/dashboard");
+    const stories = [settingsStory, dashStory];
+
+    const obs = [
+      makeObs("a", "clientRequest", {
+        route: "/settings",
+        storyId: dashStory.id, // explicitly assigned to dashboard story
+        timestamp: T0,
+      }),
+    ];
+
+    const states = deriveStoryStates(obs, stories);
+    expect(states[settingsStory.id]!.satisfiedBoundaries).toEqual([]);
+    expect(states[dashStory.id]!.satisfiedBoundaries).toEqual(["clientRequest"]);
+  });
+
+  test("computes per-story next action", () => {
+    const settingsStory = makeStory("flow-verification", "/settings");
+    const dashStory = makeStory("flow-verification", "/dashboard");
+    const stories = [settingsStory, dashStory];
+
+    const obs = [
+      makeObs("a", "clientRequest", { route: "/settings", timestamp: T0 }),
+    ];
+
+    const states = deriveStoryStates(obs, stories);
+    // Settings: clientRequest satisfied → next should be serverHandler
+    expect(states[settingsStory.id]!.primaryNextAction?.targetBoundary).toBe("serverHandler");
+    // Dashboard: nothing satisfied → next should be clientRequest
+    expect(states[dashStory.id]!.primaryNextAction?.targetBoundary).toBe("clientRequest");
+  });
+});
+
+describe("selectActiveStoryId", () => {
+  test("selects story with most missing boundaries", () => {
+    const settingsStory = makeStory("flow-verification", "/settings");
+    const dashStory = makeStory("flow-verification", "/dashboard");
+    const stories = [settingsStory, dashStory];
+
+    const obs = [
+      makeObs("a", "clientRequest", { route: "/settings", timestamp: T0 }),
+      makeObs("b", "serverHandler", { route: "/settings", timestamp: T1 }),
+    ];
+
+    const states = deriveStoryStates(obs, stories);
+    // Dashboard has 4 missing, settings has 2 → dashboard selected
+    expect(selectActiveStoryId(stories, states)).toBe(dashStory.id);
+  });
+
+  test("returns null for empty stories", () => {
+    expect(selectActiveStoryId([], {})).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story-scoped derivePlan (active-story projection)
+// ---------------------------------------------------------------------------
+
+describe("derivePlan story scoping", () => {
+  test("top-level fields reflect active story, not session-global evidence", () => {
+    const settingsStory = makeStory("flow-verification", "/settings");
+    const dashStory = makeStory("flow-verification", "/dashboard");
+    const stories = [settingsStory, dashStory];
+
+    // Only settings has observations
+    const obs = [
+      makeObs("a", "clientRequest", { route: "/settings", timestamp: T0 }),
+      makeObs("b", "serverHandler", { route: "/settings", timestamp: T1 }),
+    ];
+
+    const plan = derivePlan(obs, stories);
+
+    // Dashboard is active (more missing boundaries)
+    expect(plan.activeStoryId).toBe(dashStory.id);
+    // Top-level shows dashboard's state — no satisfied boundaries
+    expect(plan.satisfiedBoundaries.size).toBe(0);
+    expect(plan.missingBoundaries).toHaveLength(4);
+    expect(plan.primaryNextAction?.targetBoundary).toBe("clientRequest");
+    expect(plan.primaryNextAction?.action).toContain("/dashboard");
+  });
+
+  test("storyStates are available for all stories", () => {
+    const settingsStory = makeStory("flow-verification", "/settings");
+    const dashStory = makeStory("flow-verification", "/dashboard");
+    const stories = [settingsStory, dashStory];
+
+    const obs = [
+      makeObs("a", "clientRequest", { route: "/settings", timestamp: T0 }),
+    ];
+
+    const plan = derivePlan(obs, stories);
+    expect(Object.keys(plan.storyStates)).toHaveLength(2);
+    expect(plan.storyStates[settingsStory.id]!.satisfiedBoundaries).toContain("clientRequest");
+    expect(plan.storyStates[dashStory.id]!.satisfiedBoundaries).toEqual([]);
+  });
+
+  test("primaryNextAction is scoped to the active story, not session-global evidence", () => {
+    // This is the contamination bug test from the acceptance criteria
+    recordStory(testSessionId, "flow-verification", "/settings", "settings broken", ["verification"]);
+    recordObservation(testSessionId, makeObs("obs-settings-client", "clientRequest", {
+      route: "/settings",
+      storyId: storyId("flow-verification", "/settings"),
+      timestamp: T0,
+    }));
+
+    recordStory(testSessionId, "flow-verification", "/dashboard", "dashboard broken", ["verification"]);
+
+    const plan = derivePlan(
+      loadObservations(testSessionId),
+      loadStories(testSessionId),
+    );
+
+    // Dashboard should be active (more missing boundaries)
+    expect(plan.activeStoryId).toBe(storyId("flow-verification", "/dashboard"));
+    // Next action should target dashboard, not be influenced by settings evidence
+    expect(plan.primaryNextAction?.targetBoundary).toBe("clientRequest");
+    expect(plan.primaryNextAction?.action).toContain("/dashboard");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V1 → V2 state normalization
+// ---------------------------------------------------------------------------
+
+describe("normalizeSerializedPlanState", () => {
+  test("passes through V2 state unchanged", () => {
+    const v2 = JSON.parse(serializePlanState(derivePlan([], [])));
+    const normalized = normalizeSerializedPlanState(v2);
+    expect(normalized.version).toBe(2);
+    expect(normalized).toEqual(v2);
+  });
+
+  test("upgrades V1 state to V2 without data loss", () => {
+    const v1: SerializedPlanStateV1 = {
+      version: 1,
+      stories: [makeStory("flow-verification", "/settings")],
+      observationIds: ["obs-1", "obs-2"],
+      satisfiedBoundaries: ["clientRequest"],
+      missingBoundaries: ["serverHandler", "uiRender", "environment"],
+      recentRoutes: ["/settings"],
+      primaryNextAction: {
+        action: "tail server logs /settings",
+        targetBoundary: "serverHandler",
+        reason: "No server-side observation yet — check logs for errors",
+      },
+      blockedReasons: [],
+    };
+
+    const normalized = normalizeSerializedPlanState(v1);
+    expect(normalized.version).toBe(2);
+    expect(normalized.activeStoryId).toBe(v1.stories[0].id);
+    expect(normalized.storyStates).toHaveLength(1);
+
+    // Top-level fields preserved
+    expect(normalized.observationIds).toEqual(v1.observationIds);
+    expect(normalized.satisfiedBoundaries).toEqual(v1.satisfiedBoundaries);
+    expect(normalized.missingBoundaries).toEqual(v1.missingBoundaries);
+    expect(normalized.primaryNextAction).toEqual(v1.primaryNextAction);
+
+    // Active story gets the old top-level data
+    const activeState = normalized.storyStates[0];
+    expect(activeState.storyId).toBe(v1.stories[0].id);
+    expect(activeState.observationIds).toEqual(v1.observationIds);
+    expect(activeState.satisfiedBoundaries).toEqual(v1.satisfiedBoundaries);
+  });
+
+  test("V1 with multiple stories: non-active get empty state", () => {
+    const story1 = makeStory("flow-verification", "/settings");
+    const story2 = { ...makeStory("flow-verification", "/dashboard"), updatedAt: T1 };
+
+    const v1: SerializedPlanStateV1 = {
+      version: 1,
+      stories: [story1, story2],
+      observationIds: ["obs-1"],
+      satisfiedBoundaries: ["clientRequest"],
+      missingBoundaries: ["serverHandler", "uiRender", "environment"],
+      recentRoutes: ["/settings"],
+      primaryNextAction: null,
+      blockedReasons: [],
+    };
+
+    const normalized = normalizeSerializedPlanState(v1);
+    // story2 is more recent → should be active
+    expect(normalized.activeStoryId).toBe(story2.id);
+    expect(normalized.storyStates).toHaveLength(2);
+
+    const activeState = normalized.storyStates.find((s) => s.storyId === story2.id);
+    const inactiveState = normalized.storyStates.find((s) => s.storyId === story1.id);
+    expect(activeState!.observationIds).toEqual(["obs-1"]);
+    expect(inactiveState!.observationIds).toEqual([]);
+  });
+
+  test("V1 with no stories normalizes cleanly", () => {
+    const v1: SerializedPlanStateV1 = {
+      version: 1,
+      stories: [],
+      observationIds: [],
+      satisfiedBoundaries: [],
+      missingBoundaries: [],
+      recentRoutes: [],
+      primaryNextAction: null,
+      blockedReasons: [],
+    };
+
+    const normalized = normalizeSerializedPlanState(v1);
+    expect(normalized.version).toBe(2);
+    expect(normalized.activeStoryId).toBeNull();
+    expect(normalized.storyStates).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Serialization round-trip (V2)
+// ---------------------------------------------------------------------------
+
+describe("serializePlanState V2", () => {
+  test("round-trip: derive → serialize → parse preserves story states", () => {
+    const stories = [
+      makeStory("flow-verification", "/settings"),
+      makeStory("flow-verification", "/dashboard"),
+    ];
+    const obs = [
+      makeObs("a", "clientRequest", { route: "/settings", timestamp: T0 }),
+    ];
+
+    const plan = derivePlan(obs, stories);
+    const json = serializePlanState(plan);
+    const parsed = JSON.parse(json);
+
+    expect(parsed.version).toBe(2);
+    expect(parsed.activeStoryId).toBe(plan.activeStoryId);
+    expect(parsed.storyStates).toHaveLength(2);
+    expect(parsed.storyStates.find((s: any) => s.storyId === stories[0].id)
+      .satisfiedBoundaries).toContain("clientRequest");
+  });
+
+  test("top-level fields equal active story projection after round-trip", () => {
+    const stories = [
+      makeStory("flow-verification", "/settings"),
+      makeStory("flow-verification", "/dashboard"),
+    ];
+    const obs = [
+      makeObs("a", "clientRequest", { route: "/settings", timestamp: T0 }),
+    ];
+
+    const plan = derivePlan(obs, stories);
+    const json = serializePlanState(plan);
+    const parsed = JSON.parse(json);
+
+    const activeState = parsed.storyStates.find(
+      (s: any) => s.storyId === parsed.activeStoryId,
+    );
+
+    expect(parsed.satisfiedBoundaries).toEqual(
+      [...activeState.satisfiedBoundaries].sort(),
+    );
+    expect(parsed.missingBoundaries).toEqual(
+      [...activeState.missingBoundaries].sort(),
+    );
+    expect(parsed.primaryNextAction).toEqual(activeState.primaryNextAction);
   });
 });

@@ -50,6 +50,8 @@ export interface VerificationObservation {
   boundary: VerificationBoundary | null;
   /** Inferred route from recent edits or command URL. */
   route: string | null;
+  /** Story this observation belongs to (null = unattached). */
+  storyId: string | null;
   /** Redacted/truncated command or prompt excerpt. */
   summary: string;
   /** Arbitrary structured metadata. */
@@ -82,6 +84,19 @@ export interface VerificationNextAction {
   reason: string;
 }
 
+export interface VerificationStoryState {
+  storyId: string;
+  storyKind: VerificationStoryKind;
+  route: string | null;
+  observationIds: string[];
+  satisfiedBoundaries: VerificationBoundary[];
+  missingBoundaries: VerificationBoundary[];
+  recentRoutes: string[];
+  primaryNextAction: VerificationNextAction | null;
+  blockedReasons: string[];
+  lastObservedAt: string | null;
+}
+
 export interface VerificationPlan {
   /** Active stories (keyed by story id in the map, array in plan). */
   stories: VerificationStory[];
@@ -89,15 +104,19 @@ export interface VerificationPlan {
   observations: VerificationObservation[];
   /** Set of observation ids (for fast dedup). */
   observationIds: Set<string>;
-  /** Boundaries that have been satisfied (have at least one observation). */
+  /** Per-story derived state. */
+  storyStates: Record<string, VerificationStoryState>;
+  /** Active story id (most recently updated). */
+  activeStoryId: string | null;
+  /** Boundaries that have been satisfied (active-story projection). */
   satisfiedBoundaries: Set<VerificationBoundary>;
-  /** Boundaries still missing evidence. */
+  /** Boundaries still missing evidence (active-story projection). */
   missingBoundaries: VerificationBoundary[];
-  /** Most recent routes observed. */
+  /** Most recent routes observed (active-story projection). */
   recentRoutes: string[];
-  /** Primary next action (null if all boundaries satisfied or no story). */
+  /** Primary next action (active-story projection). */
   primaryNextAction: VerificationNextAction | null;
-  /** Reasons why certain actions were blocked. */
+  /** Reasons why certain actions were blocked (active-story projection). */
   blockedReasons: string[];
 }
 
@@ -119,8 +138,162 @@ const SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve which story an observation belongs to.
+ * Prefers explicit storyId, then exact route match, then null.
+ */
+export function resolveObservationStoryId(
+  observation: VerificationObservation,
+  stories: VerificationStory[],
+): string | null {
+  if (observation.storyId) return observation.storyId;
+  if (observation.route) {
+    const exactMatches = stories.filter((story) => story.route === observation.route);
+    if (exactMatches.length === 1) {
+      return exactMatches[0]!.id;
+    }
+  }
+  // Fallback: if exactly one story exists, attribute to it
+  if (stories.length === 1) {
+    return stories[0]!.id;
+  }
+  return null;
+}
+
+/**
+ * Collect recent routes from observations, most recent first.
+ */
+export function collectRecentRoutes(
+  observations: VerificationObservation[],
+): string[] {
+  const sorted = [...observations].sort(
+    (a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp),
+  );
+  const seen = new Set<string>();
+  const routes: string[] = [];
+  for (const observation of sorted) {
+    if (!observation.route) continue;
+    if (seen.has(observation.route)) continue;
+    seen.add(observation.route);
+    routes.push(observation.route);
+  }
+  return routes;
+}
+
+/**
+ * Derive per-story boundary state from observations.
+ */
+export function deriveStoryStates(
+  observations: VerificationObservation[],
+  stories: VerificationStory[],
+  options?: {
+    agentBrowserAvailable?: boolean;
+    devServerLoopGuardHit?: boolean;
+    lastAttemptedAction?: string | null;
+    staleThresholdMs?: number;
+  },
+): Record<string, VerificationStoryState> {
+  const opts = {
+    agentBrowserAvailable: true,
+    devServerLoopGuardHit: false,
+    lastAttemptedAction: null as string | null,
+    staleThresholdMs: 5 * 60 * 1000,
+    ...options,
+  };
+
+  const states: Record<string, VerificationStoryState> = {};
+
+  // Initialize empty state for every story
+  for (const story of stories) {
+    states[story.id] = {
+      storyId: story.id,
+      storyKind: story.kind,
+      route: story.route,
+      observationIds: [],
+      satisfiedBoundaries: [],
+      missingBoundaries: [...ALL_BOUNDARIES],
+      recentRoutes: story.route ? [story.route] : [],
+      primaryNextAction: null,
+      blockedReasons: [],
+      lastObservedAt: null,
+    };
+  }
+
+  // Group observations by resolved story
+  for (const obs of observations) {
+    const resolvedStoryId = resolveObservationStoryId(obs, stories);
+    if (!resolvedStoryId || !states[resolvedStoryId]) continue;
+
+    const state = states[resolvedStoryId]!;
+    state.observationIds.push(obs.id);
+    if (obs.boundary && !state.satisfiedBoundaries.includes(obs.boundary)) {
+      state.satisfiedBoundaries.push(obs.boundary);
+    }
+    if (obs.route && !state.recentRoutes.includes(obs.route)) {
+      state.recentRoutes.push(obs.route);
+    }
+    if (!state.lastObservedAt || Date.parse(obs.timestamp) > Date.parse(state.lastObservedAt)) {
+      state.lastObservedAt = obs.timestamp;
+    }
+  }
+
+  // Compute missing boundaries and next action per story
+  for (const story of stories) {
+    const state = states[story.id]!;
+    const satisfiedSet = new Set(state.satisfiedBoundaries);
+    state.missingBoundaries = ALL_BOUNDARIES.filter((b) => !satisfiedSet.has(b));
+
+    const { primaryNextAction, blockedReasons } = computeNextAction(
+      state.missingBoundaries,
+      [story],
+      state.recentRoutes,
+      opts,
+    );
+    state.primaryNextAction = primaryNextAction;
+    state.blockedReasons = blockedReasons;
+  }
+
+  return states;
+}
+
+/**
+ * Select the active story id — prefers most recently updated, then created.
+ */
+export function selectActiveStoryId(
+  stories: VerificationStory[],
+  storyStates: Record<string, VerificationStoryState>,
+): string | null {
+  if (stories.length === 0) return null;
+
+  // Sort: prefer stories with missing boundaries (incomplete first),
+  // then most recently updated
+  const sorted = [...stories].sort((a, b) => {
+    const stateA = storyStates[a.id];
+    const stateB = storyStates[b.id];
+    const missingA = stateA ? stateA.missingBoundaries.length : 0;
+    const missingB = stateB ? stateB.missingBoundaries.length : 0;
+
+    // Incomplete stories first (more missing = higher priority)
+    if (missingA !== missingB) return missingB - missingA;
+
+    // Then most recently updated
+    const updatedDiff = Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+    if (Number.isFinite(updatedDiff) && updatedDiff !== 0) return updatedDiff;
+
+    const createdDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    if (Number.isFinite(createdDiff) && createdDiff !== 0) return createdDiff;
+
+    return a.id.localeCompare(b.id);
+  });
+
+  return sorted[0]!.id;
+}
+
+/**
  * Derive a VerificationPlan from ordered observations and stories.
  * This is a pure function — same inputs always produce identical output.
+ *
+ * Top-level fields (satisfiedBoundaries, missingBoundaries, recentRoutes,
+ * primaryNextAction, blockedReasons) are the active-story projection.
  */
 export function derivePlan(
   observations: VerificationObservation[],
@@ -132,14 +305,6 @@ export function derivePlan(
     staleThresholdMs?: number;
   },
 ): VerificationPlan {
-  const opts = {
-    agentBrowserAvailable: true,
-    devServerLoopGuardHit: false,
-    lastAttemptedAction: null as string | null,
-    staleThresholdMs: 5 * 60 * 1000, // 5 minutes
-    ...options,
-  };
-
   // Build dedup set
   const observationIds = new Set<string>();
   const deduped: VerificationObservation[] = [];
@@ -150,39 +315,29 @@ export function derivePlan(
     }
   }
 
-  // Satisfied boundaries
-  const satisfiedBoundaries = new Set<VerificationBoundary>();
-  const recentRoutesSet = new Set<string>();
+  // Derive per-story state
+  const storyStates = deriveStoryStates(deduped, stories, options);
+  const activeStoryId = selectActiveStoryId(stories, storyStates);
 
-  for (const obs of deduped) {
-    if (obs.boundary) {
-      satisfiedBoundaries.add(obs.boundary);
-    }
-    if (obs.route) {
-      recentRoutesSet.add(obs.route);
-    }
-  }
+  // Project active story state to top-level fields
+  const activeState = activeStoryId ? storyStates[activeStoryId] : null;
 
-  const recentRoutes = Array.from(recentRoutesSet);
-
-  // Missing boundaries — only relevant if there's at least one story
-  const missingBoundaries: VerificationBoundary[] =
-    stories.length > 0
-      ? ALL_BOUNDARIES.filter((b) => !satisfiedBoundaries.has(b))
-      : [];
-
-  // Compute next action
-  const { primaryNextAction, blockedReasons } = computeNextAction(
-    missingBoundaries,
-    stories,
-    recentRoutes,
-    opts,
+  const satisfiedBoundaries = new Set<VerificationBoundary>(
+    activeState ? activeState.satisfiedBoundaries : [],
   );
+  const missingBoundaries = activeState ? activeState.missingBoundaries : (
+    stories.length > 0 ? [...ALL_BOUNDARIES] : []
+  );
+  const recentRoutes = activeState ? activeState.recentRoutes : [];
+  const primaryNextAction = activeState ? activeState.primaryNextAction : null;
+  const blockedReasons = activeState ? activeState.blockedReasons : [];
 
   return {
     stories: [...stories],
     observations: deduped,
     observationIds,
+    storyStates,
+    activeStoryId,
     satisfiedBoundaries,
     missingBoundaries,
     recentRoutes,
@@ -353,7 +508,7 @@ export function appendObservation(
 // Serialization (for persistence)
 // ---------------------------------------------------------------------------
 
-export interface SerializedPlanState {
+export interface SerializedPlanStateV1 {
   version: 1;
   stories: VerificationStory[];
   observationIds: string[];
@@ -364,17 +519,135 @@ export interface SerializedPlanState {
   blockedReasons: string[];
 }
 
+export interface SerializedPlanStateV2 {
+  version: 2;
+  stories: VerificationStory[];
+  activeStoryId: string | null;
+  storyStates: Array<{
+    storyId: string;
+    storyKind: VerificationStoryKind;
+    route: string | null;
+    observationIds: string[];
+    satisfiedBoundaries: VerificationBoundary[];
+    missingBoundaries: VerificationBoundary[];
+    recentRoutes: string[];
+    primaryNextAction: VerificationNextAction | null;
+    blockedReasons: string[];
+    lastObservedAt: string | null;
+  }>;
+  observationIds: string[];
+  satisfiedBoundaries: VerificationBoundary[];
+  missingBoundaries: VerificationBoundary[];
+  recentRoutes: string[];
+  primaryNextAction: VerificationNextAction | null;
+  blockedReasons: string[];
+}
+
+/** Union of all serialized state versions. */
+export type SerializedPlanState = SerializedPlanStateV1 | SerializedPlanStateV2;
+
 /**
- * Serialize a VerificationPlan to a deterministic JSON string.
+ * Normalize any serialized plan state to version 2.
+ * V1 state is upgraded by synthesizing one active-story entry from top-level fields.
+ */
+export function normalizeSerializedPlanState(
+  state: SerializedPlanState,
+): SerializedPlanStateV2 {
+  if (state.version === 2) return state;
+
+  // V1 → V2: synthesize active-story state from the flat top-level fields
+  const v1 = state as SerializedPlanStateV1;
+
+  // Import selectPrimaryStory logic inline to avoid circular deps
+  const sorted = [...v1.stories].sort((a, b) => {
+    const updatedDiff = Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+    if (Number.isFinite(updatedDiff) && updatedDiff !== 0) return updatedDiff;
+    const createdDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    if (Number.isFinite(createdDiff) && createdDiff !== 0) return createdDiff;
+    return a.id.localeCompare(b.id);
+  });
+  const primaryStory = sorted[0] ?? null;
+  const activeStoryId = primaryStory?.id ?? null;
+
+  const storyStates: SerializedPlanStateV2["storyStates"] = [];
+  if (primaryStory) {
+    storyStates.push({
+      storyId: primaryStory.id,
+      storyKind: primaryStory.kind,
+      route: primaryStory.route,
+      observationIds: [...v1.observationIds],
+      satisfiedBoundaries: v1.satisfiedBoundaries as VerificationBoundary[],
+      missingBoundaries: v1.missingBoundaries as VerificationBoundary[],
+      recentRoutes: v1.recentRoutes,
+      primaryNextAction: v1.primaryNextAction,
+      blockedReasons: v1.blockedReasons,
+      lastObservedAt: null,
+    });
+  }
+
+  // Add empty entries for non-active stories
+  for (const story of v1.stories) {
+    if (story.id === activeStoryId) continue;
+    storyStates.push({
+      storyId: story.id,
+      storyKind: story.kind,
+      route: story.route,
+      observationIds: [],
+      satisfiedBoundaries: [],
+      missingBoundaries: ALL_BOUNDARIES as VerificationBoundary[],
+      recentRoutes: story.route ? [story.route] : [],
+      primaryNextAction: null,
+      blockedReasons: [],
+      lastObservedAt: null,
+    });
+  }
+
+  return {
+    version: 2,
+    stories: v1.stories,
+    activeStoryId,
+    storyStates,
+    observationIds: v1.observationIds,
+    satisfiedBoundaries: v1.satisfiedBoundaries as VerificationBoundary[],
+    missingBoundaries: v1.missingBoundaries as VerificationBoundary[],
+    recentRoutes: v1.recentRoutes,
+    primaryNextAction: v1.primaryNextAction,
+    blockedReasons: v1.blockedReasons,
+  };
+}
+
+/**
+ * Serialize a VerificationPlan to a deterministic JSON string (version 2).
  * Sets and arrays are sorted for byte-for-byte reproducibility.
  */
 export function serializePlanState(plan: VerificationPlan): string {
-  const state: SerializedPlanState = {
-    version: 1,
+  const storyStates: SerializedPlanStateV2["storyStates"] = [];
+  for (const story of plan.stories) {
+    const ss = plan.storyStates[story.id];
+    if (ss) {
+      storyStates.push({
+        storyId: ss.storyId,
+        storyKind: ss.storyKind,
+        route: ss.route,
+        observationIds: [...ss.observationIds].sort(),
+        satisfiedBoundaries: [...ss.satisfiedBoundaries].sort() as VerificationBoundary[],
+        missingBoundaries: [...ss.missingBoundaries].sort() as VerificationBoundary[],
+        recentRoutes: ss.recentRoutes,
+        primaryNextAction: ss.primaryNextAction,
+        blockedReasons: ss.blockedReasons,
+        lastObservedAt: ss.lastObservedAt,
+      });
+    }
+  }
+
+  const state: SerializedPlanStateV2 = {
+    version: 2,
     stories: plan.stories,
+    activeStoryId: plan.activeStoryId,
+    storyStates,
     observationIds: Array.from(plan.observationIds).sort(),
-    satisfiedBoundaries: Array.from(plan.satisfiedBoundaries).sort(),
-    missingBoundaries: [...plan.missingBoundaries].sort(),
+    satisfiedBoundaries: Array.from(plan.satisfiedBoundaries).sort() as VerificationBoundary[],
+    missingBoundaries: [...plan.missingBoundaries].sort() as VerificationBoundary[],
     recentRoutes: plan.recentRoutes,
     primaryNextAction: plan.primaryNextAction,
     blockedReasons: plan.blockedReasons,
@@ -540,15 +813,25 @@ export function loadStories(
 
 /**
  * Load the derived plan state from the session snapshot.
+ * Always normalizes to V2 format for consumers.
  */
 export function loadPlanState(
   sessionId: string,
   logger?: Logger,
-): SerializedPlanState | null {
+): SerializedPlanStateV2 | null {
   const log = logger ?? createLogger();
   try {
     const content = readFileSync(statePath(sessionId), "utf-8");
-    return JSON.parse(content) as SerializedPlanState;
+    const raw = JSON.parse(content) as SerializedPlanState;
+    const normalized = normalizeSerializedPlanState(raw);
+    if (raw.version !== normalized.version) {
+      log.summary("verification-ledger.state_normalized", {
+        sessionId,
+        fromVersion: raw.version,
+        toVersion: normalized.version,
+      });
+    }
+    return normalized;
   } catch (error) {
     if (
       typeof error === "object" &&

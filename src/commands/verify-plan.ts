@@ -48,16 +48,25 @@ function detectSessionId(): string | null {
     .filter((e) => e.startsWith("vercel-plugin-") && e.endsWith("-ledger"))
     .map((entry) => {
       try {
+        const ledgerPath = `${tmp}/${entry}`;
+        const dirStat = statSync(ledgerPath);
+        let latestMtimeMs = dirStat.mtimeMs;
+        try {
+          for (const child of readdirSync(ledgerPath)) {
+            const childMtimeMs = statSync(`${ledgerPath}/${child}`).mtimeMs;
+            latestMtimeMs = Math.max(latestMtimeMs, childMtimeMs);
+          }
+        } catch {}
         return {
           entry,
-          mtimeMs: statSync(`${tmp}/${entry}`).mtimeMs,
+          mtimeMs: latestMtimeMs,
         };
       } catch {
         return null;
       }
     })
     .filter((entry): entry is { entry: string; mtimeMs: number } => entry !== null)
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || a.entry.localeCompare(b.entry))[0];
 
   if (!latestLedger) return null;
 
@@ -78,7 +87,9 @@ export function verifyPlan(options: VerifyPlanOptions = {}): VerificationPlanRes
   if (!sessionId) {
     return {
       hasStories: false,
+      activeStoryId: null,
       stories: [],
+      storyStates: [],
       observationCount: 0,
       satisfiedBoundaries: [],
       missingBoundaries: [],
@@ -117,7 +128,9 @@ export function verifyPlanSnapshot(
   if (!sessionId) {
     return {
       hasStories: false,
+      activeStoryId: null,
       stories: [],
+      storyStates: [],
       observationCount: 0,
       satisfiedBoundaries: [],
       missingBoundaries: [],

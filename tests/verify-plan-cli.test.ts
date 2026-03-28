@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import {
   recordObservation,
   recordStory,
+  storyId,
   type VerificationObservation,
   type VerificationBoundary,
 } from "../hooks/src/verification-ledger.mts";
@@ -27,6 +28,7 @@ function makeObs(
     source: "bash",
     boundary,
     route: null,
+    storyId: null,
     summary: `obs-${id}`,
     ...opts,
   };
@@ -185,9 +187,110 @@ describe("human output format", () => {
     // Human output should reflect the same data
     expect(human).toContain("flow-verification");
     expect(human).toContain("/api/save");
-    expect(human).toContain("Observations: 1");
     if (result.primaryNextAction) {
       expect(human).toContain(result.primaryNextAction.action);
     }
+  });
+
+  test("human output includes active story details, reason, and other stories summary", () => {
+    recordStory(testSessionId, "flow-verification", "/settings", "settings broken", ["verification"]);
+    recordObservation(testSessionId, makeObs("h-s1", "clientRequest", {
+      route: "/settings",
+      storyId: storyId("flow-verification", "/settings"),
+    }));
+    recordObservation(testSessionId, makeObs("h-s2", "serverHandler", {
+      route: "/settings",
+      storyId: storyId("flow-verification", "/settings"),
+    }));
+
+    recordStory(testSessionId, "flow-verification", "/dashboard", "dashboard broken", ["verification"]);
+
+    const result = verifyPlan({ sessionId: testSessionId });
+    const human = formatPlanHuman(result);
+
+    // Active story header
+    expect(human).toContain("Active story:");
+    expect(human).toContain("/dashboard");
+    expect(human).toContain("dashboard broken");
+
+    // Evidence for active story (dashboard has 0 boundaries)
+    expect(human).toContain("Evidence: 0/4 boundaries satisfied");
+
+    // Next action with reason
+    expect(human).toContain("Next action:");
+    expect(human).toContain("Reason:");
+
+    // Other stories compact summary
+    expect(human).toContain("Other stories:");
+    expect(human).toContain("/settings");
+    expect(human).toContain("2/4 boundaries satisfied");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLI JSON: activeStoryId and storyStates equivalence
+// ---------------------------------------------------------------------------
+
+describe("CLI JSON active-story equivalence", () => {
+  test("JSON output includes activeStoryId and storyStates array", () => {
+    recordStory(testSessionId, "flow-verification", "/dashboard", "dashboard save fails", ["verification"]);
+
+    const result = verifyPlan({ sessionId: testSessionId });
+
+    expect(result.activeStoryId).toBe(storyId("flow-verification", "/dashboard"));
+    expect(Array.isArray(result.storyStates)).toBe(true);
+    expect(result.storyStates.length).toBe(1);
+    expect(result.storyStates[0].storyId).toBe(result.activeStoryId);
+  });
+
+  test("active storyStates entry matches top-level fields exactly", () => {
+    recordStory(testSessionId, "flow-verification", "/settings", "settings broken", ["verification"]);
+    recordObservation(testSessionId, makeObs("eq-1", "clientRequest", {
+      route: "/settings",
+      storyId: storyId("flow-verification", "/settings"),
+    }));
+
+    recordStory(testSessionId, "flow-verification", "/dashboard", "dashboard broken", ["verification"]);
+
+    const result = verifyPlan({ sessionId: testSessionId });
+
+    // Active story is /dashboard (more missing boundaries)
+    expect(result.activeStoryId).toBe(storyId("flow-verification", "/dashboard"));
+
+    const activeState = result.storyStates.find((s) => s.storyId === result.activeStoryId);
+    expect(activeState).toBeDefined();
+
+    // The active entry's fields must match the top-level projection exactly
+    expect([...activeState!.satisfiedBoundaries].sort()).toEqual([...result.satisfiedBoundaries].sort());
+    expect([...activeState!.missingBoundaries].sort()).toEqual([...result.missingBoundaries].sort());
+    expect(activeState!.recentRoutes).toEqual(result.recentRoutes);
+    expect(JSON.stringify(activeState!.primaryNextAction)).toBe(JSON.stringify(result.primaryNextAction));
+    expect(activeState!.blockedReasons).toEqual(result.blockedReasons);
+  });
+
+  test("multi-story JSON preserves isolation between active and non-active stories", () => {
+    recordStory(testSessionId, "flow-verification", "/settings", "settings broken", ["verification"]);
+    recordObservation(testSessionId, makeObs("ms-1", "clientRequest", {
+      route: "/settings",
+      storyId: storyId("flow-verification", "/settings"),
+    }));
+    recordObservation(testSessionId, makeObs("ms-2", "serverHandler", {
+      route: "/settings",
+      storyId: storyId("flow-verification", "/settings"),
+    }));
+
+    recordStory(testSessionId, "flow-verification", "/dashboard", "dashboard broken", ["verification"]);
+
+    const result = verifyPlan({ sessionId: testSessionId });
+
+    // Active story (/dashboard) has 0 satisfied, 4 missing
+    expect(result.satisfiedBoundaries).toHaveLength(0);
+    expect(result.missingBoundaries).toHaveLength(4);
+
+    // Non-active story (/settings) has 2 satisfied
+    const settingsState = result.storyStates.find((s) => s.route === "/settings");
+    expect(settingsState!.satisfiedBoundaries).toContain("clientRequest");
+    expect(settingsState!.satisfiedBoundaries).toContain("serverHandler");
+    expect(settingsState!.satisfiedBoundaries).toHaveLength(2);
   });
 });

@@ -31,8 +31,38 @@ function computePlan(sessionId, options, logger) {
   return planToResult(plan);
 }
 function planToResult(plan) {
+  const storyStates = plan.stories.map((s) => {
+    const ss = plan.storyStates[s.id];
+    if (!ss) {
+      return {
+        storyId: s.id,
+        storyKind: s.kind,
+        route: s.route,
+        observationIds: [],
+        satisfiedBoundaries: [],
+        missingBoundaries: [],
+        recentRoutes: [],
+        primaryNextAction: null,
+        blockedReasons: [],
+        lastObservedAt: null
+      };
+    }
+    return {
+      storyId: ss.storyId,
+      storyKind: ss.storyKind,
+      route: ss.route,
+      observationIds: ss.observationIds,
+      satisfiedBoundaries: [...ss.satisfiedBoundaries].sort(),
+      missingBoundaries: [...ss.missingBoundaries].sort(),
+      recentRoutes: ss.recentRoutes,
+      primaryNextAction: ss.primaryNextAction,
+      blockedReasons: ss.blockedReasons,
+      lastObservedAt: ss.lastObservedAt
+    };
+  });
   return {
     hasStories: plan.stories.length > 0,
+    activeStoryId: plan.activeStoryId,
     stories: plan.stories.map((s) => ({
       id: s.id,
       kind: s.kind,
@@ -41,6 +71,7 @@ function planToResult(plan) {
       createdAt: s.createdAt,
       updatedAt: s.updatedAt
     })),
+    storyStates,
     observationCount: plan.observations.length,
     satisfiedBoundaries: Array.from(plan.satisfiedBoundaries).sort(),
     missingBoundaries: [...plan.missingBoundaries].sort(),
@@ -53,8 +84,21 @@ function loadCachedPlanResult(sessionId, logger) {
   const log = logger ?? createLogger();
   const state = loadPlanState(sessionId, log);
   if (!state) return null;
+  const storyStates = (state.storyStates ?? []).map((ss) => ({
+    storyId: ss.storyId,
+    storyKind: ss.storyKind,
+    route: ss.route,
+    observationIds: ss.observationIds,
+    satisfiedBoundaries: [...ss.satisfiedBoundaries].sort(),
+    missingBoundaries: [...ss.missingBoundaries].sort(),
+    recentRoutes: ss.recentRoutes,
+    primaryNextAction: ss.primaryNextAction,
+    blockedReasons: ss.blockedReasons,
+    lastObservedAt: ss.lastObservedAt
+  }));
   return {
     hasStories: state.stories.length > 0,
+    activeStoryId: state.activeStoryId ?? null,
     stories: state.stories.map((s) => ({
       id: s.id,
       kind: s.kind,
@@ -63,6 +107,7 @@ function loadCachedPlanResult(sessionId, logger) {
       createdAt: s.createdAt,
       updatedAt: s.updatedAt
     })),
+    storyStates,
     observationCount: state.observationIds.length,
     satisfiedBoundaries: [...state.satisfiedBoundaries].sort(),
     missingBoundaries: [...state.missingBoundaries].sort(),
@@ -127,32 +172,40 @@ function formatPlanHuman(result) {
     return "No verification stories active.\nNo observations recorded.\n";
   }
   const lines = [];
-  lines.push("Stories:");
-  for (const story of result.stories) {
-    const routePart = story.route ? ` (${story.route})` : "";
-    lines.push(`  ${story.kind}${routePart}: "${story.promptExcerpt}"`);
+  const activeStory = result.activeStoryId ? result.stories.find((s) => s.id === result.activeStoryId) : selectPrimaryStory(result.stories);
+  if (activeStory) {
+    const routePart = activeStory.route ? ` (${activeStory.route})` : "";
+    lines.push(`Active story: ${activeStory.kind}${routePart}: "${activeStory.promptExcerpt}"`);
   }
-  lines.push("");
-  lines.push(`Observations: ${result.observationCount}`);
-  lines.push(`Satisfied boundaries: ${result.satisfiedBoundaries.join(", ") || "none"}`);
-  lines.push(`Missing boundaries: ${result.missingBoundaries.join(", ") || "none"}`);
-  if (result.recentRoutes.length > 0) {
-    lines.push(`Recent routes: ${result.recentRoutes.join(", ")}`);
+  const satisfied = result.satisfiedBoundaries;
+  const missing = result.missingBoundaries;
+  lines.push(`Evidence: ${satisfied.length}/4 boundaries satisfied [${satisfied.join(", ") || "none"}]`);
+  if (missing.length > 0) {
+    lines.push(`Missing: ${missing.join(", ")}`);
   }
-  lines.push("");
   if (result.primaryNextAction) {
     lines.push(`Next action: ${result.primaryNextAction.action}`);
-    lines.push(`  Target: ${result.primaryNextAction.targetBoundary}`);
     lines.push(`  Reason: ${result.primaryNextAction.reason}`);
   } else if (result.blockedReasons.length > 0) {
     lines.push("Next action: blocked");
     for (const reason of result.blockedReasons) {
       lines.push(`  - ${reason}`);
     }
-  } else if (result.missingBoundaries.length === 0) {
+  } else if (missing.length === 0) {
     lines.push("All verification boundaries satisfied.");
   } else {
     lines.push("No next action available.");
+  }
+  const otherStories = result.stories.filter((s) => s.id !== (activeStory?.id ?? null));
+  if (otherStories.length > 0) {
+    lines.push("");
+    lines.push("Other stories:");
+    for (const story of otherStories) {
+      const ss = result.storyStates?.find((st) => st.storyId === story.id);
+      const satisfiedCount = ss ? ss.satisfiedBoundaries.length : 0;
+      const routePart = story.route ? ` (${story.route})` : "";
+      lines.push(`  ${story.kind}${routePart} \u2014 ${satisfiedCount}/4 boundaries satisfied`);
+    }
   }
   return lines.join("\n") + "\n";
 }

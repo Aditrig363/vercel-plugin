@@ -70,13 +70,15 @@ function buildBoundaryEvent(input) {
     matchedSuggestedAction: suggestedBoundary !== null && suggestedBoundary === input.boundary || suggestedAction !== null && suggestedAction === redactedCommand
   };
 }
-function buildLedgerObservation(event) {
+function buildLedgerObservation(event, env = process.env) {
+  const storyIdValue = env.VERCEL_PLUGIN_VERIFICATION_STORY_ID;
   return {
     id: event.verificationId,
     timestamp: event.timestamp,
     source: "bash",
     boundary: event.boundary === "unknown" ? null : event.boundary,
     route: event.inferredRoute,
+    storyId: typeof storyIdValue === "string" && storyIdValue.trim() !== "" ? storyIdValue.trim() : null,
     summary: event.command,
     meta: {
       matchedPattern: event.matchedPattern,

@@ -16,7 +16,7 @@ import {
   computePlan,
   formatVerificationBanner,
   loadCachedPlanResult,
-  selectPrimaryStory,
+  selectActiveStory,
   type ComputePlanOptions,
   type VerificationPlanResult,
 } from "./verification-plan.mjs";
@@ -53,7 +53,7 @@ export function buildVerificationDirective(
 ): VerificationDirective | null {
   if (!plan?.hasStories || plan.stories.length === 0) return null;
 
-  const story = selectPrimaryStory(plan.stories);
+  const story = selectActiveStory(plan);
   if (!story) return null;
 
   return {

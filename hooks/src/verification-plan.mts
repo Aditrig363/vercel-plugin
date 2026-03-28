@@ -13,7 +13,8 @@
 import {
   type VerificationPlan,
   type VerificationNextAction,
-  type SerializedPlanState,
+  type VerificationStoryState,
+  type SerializedPlanStateV2,
   derivePlan,
   loadObservations,
   loadStories,
@@ -35,22 +36,39 @@ export interface VerificationPlanStorySummary {
   updatedAt: string;
 }
 
+export interface VerificationPlanStoryStateSummary {
+  storyId: string;
+  storyKind: string;
+  route: string | null;
+  observationIds: string[];
+  satisfiedBoundaries: string[];
+  missingBoundaries: string[];
+  recentRoutes: string[];
+  primaryNextAction: VerificationNextAction | null;
+  blockedReasons: string[];
+  lastObservedAt: string | null;
+}
+
 export interface VerificationPlanResult {
   /** Whether any verification stories exist. */
   hasStories: boolean;
+  /** Active story id. */
+  activeStoryId: string | null;
   /** Active story summaries. */
   stories: VerificationPlanStorySummary[];
+  /** Per-story state summaries. */
+  storyStates: VerificationPlanStoryStateSummary[];
   /** Total observation count. */
   observationCount: number;
-  /** Boundaries with at least one observation. */
+  /** Boundaries with at least one observation (active-story projection). */
   satisfiedBoundaries: string[];
-  /** Boundaries still missing evidence. */
+  /** Boundaries still missing evidence (active-story projection). */
   missingBoundaries: string[];
-  /** Recent routes observed. */
+  /** Recent routes observed (active-story projection). */
   recentRoutes: string[];
-  /** The single best next verification action (null if none). */
+  /** The single best next verification action (active-story projection). */
   primaryNextAction: VerificationNextAction | null;
-  /** Reasons certain actions were blocked. */
+  /** Reasons certain actions were blocked (active-story projection). */
   blockedReasons: string[];
 }
 
@@ -77,6 +95,16 @@ export function selectPrimaryStory(
 
     return a.id.localeCompare(b.id);
   })[0];
+}
+
+export function selectActiveStory(
+  result: Pick<VerificationPlanResult, "activeStoryId" | "stories">,
+): VerificationPlanStorySummary | null {
+  if (result.activeStoryId) {
+    const activeStory = result.stories.find((story) => story.id === result.activeStoryId);
+    if (activeStory) return activeStory;
+  }
+  return selectPrimaryStory(result.stories);
 }
 
 // ---------------------------------------------------------------------------
@@ -120,8 +148,39 @@ export function computePlan(
  * Convert a VerificationPlan to a JSON-serializable result.
  */
 export function planToResult(plan: VerificationPlan): VerificationPlanResult {
+  const storyStates: VerificationPlanStoryStateSummary[] = plan.stories.map((s) => {
+    const ss = plan.storyStates[s.id];
+    if (!ss) {
+      return {
+        storyId: s.id,
+        storyKind: s.kind,
+        route: s.route,
+        observationIds: [],
+        satisfiedBoundaries: [],
+        missingBoundaries: [],
+        recentRoutes: [],
+        primaryNextAction: null,
+        blockedReasons: [],
+        lastObservedAt: null,
+      };
+    }
+    return {
+      storyId: ss.storyId,
+      storyKind: ss.storyKind,
+      route: ss.route,
+      observationIds: ss.observationIds,
+      satisfiedBoundaries: [...ss.satisfiedBoundaries].sort(),
+      missingBoundaries: [...ss.missingBoundaries].sort(),
+      recentRoutes: ss.recentRoutes,
+      primaryNextAction: ss.primaryNextAction,
+      blockedReasons: ss.blockedReasons,
+      lastObservedAt: ss.lastObservedAt,
+    };
+  });
+
   return {
     hasStories: plan.stories.length > 0,
+    activeStoryId: plan.activeStoryId,
     stories: plan.stories.map((s) => ({
       id: s.id,
       kind: s.kind,
@@ -130,6 +189,7 @@ export function planToResult(plan: VerificationPlan): VerificationPlanResult {
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
     })),
+    storyStates,
     observationCount: plan.observations.length,
     satisfiedBoundaries: Array.from(plan.satisfiedBoundaries).sort(),
     missingBoundaries: [...plan.missingBoundaries].sort(),
@@ -152,8 +212,22 @@ export function loadCachedPlanResult(
   const state = loadPlanState(sessionId, log);
   if (!state) return null;
 
+  const storyStates: VerificationPlanStoryStateSummary[] = (state.storyStates ?? []).map((ss) => ({
+    storyId: ss.storyId,
+    storyKind: ss.storyKind,
+    route: ss.route,
+    observationIds: ss.observationIds,
+    satisfiedBoundaries: [...ss.satisfiedBoundaries].sort(),
+    missingBoundaries: [...ss.missingBoundaries].sort(),
+    recentRoutes: ss.recentRoutes,
+    primaryNextAction: ss.primaryNextAction,
+    blockedReasons: ss.blockedReasons,
+    lastObservedAt: ss.lastObservedAt,
+  }));
+
   return {
     hasStories: state.stories.length > 0,
+    activeStoryId: state.activeStoryId ?? null,
     stories: state.stories.map((s) => ({
       id: s.id,
       kind: s.kind,
@@ -162,6 +236,7 @@ export function loadCachedPlanResult(
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
     })),
+    storyStates,
     observationCount: state.observationIds.length,
     satisfiedBoundaries: [...state.satisfiedBoundaries].sort(),
     missingBoundaries: [...state.missingBoundaries].sort(),
@@ -245,7 +320,7 @@ export function formatVerificationBanner(
   lines.push("**[Verification Plan]**");
 
   // Current story — use deterministic selection
-  const story = selectPrimaryStory(result.stories);
+  const story = selectActiveStory(result);
   if (story) {
     const routePart = story.route ? ` (${story.route})` : "";
     lines.push(`Story: ${story.kind}${routePart} — "${story.promptExcerpt}"`);
@@ -281,6 +356,9 @@ export function formatVerificationBanner(
 
 /**
  * Format a human-readable plan summary for terminal output.
+ *
+ * When multiple stories exist, highlights the active story and appends
+ * a compact summary of other stories with their progress.
  */
 export function formatPlanHuman(result: VerificationPlanResult): string {
   if (!result.hasStories) {
@@ -289,38 +367,48 @@ export function formatPlanHuman(result: VerificationPlanResult): string {
 
   const lines: string[] = [];
 
-  // Stories
-  lines.push("Stories:");
-  for (const story of result.stories) {
-    const routePart = story.route ? ` (${story.route})` : "";
-    lines.push(`  ${story.kind}${routePart}: "${story.promptExcerpt}"`);
+  // Active story header
+  const activeStory = selectActiveStory(result);
+
+  if (activeStory) {
+    const routePart = activeStory.route ? ` (${activeStory.route})` : "";
+    lines.push(`Active story: ${activeStory.kind}${routePart}: "${activeStory.promptExcerpt}"`);
   }
-  lines.push("");
 
-  // Evidence
-  lines.push(`Observations: ${result.observationCount}`);
-  lines.push(`Satisfied boundaries: ${result.satisfiedBoundaries.join(", ") || "none"}`);
-  lines.push(`Missing boundaries: ${result.missingBoundaries.join(", ") || "none"}`);
-
-  if (result.recentRoutes.length > 0) {
-    lines.push(`Recent routes: ${result.recentRoutes.join(", ")}`);
+  // Evidence for active story
+  const satisfied = result.satisfiedBoundaries;
+  const missing = result.missingBoundaries;
+  lines.push(`Evidence: ${satisfied.length}/4 boundaries satisfied [${satisfied.join(", ") || "none"}]`);
+  if (missing.length > 0) {
+    lines.push(`Missing: ${missing.join(", ")}`);
   }
-  lines.push("");
 
-  // Next action
+  // Next action with reason
   if (result.primaryNextAction) {
     lines.push(`Next action: ${result.primaryNextAction.action}`);
-    lines.push(`  Target: ${result.primaryNextAction.targetBoundary}`);
     lines.push(`  Reason: ${result.primaryNextAction.reason}`);
   } else if (result.blockedReasons.length > 0) {
     lines.push("Next action: blocked");
     for (const reason of result.blockedReasons) {
       lines.push(`  - ${reason}`);
     }
-  } else if (result.missingBoundaries.length === 0) {
+  } else if (missing.length === 0) {
     lines.push("All verification boundaries satisfied.");
   } else {
     lines.push("No next action available.");
+  }
+
+  // Compact summary of other stories
+  const otherStories = result.stories.filter((s) => s.id !== (activeStory?.id ?? null));
+  if (otherStories.length > 0) {
+    lines.push("");
+    lines.push("Other stories:");
+    for (const story of otherStories) {
+      const ss = result.storyStates?.find((st) => st.storyId === story.id);
+      const satisfiedCount = ss ? ss.satisfiedBoundaries.length : 0;
+      const routePart = story.route ? ` (${story.route})` : "";
+      lines.push(`  ${story.kind}${routePart} — ${satisfiedCount}/4 boundaries satisfied`);
+    }
   }
 
   return lines.join("\n") + "\n";

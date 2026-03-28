@@ -60,7 +60,7 @@ import type { VercelJsonRouting } from "./vercel-config.mjs";
 import { createLogger, logDecision } from "./logger.mjs";
 import type { Logger } from "./logger.mjs";
 import { trackBaseEvents } from "./telemetry.mjs";
-import { loadCachedPlanResult, selectPrimaryStory } from "./verification-plan.mjs";
+import { loadCachedPlanResult, selectActiveStory } from "./verification-plan.mjs";
 import { resolveVerificationRuntimeState, buildVerificationEnv } from "./verification-directive.mjs";
 import { applyPolicyBoosts } from "./routing-policy.mjs";
 import type { RoutingHookName, RoutingToolName } from "./routing-policy.mjs";
@@ -924,7 +924,7 @@ export function deduplicateSkills(
   const policyBoosted: Array<{ skill: string; boost: number; reason: string | null }> = [];
   if (cwd) {
     const plan = sessionId ? loadCachedPlanResult(sessionId, l) : null;
-    const primaryStory = plan ? selectPrimaryStory(plan.stories ?? []) : null;
+    const primaryStory = plan ? selectActiveStory(plan) : null;
 
     if (primaryStory) {
       const policyScenario = {
@@ -1587,7 +1587,7 @@ function run(): string {
   const policyRecallSynthetic = new Set<string>();
   if (cwd && sessionId) {
     const recallPlan = loadCachedPlanResult(sessionId, log);
-    const recallStory = recallPlan ? selectPrimaryStory(recallPlan.stories ?? []) : null;
+    const recallStory = recallPlan ? selectActiveStory(recallPlan) : null;
     const recallBoundary = (recallPlan?.primaryNextAction?.targetBoundary as
       | "uiRender"
       | "clientRequest"
@@ -1713,7 +1713,7 @@ function run(): string {
   // Only record when an active verification story exists to prevent none|none scenario pollution
   if (loaded.length > 0 && sessionId) {
     const plan = loadCachedPlanResult(sessionId, log);
-    const story = plan ? selectPrimaryStory(plan.stories ?? []) : null;
+    const story = plan ? selectActiveStory(plan) : null;
     if (story) {
       for (const skill of loaded) {
         appendSkillExposure({
@@ -1941,7 +1941,7 @@ function run(): string {
   // Stage 7: Emit routing decision trace (v2)
   {
     const tracePlan = sessionId ? loadCachedPlanResult(sessionId, log) : null;
-    const traceStory = tracePlan ? selectPrimaryStory(tracePlan.stories ?? []) : null;
+    const traceStory = tracePlan ? selectActiveStory(tracePlan) : null;
     const traceTimestamp = new Date().toISOString();
     const traceToolTarget = toolName === "Bash" ? redactCommand(toolTarget) : toolTarget;
     const decisionId = createDecisionId({

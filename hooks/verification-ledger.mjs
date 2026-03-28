@@ -17,15 +17,103 @@ var ALL_BOUNDARIES = [
   "environment"
 ];
 var SAFE_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
-function derivePlan(observations, stories, options) {
+function resolveObservationStoryId(observation, stories) {
+  if (observation.storyId) return observation.storyId;
+  if (observation.route) {
+    const exactMatches = stories.filter((story) => story.route === observation.route);
+    if (exactMatches.length === 1) {
+      return exactMatches[0].id;
+    }
+  }
+  if (stories.length === 1) {
+    return stories[0].id;
+  }
+  return null;
+}
+function collectRecentRoutes(observations) {
+  const sorted = [...observations].sort(
+    (a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)
+  );
+  const seen = /* @__PURE__ */ new Set();
+  const routes = [];
+  for (const observation of sorted) {
+    if (!observation.route) continue;
+    if (seen.has(observation.route)) continue;
+    seen.add(observation.route);
+    routes.push(observation.route);
+  }
+  return routes;
+}
+function deriveStoryStates(observations, stories, options) {
   const opts = {
     agentBrowserAvailable: true,
     devServerLoopGuardHit: false,
     lastAttemptedAction: null,
     staleThresholdMs: 5 * 60 * 1e3,
-    // 5 minutes
     ...options
   };
+  const states = {};
+  for (const story of stories) {
+    states[story.id] = {
+      storyId: story.id,
+      storyKind: story.kind,
+      route: story.route,
+      observationIds: [],
+      satisfiedBoundaries: [],
+      missingBoundaries: [...ALL_BOUNDARIES],
+      recentRoutes: story.route ? [story.route] : [],
+      primaryNextAction: null,
+      blockedReasons: [],
+      lastObservedAt: null
+    };
+  }
+  for (const obs of observations) {
+    const resolvedStoryId = resolveObservationStoryId(obs, stories);
+    if (!resolvedStoryId || !states[resolvedStoryId]) continue;
+    const state = states[resolvedStoryId];
+    state.observationIds.push(obs.id);
+    if (obs.boundary && !state.satisfiedBoundaries.includes(obs.boundary)) {
+      state.satisfiedBoundaries.push(obs.boundary);
+    }
+    if (obs.route && !state.recentRoutes.includes(obs.route)) {
+      state.recentRoutes.push(obs.route);
+    }
+    if (!state.lastObservedAt || Date.parse(obs.timestamp) > Date.parse(state.lastObservedAt)) {
+      state.lastObservedAt = obs.timestamp;
+    }
+  }
+  for (const story of stories) {
+    const state = states[story.id];
+    const satisfiedSet = new Set(state.satisfiedBoundaries);
+    state.missingBoundaries = ALL_BOUNDARIES.filter((b) => !satisfiedSet.has(b));
+    const { primaryNextAction, blockedReasons } = computeNextAction(
+      state.missingBoundaries,
+      [story],
+      state.recentRoutes,
+      opts
+    );
+    state.primaryNextAction = primaryNextAction;
+    state.blockedReasons = blockedReasons;
+  }
+  return states;
+}
+function selectActiveStoryId(stories, storyStates) {
+  if (stories.length === 0) return null;
+  const sorted = [...stories].sort((a, b) => {
+    const stateA = storyStates[a.id];
+    const stateB = storyStates[b.id];
+    const missingA = stateA ? stateA.missingBoundaries.length : 0;
+    const missingB = stateB ? stateB.missingBoundaries.length : 0;
+    if (missingA !== missingB) return missingB - missingA;
+    const updatedDiff = Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+    if (Number.isFinite(updatedDiff) && updatedDiff !== 0) return updatedDiff;
+    const createdDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    if (Number.isFinite(createdDiff) && createdDiff !== 0) return createdDiff;
+    return a.id.localeCompare(b.id);
+  });
+  return sorted[0].id;
+}
+function derivePlan(observations, stories, options) {
   const observationIds = /* @__PURE__ */ new Set();
   const deduped = [];
   for (const obs of observations) {
@@ -34,28 +122,22 @@ function derivePlan(observations, stories, options) {
       deduped.push(obs);
     }
   }
-  const satisfiedBoundaries = /* @__PURE__ */ new Set();
-  const recentRoutesSet = /* @__PURE__ */ new Set();
-  for (const obs of deduped) {
-    if (obs.boundary) {
-      satisfiedBoundaries.add(obs.boundary);
-    }
-    if (obs.route) {
-      recentRoutesSet.add(obs.route);
-    }
-  }
-  const recentRoutes = Array.from(recentRoutesSet);
-  const missingBoundaries = stories.length > 0 ? ALL_BOUNDARIES.filter((b) => !satisfiedBoundaries.has(b)) : [];
-  const { primaryNextAction, blockedReasons } = computeNextAction(
-    missingBoundaries,
-    stories,
-    recentRoutes,
-    opts
+  const storyStates = deriveStoryStates(deduped, stories, options);
+  const activeStoryId = selectActiveStoryId(stories, storyStates);
+  const activeState = activeStoryId ? storyStates[activeStoryId] : null;
+  const satisfiedBoundaries = new Set(
+    activeState ? activeState.satisfiedBoundaries : []
   );
+  const missingBoundaries = activeState ? activeState.missingBoundaries : stories.length > 0 ? [...ALL_BOUNDARIES] : [];
+  const recentRoutes = activeState ? activeState.recentRoutes : [];
+  const primaryNextAction = activeState ? activeState.primaryNextAction : null;
+  const blockedReasons = activeState ? activeState.blockedReasons : [];
   return {
     stories: [...stories],
     observations: deduped,
     observationIds,
+    storyStates,
+    activeStoryId,
     satisfiedBoundaries,
     missingBoundaries,
     recentRoutes,
@@ -162,10 +244,85 @@ function appendObservation(observations, observation) {
   }
   return [...observations, observation];
 }
+function normalizeSerializedPlanState(state) {
+  if (state.version === 2) return state;
+  const v1 = state;
+  const sorted = [...v1.stories].sort((a, b) => {
+    const updatedDiff = Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+    if (Number.isFinite(updatedDiff) && updatedDiff !== 0) return updatedDiff;
+    const createdDiff = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    if (Number.isFinite(createdDiff) && createdDiff !== 0) return createdDiff;
+    return a.id.localeCompare(b.id);
+  });
+  const primaryStory = sorted[0] ?? null;
+  const activeStoryId = primaryStory?.id ?? null;
+  const storyStates = [];
+  if (primaryStory) {
+    storyStates.push({
+      storyId: primaryStory.id,
+      storyKind: primaryStory.kind,
+      route: primaryStory.route,
+      observationIds: [...v1.observationIds],
+      satisfiedBoundaries: v1.satisfiedBoundaries,
+      missingBoundaries: v1.missingBoundaries,
+      recentRoutes: v1.recentRoutes,
+      primaryNextAction: v1.primaryNextAction,
+      blockedReasons: v1.blockedReasons,
+      lastObservedAt: null
+    });
+  }
+  for (const story of v1.stories) {
+    if (story.id === activeStoryId) continue;
+    storyStates.push({
+      storyId: story.id,
+      storyKind: story.kind,
+      route: story.route,
+      observationIds: [],
+      satisfiedBoundaries: [],
+      missingBoundaries: ALL_BOUNDARIES,
+      recentRoutes: story.route ? [story.route] : [],
+      primaryNextAction: null,
+      blockedReasons: [],
+      lastObservedAt: null
+    });
+  }
+  return {
+    version: 2,
+    stories: v1.stories,
+    activeStoryId,
+    storyStates,
+    observationIds: v1.observationIds,
+    satisfiedBoundaries: v1.satisfiedBoundaries,
+    missingBoundaries: v1.missingBoundaries,
+    recentRoutes: v1.recentRoutes,
+    primaryNextAction: v1.primaryNextAction,
+    blockedReasons: v1.blockedReasons
+  };
+}
 function serializePlanState(plan) {
+  const storyStates = [];
+  for (const story of plan.stories) {
+    const ss = plan.storyStates[story.id];
+    if (ss) {
+      storyStates.push({
+        storyId: ss.storyId,
+        storyKind: ss.storyKind,
+        route: ss.route,
+        observationIds: [...ss.observationIds].sort(),
+        satisfiedBoundaries: [...ss.satisfiedBoundaries].sort(),
+        missingBoundaries: [...ss.missingBoundaries].sort(),
+        recentRoutes: ss.recentRoutes,
+        primaryNextAction: ss.primaryNextAction,
+        blockedReasons: ss.blockedReasons,
+        lastObservedAt: ss.lastObservedAt
+      });
+    }
+  }
   const state = {
-    version: 1,
+    version: 2,
     stories: plan.stories,
+    activeStoryId: plan.activeStoryId,
+    storyStates,
     observationIds: Array.from(plan.observationIds).sort(),
     satisfiedBoundaries: Array.from(plan.satisfiedBoundaries).sort(),
     missingBoundaries: [...plan.missingBoundaries].sort(),
@@ -277,7 +434,16 @@ function loadPlanState(sessionId, logger) {
   const log = logger ?? createLogger();
   try {
     const content = readFileSync(statePath(sessionId), "utf-8");
-    return JSON.parse(content);
+    const raw = JSON.parse(content);
+    const normalized = normalizeSerializedPlanState(raw);
+    if (raw.version !== normalized.version) {
+      log.summary("verification-ledger.state_normalized", {
+        sessionId,
+        fromVersion: raw.version,
+        toVersion: normalized.version
+      });
+    }
+    return normalized;
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
       return null;
@@ -324,17 +490,22 @@ function removeLedgerArtifacts(sessionId, logger) {
 }
 export {
   appendObservation,
+  collectRecentRoutes,
   derivePlan,
+  deriveStoryStates,
   ledgerPath,
   loadObservations,
   loadPlanState,
   loadStories,
+  normalizeSerializedPlanState,
   persistObservation,
   persistPlanState,
   persistStories,
   recordObservation,
   recordStory,
   removeLedgerArtifacts,
+  resolveObservationStoryId,
+  selectActiveStoryId,
   serializePlanState,
   statePath,
   storiesPath,
