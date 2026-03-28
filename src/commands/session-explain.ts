@@ -179,7 +179,6 @@ function buildRoutingDoctor(
   const policy = loadProjectRoutingPolicy(projectRoot);
   const policyRecall =
     scenario &&
-    scenario.hook === "PreToolUse" &&
     scenario.targetBoundary
       ? explainPolicyRecall(policy, scenario, {
           excludeSkills,

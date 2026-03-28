@@ -56,6 +56,7 @@ import {
   appendSkillExposure,
   loadProjectRoutingPolicy,
 } from "./routing-policy-ledger.mjs";
+import { applyPromptPolicyRecall } from "./prompt-policy-recall.mjs";
 import { buildAttributionDecision } from "./routing-attribution.mjs";
 import {
   appendRoutingDecisionTrace,
@@ -1061,12 +1062,89 @@ export function run(): string {
     });
   }
 
-  // No matches at all
-  const allMatched = Object.entries(report.perSkillResults)
+  // Stage 3c: Resolve prompt verification binding before early returns
+  // so policy recall can rescue zero-match scenarios
+  const promptPlan = sessionId ? loadCachedPlanResult(sessionId, log) : null;
+  const promptBinding = resolvePromptVerificationBinding({ plan: promptPlan });
+  log.debug("prompt-verification-binding", {
+    source: promptBinding.source,
+    storyId: promptBinding.storyId,
+    targetBoundary: promptBinding.targetBoundary,
+    confidence: promptBinding.confidence,
+    reason: promptBinding.reason,
+  });
+
+  let matchedSkills = Object.entries(report.perSkillResults)
     .filter(([, r]) => r.matched)
     .map(([skill]) => skill);
 
-  if (allMatched.length === 0) {
+  const promptPolicy = cwd ? loadProjectRoutingPolicy(cwd) : null;
+  const promptPolicyRecallSynthetic = new Set<string>();
+  const promptPolicyRecallReasons: Record<string, string> = {};
+
+  if (promptPolicy && promptBinding.storyId && promptBinding.targetBoundary) {
+    const recall = applyPromptPolicyRecall({
+      selectedSkills: report.selectedSkills,
+      matchedSkills,
+      seenSkills: dedupOff ? [] : parseSeenSkills(seenState),
+      maxSkills: MAX_SKILLS,
+      binding: {
+        storyId: promptBinding.storyId,
+        storyKind: promptBinding.storyKind,
+        route: promptBinding.route,
+        targetBoundary: promptBinding.targetBoundary,
+      },
+      policy: promptPolicy,
+    });
+
+    report.selectedSkills.length = 0;
+    report.selectedSkills.push(...recall.selectedSkills);
+    matchedSkills = recall.matchedSkills;
+    for (const skill of recall.syntheticSkills) {
+      promptPolicyRecallSynthetic.add(skill);
+    }
+    Object.assign(promptPolicyRecallReasons, recall.reasons);
+
+    if (recall.diagnosis) {
+      log.debug("prompt-policy-recall-lookup", {
+        requestedScenario: `UserPromptSubmit|${promptBinding.storyKind ?? "none"}|` +
+          `${promptBinding.targetBoundary ?? "none"}|Prompt|${promptBinding.route ?? "*"}`,
+        checkedScenarios: recall.diagnosis.checkedScenarios,
+        selectedBucket: recall.diagnosis.selectedBucket,
+        selectedSkills: recall.diagnosis.selected.map((c) => c.skill),
+        rejected: recall.diagnosis.rejected.map((c) => ({
+          skill: c.skill,
+          scenario: c.scenario,
+          exposures: c.exposures,
+          successRate: c.successRate,
+          policyBoost: c.policyBoost,
+          excluded: c.excluded,
+          rejectedReason: c.rejectedReason,
+        })),
+        hintCodes: recall.diagnosis.hints.map((h) => h.code),
+      });
+      for (const candidate of recall.diagnosis.selected) {
+        log.debug("prompt-policy-recall-injected", {
+          skill: candidate.skill,
+          scenario: candidate.scenario,
+          exposures: candidate.exposures,
+          wins: candidate.wins,
+          directiveWins: candidate.directiveWins,
+          successRate: candidate.successRate,
+          policyBoost: candidate.policyBoost,
+          recallScore: candidate.recallScore,
+        });
+      }
+    }
+  } else if (cwd) {
+    log.debug("prompt-policy-recall-skipped", {
+      reason: !promptBinding.storyId
+        ? "no_active_verification_story"
+        : "no_target_boundary",
+    });
+  }
+
+  if (matchedSkills.length === 0) {
     log.debug("prompt-analysis-issue", {
       issue: "no_prompt_matches",
       evaluatedSkills: Object.keys(report.perSkillResults),
@@ -1078,42 +1156,29 @@ export function run(): string {
     return formatEmptyOutput(platform, finalizePromptEnvUpdates(platform, promptEnvBefore));
   }
 
-  // All matched but filtered by dedup
   if (report.selectedSkills.length === 0) {
     log.debug("prompt-analysis-issue", {
       issue: "all_deduped",
-      matchedSkills: allMatched,
+      matchedSkills,
       seenSkills: report.dedupState.seenSkills,
       dedupStrategy: report.dedupState.strategy,
     });
     log.complete("all_deduped", {
-      matchedCount: allMatched.length,
-      dedupedCount: allMatched.length,
+      matchedCount: matchedSkills.length,
+      dedupedCount: matchedSkills.length,
     }, log.active ? timing : null);
     return formatEmptyOutput(platform, finalizePromptEnvUpdates(platform, promptEnvBefore));
   }
 
-  // Stage 3c: Resolve prompt verification binding and apply routing-policy boosts
-  // Only apply when binding has a real targetBoundary to avoid training on unresolvable none|none buckets
-  const promptPlan = sessionId ? loadCachedPlanResult(sessionId, log) : null;
-  const promptBinding = resolvePromptVerificationBinding({ plan: promptPlan });
-  log.debug("prompt-verification-binding", {
-    source: promptBinding.source,
-    storyId: promptBinding.storyId,
-    targetBoundary: promptBinding.targetBoundary,
-    confidence: promptBinding.confidence,
-    reason: promptBinding.reason,
-  });
-
+  // Stage 3d: Apply routing-policy boosts to reorder selected skills
   const promptPolicyBoosted: Array<{ skill: string; boost: number; reason: string | null }> = [];
-  if (cwd && report.selectedSkills.length > 0 && promptBinding.storyId && promptBinding.targetBoundary) {
+  if (promptPolicy && report.selectedSkills.length > 0 && promptBinding.storyId && promptBinding.targetBoundary) {
     const promptPolicyScenario = {
       hook: "UserPromptSubmit" as RoutingHookName,
       storyKind: promptBinding.storyKind,
       targetBoundary: promptBinding.targetBoundary,
       toolName: "Prompt" as RoutingToolName,
     };
-    const promptPolicy = loadProjectRoutingPolicy(cwd);
     const rankable = report.selectedSkills.map((skill) => {
       const r = report.perSkillResults[skill];
       return {
@@ -1179,8 +1244,6 @@ export function run(): string {
   }
   const droppedByCap = [...injectResult.droppedByCap, ...report.droppedByCap];
   const droppedByBudget = [...injectResult.droppedByBudget, ...report.droppedByBudget];
-  const matchedSkills = allMatched;
-
   // Record routing-policy exposures for actually injected skills
   // Only record when binding has both storyId and targetBoundary — prevents unresolvable exposures
   let promptAttribution: ReturnType<typeof buildAttributionDecision> | null = null;
@@ -1192,6 +1255,7 @@ export function run(): string {
       route: promptBinding.route,
       targetBoundary: promptBinding.targetBoundary,
       loadedSkills: loaded,
+      preferredSkills: promptPolicyRecallSynthetic,
     });
 
     for (const skill of loaded) {
@@ -1324,18 +1388,21 @@ export function run(): string {
       ranked: report.selectedSkills.map((skill) => {
         const result = report.perSkillResults[skill];
         const policy = promptPolicyBoosted.find((p) => p.skill === skill);
+        const synthetic = promptPolicyRecallSynthetic.has(skill);
         return {
           skill,
           basePriority: result?.score ?? 0,
           effectivePriority: (result?.score ?? 0) + (policy?.boost ?? 0),
-          pattern: result?.reason
-            ? { type: "prompt-signal", value: result.reason }
-            : null,
+          pattern: synthetic
+            ? { type: "policy-recall", value: promptPolicyRecallReasons[skill] }
+            : result?.reason
+              ? { type: "prompt-signal", value: result.reason }
+              : null,
           profilerBoost: 0,
           policyBoost: policy?.boost ?? 0,
           policyReason: policy?.reason ?? null,
           summaryOnly: summaryOnly.includes(skill),
-          synthetic: false,
+          synthetic,
           droppedReason: droppedByCap.includes(skill)
             ? "cap_exceeded"
             : droppedByBudget.includes(skill)
@@ -1383,6 +1450,10 @@ export function run(): string {
   // Build prompt match reasons for the banner
   const promptMatchReasons: Record<string, string> = {};
   for (const skill of loaded) {
+    if (promptPolicyRecallReasons[skill]) {
+      promptMatchReasons[skill] = promptPolicyRecallReasons[skill];
+      continue;
+    }
     const r = report.perSkillResults[skill];
     if (r?.reason) {
       promptMatchReasons[skill] = r.reason;
