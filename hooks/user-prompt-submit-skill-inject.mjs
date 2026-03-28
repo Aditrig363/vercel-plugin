@@ -1110,7 +1110,9 @@ function run() {
           droppedReason: droppedByCap.includes(skill) ? "cap_exceeded" : droppedByBudget.includes(skill) ? "budget_exhausted" : null
         };
       }),
-      verification: null
+      verification: null,
+      causes: [],
+      edges: []
     };
     appendRoutingDecisionTrace(promptTrace);
     const promptCapsule = buildDecisionCapsule({

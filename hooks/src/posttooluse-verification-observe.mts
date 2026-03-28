@@ -949,6 +949,8 @@ export function run(rawInput?: string): string {
         observedBoundary: boundaryEvent.boundary,
         matchedSuggestedAction: boundaryEvent.matchedSuggestedAction,
       },
+      causes: [],
+      edges: [],
     });
 
     log.summary("routing.decision_trace_written", {

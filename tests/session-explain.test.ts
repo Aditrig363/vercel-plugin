@@ -559,24 +559,311 @@ describe("session-explain doctor contract", () => {
     expect(result.doctor!.latestRanked).toHaveLength(2);
   });
 
+  test("explicit causality: two companions after one candidate resolve correctly", () => {
+    const trace = makeTrace({
+      ranked: [
+        {
+          skill: "agent-browser-verify",
+          basePriority: 7,
+          effectivePriority: 15,
+          pattern: null,
+          profilerBoost: 0,
+          policyBoost: 8,
+          policyReason: "4/5 wins",
+          summaryOnly: false,
+          synthetic: true,
+          droppedReason: null,
+        },
+        {
+          skill: "verification",
+          basePriority: 0,
+          effectivePriority: 0,
+          pattern: null,
+          profilerBoost: 0,
+          policyBoost: 0,
+          policyReason: null,
+          summaryOnly: false,
+          synthetic: true,
+          droppedReason: null,
+        },
+        {
+          skill: "observability",
+          basePriority: 0,
+          effectivePriority: 0,
+          pattern: null,
+          profilerBoost: 0,
+          policyBoost: 0,
+          policyReason: null,
+          summaryOnly: false,
+          synthetic: true,
+          droppedReason: null,
+        },
+      ],
+      causes: [
+        {
+          code: "verified-companion",
+          stage: "rank",
+          skill: "verification",
+          synthetic: true,
+          scoreDelta: 0,
+          message: "Inserted learned companion after agent-browser-verify",
+          detail: {
+            candidateSkill: "agent-browser-verify",
+            scenario: "PreToolUse|bugfix|uiRender|Bash|/settings",
+          },
+        },
+        {
+          code: "verified-companion",
+          stage: "rank",
+          skill: "observability",
+          synthetic: true,
+          scoreDelta: 0,
+          message: "Inserted learned companion after agent-browser-verify",
+          detail: {
+            candidateSkill: "agent-browser-verify",
+            scenario: "PreToolUse|bugfix|uiRender|Bash|/settings",
+          },
+        },
+      ],
+      edges: [
+        {
+          fromSkill: "agent-browser-verify",
+          toSkill: "verification",
+          relation: "companion-of",
+          code: "verified-companion",
+          detail: { scenario: "PreToolUse|bugfix|uiRender|Bash|/settings" },
+        },
+        {
+          fromSkill: "agent-browser-verify",
+          toSkill: "observability",
+          relation: "companion-of",
+          code: "verified-companion",
+          detail: { scenario: "PreToolUse|bugfix|uiRender|Bash|/settings" },
+        },
+      ],
+    } as any);
+    appendRoutingDecisionTrace(trace);
+
+    const output = runSessionExplain(TEST_SESSION, ROOT, true);
+    const result: SessionExplainResult = JSON.parse(output);
+
+    expect(result.doctor).not.toBeNull();
+    expect(result.doctor!.companionRecall.detected).toBe(true);
+    expect(result.doctor!.companionRecall.entries).toHaveLength(2);
+
+    const verification = result.doctor!.companionRecall.entries.find(
+      (e) => e.companionSkill === "verification",
+    )!;
+    expect(verification.candidateSkill).toBe("agent-browser-verify");
+    expect(verification.synthetic).toBe(true);
+
+    const observability = result.doctor!.companionRecall.entries.find(
+      (e) => e.companionSkill === "observability",
+    )!;
+    expect(observability.candidateSkill).toBe("agent-browser-verify");
+    expect(observability.synthetic).toBe(true);
+
+    // No COMPANION_EDGE_MISSING hints since all edges are present
+    const edgeMissing = result.doctor!.hints.filter(
+      (h) => h.code === "COMPANION_EDGE_MISSING",
+    );
+    expect(edgeMissing).toHaveLength(0);
+  });
+
+  test("explicit causality: companion moved away from candidate resolves via edge", () => {
+    // ranked order: candidate, unrelated, companion — edge still resolves correctly
+    const trace = makeTrace({
+      ranked: [
+        {
+          skill: "agent-browser-verify",
+          basePriority: 7,
+          effectivePriority: 15,
+          pattern: null,
+          profilerBoost: 0,
+          policyBoost: 8,
+          policyReason: "4/5 wins",
+          summaryOnly: false,
+          synthetic: true,
+          droppedReason: null,
+        },
+        {
+          skill: "next-app-router",
+          basePriority: 6,
+          effectivePriority: 6,
+          pattern: { type: "pathPattern", value: "app/**" },
+          profilerBoost: 0,
+          policyBoost: 0,
+          policyReason: null,
+          summaryOnly: false,
+          synthetic: false,
+          droppedReason: null,
+        },
+        {
+          skill: "verification",
+          basePriority: 0,
+          effectivePriority: 0,
+          pattern: null,
+          profilerBoost: 0,
+          policyBoost: 0,
+          policyReason: null,
+          summaryOnly: false,
+          synthetic: true,
+          droppedReason: null,
+        },
+      ],
+      causes: [
+        {
+          code: "verified-companion",
+          stage: "rank",
+          skill: "verification",
+          synthetic: true,
+          scoreDelta: 0,
+          message: "Inserted learned companion after agent-browser-verify",
+          detail: {
+            candidateSkill: "agent-browser-verify",
+            scenario: "PreToolUse|bugfix|uiRender|Bash|/settings",
+          },
+        },
+      ],
+      edges: [
+        {
+          fromSkill: "agent-browser-verify",
+          toSkill: "verification",
+          relation: "companion-of",
+          code: "verified-companion",
+          detail: { scenario: "PreToolUse|bugfix|uiRender|Bash|/settings" },
+        },
+      ],
+    } as any);
+    appendRoutingDecisionTrace(trace);
+
+    const output = runSessionExplain(TEST_SESSION, ROOT, true);
+    const result: SessionExplainResult = JSON.parse(output);
+
+    expect(result.doctor!.companionRecall.detected).toBe(true);
+    const entry = result.doctor!.companionRecall.entries[0];
+    // Edge-based resolution should find the correct candidate even though
+    // next-app-router sits between them in ranked order
+    expect(entry.candidateSkill).toBe("agent-browser-verify");
+    expect(entry.companionSkill).toBe("verification");
+  });
+
+  test("fallback: old traces without causes/edges resolve via ranked order", () => {
+    // Old-style trace: no causes or edges, only ranked[] with pattern metadata
+    const trace = makeTrace({
+      ranked: [
+        {
+          skill: "agent-browser-verify",
+          basePriority: 7,
+          effectivePriority: 15,
+          pattern: { type: "bashPattern", value: "dev server" },
+          profilerBoost: 0,
+          policyBoost: 8,
+          policyReason: "4/5 wins",
+          summaryOnly: false,
+          synthetic: false,
+          droppedReason: null,
+        },
+        {
+          skill: "verification",
+          basePriority: 0,
+          effectivePriority: 0,
+          pattern: { type: "verified-companion", value: "scenario-companion-rulebook" },
+          profilerBoost: 0,
+          policyBoost: 0,
+          policyReason: null,
+          summaryOnly: false,
+          synthetic: true,
+          droppedReason: null,
+        },
+      ],
+      // Explicitly no causes/edges — simulates pre-causality trace
+    });
+    // Remove causes/edges from the trace before appending
+    const rawTrace = { ...trace } as any;
+    delete rawTrace.causes;
+    delete rawTrace.edges;
+    appendRoutingDecisionTrace(rawTrace);
+
+    const output = runSessionExplain(TEST_SESSION, ROOT, true);
+    const result: SessionExplainResult = JSON.parse(output);
+
+    expect(result.doctor!.companionRecall.detected).toBe(true);
+    expect(result.doctor!.companionRecall.entries).toHaveLength(1);
+
+    const entry = result.doctor!.companionRecall.entries[0];
+    expect(entry.companionSkill).toBe("verification");
+    // Fallback: candidate inferred from preceding ranked entry
+    expect(entry.candidateSkill).toBe("agent-browser-verify");
+    expect(entry.patternType).toBe("verified-companion");
+  });
+
+  test("COMPANION_EDGE_MISSING when companion has cause but no edge", () => {
+    const trace = makeTrace({
+      ranked: [
+        {
+          skill: "agent-browser-verify",
+          basePriority: 7,
+          effectivePriority: 15,
+          pattern: null,
+          profilerBoost: 0,
+          policyBoost: 8,
+          policyReason: "4/5 wins",
+          summaryOnly: false,
+          synthetic: true,
+          droppedReason: null,
+        },
+        {
+          skill: "verification",
+          basePriority: 0,
+          effectivePriority: 0,
+          pattern: null,
+          profilerBoost: 0,
+          policyBoost: 0,
+          policyReason: null,
+          summaryOnly: false,
+          synthetic: true,
+          droppedReason: null,
+        },
+      ],
+      causes: [
+        {
+          code: "verified-companion",
+          stage: "rank",
+          skill: "verification",
+          synthetic: true,
+          scoreDelta: 0,
+          message: "Inserted learned companion after agent-browser-verify",
+          detail: {
+            // No candidateSkill in detail either
+            scenario: "PreToolUse|bugfix|uiRender|Bash|/settings",
+          },
+        },
+      ],
+      edges: [], // No edges — should trigger COMPANION_EDGE_MISSING
+    } as any);
+    appendRoutingDecisionTrace(trace);
+
+    const output = runSessionExplain(TEST_SESSION, ROOT, true);
+    const result: SessionExplainResult = JSON.parse(output);
+
+    expect(result.doctor!.companionRecall.detected).toBe(true);
+    const entry = result.doctor!.companionRecall.entries[0];
+    // No edge and no detail.candidateSkill → null
+    expect(entry.candidateSkill).toBeNull();
+
+    const hint = result.doctor!.hints.find(
+      (h) => h.code === "COMPANION_EDGE_MISSING",
+    );
+    expect(hint).toBeDefined();
+    expect(hint!.severity).toBe("warning");
+    expect(hint!.message).toContain("verification");
+  });
+
   test(".doctor is null when no traces exist", () => {
     const output = runSessionExplain(TEST_SESSION, ROOT, true);
     const result: SessionExplainResult = JSON.parse(output);
 
     expect(result.doctor).toBeNull();
-  });
-
-  test("structured stderr log includes doctorDecisionId and doctorHintCount", () => {
-    const trace = makeTrace();
-    appendRoutingDecisionTrace(trace);
-
-    // Capture stderr by running the function — the log was already verified
-    // in the test output above. Here we just check the result contract matches.
-    const output = runSessionExplain(TEST_SESSION, ROOT, true);
-    const result: SessionExplainResult = JSON.parse(output);
-
-    // The stderr log should have been emitted; verify the result matches
-    expect(result.doctor!.latestDecisionId).toBe("deadbeef01234567");
-    expect(typeof result.doctor!.hints.length).toBe("number");
   });
 });

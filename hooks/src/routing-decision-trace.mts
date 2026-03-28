@@ -22,6 +22,10 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import type {
+  RoutingDecisionCause,
+  RoutingDecisionEdge,
+} from "./routing-decision-causality.mjs";
 
 // ---------------------------------------------------------------------------
 // Safe session-id segment (mirrors routing-policy-ledger.mts)
@@ -92,7 +96,14 @@ export interface RoutingDecisionTrace {
     observedBoundary: string | null;
     matchedSuggestedAction: boolean | null;
   } | null;
+  /** Explicit causal reasons for each routing action (pattern match, boost, recall, drop). */
+  causes: RoutingDecisionCause[];
+  /** Explicit relationships between skills (companion-of, recalled-after, etc.). */
+  edges: RoutingDecisionEdge[];
 }
+
+// Re-export causality types for downstream consumers
+export type { RoutingDecisionCause, RoutingDecisionEdge } from "./routing-decision-causality.mjs";
 
 /**
  * V1 trace shape for backward-compatible reads. V1 stored `route` inside
@@ -131,7 +142,15 @@ type PersistedTrace = RoutingDecisionTrace | RoutingDecisionTraceV1;
 // ---------------------------------------------------------------------------
 
 function normalizeTrace(raw: PersistedTrace): RoutingDecisionTrace {
-  if (raw.version === 2) return raw as RoutingDecisionTrace;
+  if (raw.version === 2) {
+    // Backfill causes/edges for v2 traces written before the causality feature
+    const trace = raw as RoutingDecisionTrace;
+    return {
+      ...trace,
+      causes: trace.causes ?? [],
+      edges: trace.edges ?? [],
+    };
+  }
 
   // V1 → V2: move primaryStory.route to storyRoute, add observedRoute
   const v1 = raw as RoutingDecisionTraceV1;
@@ -145,6 +164,8 @@ function normalizeTrace(raw: PersistedTrace): RoutingDecisionTrace {
       targetBoundary: v1.primaryStory.targetBoundary,
     },
     observedRoute: v1.primaryStory.route, // best-effort: v1 conflated the two
+    causes: [],
+    edges: [],
   };
 }
 

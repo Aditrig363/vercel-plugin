@@ -70,6 +70,24 @@ export interface CompanionRecallDiagnosis {
   entries: CompanionRecallDoctorEntry[];
 }
 
+export interface SessionExplainDoctorCause {
+  code: string;
+  stage: string;
+  skill: string;
+  synthetic: boolean;
+  scoreDelta: number;
+  message: string;
+  detail: Record<string, unknown>;
+}
+
+export interface SessionExplainDoctorEdge {
+  fromSkill: string;
+  toSkill: string;
+  relation: string;
+  code: string;
+  detail: Record<string, unknown>;
+}
+
 export interface SessionExplainDoctor {
   latestDecisionId: string | null;
   latestScenario: string | null;
@@ -134,6 +152,103 @@ function stringOrNull(value: unknown): string | null {
 
 function numberOrZero(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function toRecordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.map((item) => toRecord(item)).filter((item) => Object.keys(item).length > 0)
+    : [];
+}
+
+function readDecisionCauses(
+  trace: Record<string, unknown>,
+): SessionExplainDoctorCause[] {
+  return toRecordArray(trace.causes).map((cause) => ({
+    code: stringOrNull(cause.code) ?? "unknown",
+    stage: stringOrNull(cause.stage) ?? "unknown",
+    skill: stringOrNull(cause.skill) ?? "unknown",
+    synthetic: cause.synthetic === true,
+    scoreDelta: typeof cause.scoreDelta === "number" ? cause.scoreDelta : 0,
+    message: stringOrNull(cause.message) ?? "",
+    detail: toRecord(cause.detail),
+  }));
+}
+
+function readDecisionEdges(
+  trace: Record<string, unknown>,
+): SessionExplainDoctorEdge[] {
+  return toRecordArray(trace.edges).map((edge) => ({
+    fromSkill: stringOrNull(edge.fromSkill) ?? "unknown",
+    toSkill: stringOrNull(edge.toSkill) ?? "unknown",
+    relation: stringOrNull(edge.relation) ?? "unknown",
+    code: stringOrNull(edge.code) ?? "unknown",
+    detail: toRecord(edge.detail),
+  }));
+}
+
+function buildCompanionRecallDiagnosis(
+  trace: Record<string, unknown>,
+  rankedSource: unknown[],
+): CompanionRecallDiagnosis {
+  // Prefer explicit causes/edges from the causality system
+  const causes = readDecisionCauses(trace);
+  const edges = readDecisionEdges(trace);
+
+  const explicitEntries = causes
+    .filter((cause) => cause.code === "verified-companion")
+    .map<CompanionRecallDoctorEntry>((cause) => {
+      const edge = edges.find(
+        (item) =>
+          item.code === "verified-companion" &&
+          item.toSkill === cause.skill,
+      );
+      return {
+        companionSkill: cause.skill,
+        candidateSkill: edge
+          ? edge.fromSkill
+          : stringOrNull(cause.detail.candidateSkill),
+        patternType: cause.code,
+        patternValue: stringOrNull(cause.detail.scenario) ?? "scenario-companion-rulebook",
+        synthetic: cause.synthetic,
+        droppedReason: stringOrNull(cause.detail.droppedReason),
+      };
+    });
+
+  if (explicitEntries.length > 0) {
+    return { detected: true, entries: explicitEntries };
+  }
+
+  // Backward-compatible fallback for old traces without causes/edges
+  const fallbackEntries: CompanionRecallDoctorEntry[] = [];
+  for (const entry of rankedSource) {
+    const obj = toRecord(entry);
+    const pattern = toRecord(obj.pattern);
+    if (stringOrNull(pattern.type) !== "verified-companion") continue;
+    const skill = stringOrNull(obj.skill);
+    if (!skill) continue;
+
+    let candidateSkill: string | null = null;
+    const idx = rankedSource.indexOf(entry);
+    for (let i = idx - 1; i >= 0; i--) {
+      const prev = toRecord(rankedSource[i]);
+      const prevPattern = toRecord(prev.pattern);
+      if (stringOrNull(prevPattern.type) !== "verified-companion") {
+        candidateSkill = stringOrNull(prev.skill);
+        break;
+      }
+    }
+
+    fallbackEntries.push({
+      companionSkill: skill,
+      candidateSkill,
+      patternType: String(pattern.type),
+      patternValue: stringOrNull(pattern.value) ?? "scenario-companion-rulebook",
+      synthetic: obj.synthetic === true,
+      droppedReason: stringOrNull(obj.droppedReason),
+    });
+  }
+
+  return { detected: fallbackEntries.length > 0, entries: fallbackEntries };
 }
 
 function buildRoutingDoctor(
@@ -201,43 +316,8 @@ function buildRoutingDoctor(
         })
       : null;
 
-  // --- Companion recall extraction from ranked[] ---
-  const companionEntries: CompanionRecallDoctorEntry[] = [];
-  for (const entry of rankedSource) {
-    const obj = toRecord(entry);
-    const pattern = toRecord(obj.pattern);
-    if (stringOrNull(pattern.type) === "verified-companion") {
-      const skill = stringOrNull(obj.skill);
-      if (!skill) continue;
-
-      // Find the candidate skill: look for the preceding non-companion entry
-      // in ranked[], since companions are inserted immediately after their candidate.
-      let candidateSkill: string | null = null;
-      const idx = rankedSource.indexOf(entry);
-      for (let i = idx - 1; i >= 0; i--) {
-        const prev = toRecord(rankedSource[i]);
-        const prevPattern = toRecord(prev.pattern);
-        if (stringOrNull(prevPattern.type) !== "verified-companion") {
-          candidateSkill = stringOrNull(prev.skill);
-          break;
-        }
-      }
-
-      companionEntries.push({
-        companionSkill: skill,
-        candidateSkill,
-        patternType: String(pattern.type),
-        patternValue: stringOrNull(pattern.value) ?? "scenario-companion-rulebook",
-        synthetic: obj.synthetic === true,
-        droppedReason: stringOrNull(obj.droppedReason),
-      });
-    }
-  }
-
-  const companionRecall: CompanionRecallDiagnosis = {
-    detected: companionEntries.length > 0,
-    entries: companionEntries,
-  };
+  // --- Companion recall extraction: prefer explicit causes/edges, fall back to ranked[] ---
+  const companionRecall = buildCompanionRecallDiagnosis(trace, rankedSource);
 
   const hints: RoutingDiagnosisHint[] = [...(policyRecall?.hints ?? [])];
 
@@ -253,6 +333,14 @@ function buildRoutingDoctor(
 
   if (companionRecall.detected) {
     for (const ce of companionRecall.entries) {
+      if (!ce.candidateSkill) {
+        hints.push({
+          severity: "warning",
+          code: "COMPANION_EDGE_MISSING",
+          message: `Companion-recalled skill ${ce.companionSkill} has no explicit candidateSkill in the trace`,
+          hint: "Write a verified-companion edge into the routing trace instead of inferring from ranked order",
+        });
+      }
       if (!ce.synthetic) {
         hints.push({
           severity: "warning",
@@ -433,21 +521,6 @@ export function runSessionExplain(
     diagnosis,
     doctor,
   };
-
-  // Log structured state transition
-  console.error(JSON.stringify({
-    event: "session_explain",
-    sessionId,
-    skillCount: result.manifest.skillCount,
-    excludedCount: excludedSkills.length,
-    routingDecisions: traces.length,
-    hasVerificationStories: plan.hasStories,
-    diagnosisCount: diagnosis.length,
-    doctorDecisionId: result.doctor?.latestDecisionId ?? null,
-    doctorHintCount: result.doctor?.hints.length ?? 0,
-    companionRecallDetected: result.doctor?.companionRecall.detected ?? false,
-    companionRecallCount: result.doctor?.companionRecall.entries.length ?? 0,
-  }));
 
   if (json) return JSON.stringify(result, null, 2);
   return formatSessionExplainText(result);

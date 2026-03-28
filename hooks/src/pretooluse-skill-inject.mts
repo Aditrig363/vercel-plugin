@@ -75,6 +75,12 @@ import {
   appendRoutingDecisionTrace,
   createDecisionId,
 } from "./routing-decision-trace.mjs";
+import {
+  createDecisionCausality,
+  addCause,
+  addEdge,
+} from "./routing-decision-causality.mjs";
+import type { RoutingDecisionCausality } from "./routing-decision-causality.mjs";
 import { recallVerifiedCompanions } from "./companion-recall.mjs";
 
 const MAX_SKILLS = 3;
@@ -1473,6 +1479,27 @@ function run(): string {
 
   const { matchedEntries, matchReasons, matched } = matchResult;
 
+  // Causality store — accumulates explicit causes and edges across all stages
+  const causality = createDecisionCausality();
+
+  // Record pattern-match causes
+  for (const [skill, reason] of Object.entries(matchReasons)) {
+    addCause(causality, {
+      code: "pattern-match",
+      stage: "match",
+      skill,
+      synthetic: false,
+      scoreDelta: 0,
+      message: `Matched ${reason.matchType} pattern`,
+      detail: {
+        matchType: reason.matchType,
+        pattern: reason.pattern,
+        toolName,
+        toolTarget: toolName === "Bash" ? redactCommand(toolTarget) : toolTarget,
+      },
+    });
+  }
+
   // Stage 3.5: TSX review trigger — check before dedup to inform synthetic injection
   const tsxReview = checkTsxReviewTrigger(toolName, toolInput, injectedSkills, dedupOff, sessionId, log);
 
@@ -1509,6 +1536,37 @@ function run(): string {
   }, log);
 
   const { newEntries, rankedSkills, profilerBoosted, policyBoosted, rulebookBoosted } = dedupResult;
+
+  // Record policy boost causes
+  for (const boosted of policyBoosted) {
+    addCause(causality, {
+      code: "policy-boost",
+      stage: "rank",
+      skill: boosted.skill,
+      synthetic: false,
+      scoreDelta: boosted.boost,
+      message: boosted.reason ?? "Policy boost applied",
+      detail: { boost: boosted.boost, reason: boosted.reason ?? "" },
+    });
+  }
+
+  // Record rulebook boost causes
+  for (const boosted of rulebookBoosted) {
+    addCause(causality, {
+      code: "rulebook-boost",
+      stage: "rank",
+      skill: boosted.skill,
+      synthetic: false,
+      scoreDelta: boosted.ruleBoost,
+      message: boosted.ruleReason || "Rulebook boost applied",
+      detail: {
+        matchedRuleId: boosted.matchedRuleId,
+        ruleBoost: boosted.ruleBoost,
+        ruleReason: boosted.ruleReason,
+        rulebookPath: boosted.rulebookPath,
+      },
+    });
+  }
 
   // Stage 4.5: Synthetically inject react-best-practices if TSX review triggered
   let tsxReviewInjected = false;
@@ -1711,6 +1769,22 @@ function run(): string {
         rankedSkills.splice(insertIdx, 0, candidate.skill);
         matched.add(candidate.skill);
         policyRecallSynthetic.add(candidate.skill);
+        addCause(causality, {
+          code: "policy-recall",
+          stage: "rank",
+          skill: candidate.skill,
+          synthetic: true,
+          scoreDelta: 0,
+          message: `Recalled historically verified skill for ${candidate.scenario}`,
+          detail: {
+            scenario: candidate.scenario,
+            exposures: candidate.exposures,
+            wins: candidate.wins,
+            directiveWins: candidate.directiveWins,
+            successRate: candidate.successRate,
+            recallScore: candidate.recallScore,
+          },
+        });
         log.debug("policy-recall-injected", {
           skill: candidate.skill,
           scenario: candidate.scenario,
@@ -1774,6 +1848,31 @@ function run(): string {
           trigger: "verified-companion",
           reasonCode: "scenario-companion-rulebook",
         };
+
+        addCause(causality, {
+          code: "verified-companion",
+          stage: "rank",
+          skill: recall.companionSkill,
+          synthetic: true,
+          scoreDelta: 0,
+          message: `Inserted learned companion after ${recall.candidateSkill}`,
+          detail: {
+            candidateSkill: recall.candidateSkill,
+            scenario: recall.scenario,
+            confidence: recall.confidence,
+            summaryOnly: alreadySeen,
+          },
+        });
+        addEdge(causality, {
+          fromSkill: recall.candidateSkill,
+          toSkill: recall.companionSkill,
+          relation: "companion-of",
+          code: "verified-companion",
+          detail: {
+            scenario: recall.scenario,
+            confidence: recall.confidence,
+          },
+        });
 
         log.debug("companion-recall-injected", {
           candidateSkill: recall.candidateSkill,
@@ -1847,6 +1946,30 @@ function run(): string {
     platform,
   });
   if (log.active) timing.skill_read = Math.round(log.now() - tSkillRead);
+
+  // Record cap/budget drop causes
+  for (const skill of droppedByCap) {
+    addCause(causality, {
+      code: "dropped-cap",
+      stage: "inject",
+      skill,
+      synthetic: false,
+      scoreDelta: 0,
+      message: "Dropped because max skill cap was exceeded",
+      detail: { maxSkills: MAX_SKILLS },
+    });
+  }
+  for (const skill of droppedByBudget) {
+    addCause(causality, {
+      code: "dropped-budget",
+      stage: "inject",
+      skill,
+      synthetic: false,
+      scoreDelta: 0,
+      message: "Dropped because injection budget was exhausted",
+      detail: { budgetBytes: getInjectionBudget() },
+    });
+  }
 
   // Record routing-policy exposures for actually injected skills
   // Only record when an active verification story exists to prevent none|none scenario pollution
@@ -2277,6 +2400,8 @@ function run(): string {
       verification: verificationId
         ? { verificationId, observedBoundary: null, matchedSuggestedAction: null }
         : null,
+      causes: causality.causes,
+      edges: causality.edges,
     });
     log.summary("routing.decision_trace_written", {
       decisionId,
@@ -2284,6 +2409,14 @@ function run(): string {
       toolName,
       matchedSkills: [...matched],
       injectedSkills: loaded,
+    });
+    log.summary("routing.decision_causality", {
+      decisionId,
+      hook: "PreToolUse",
+      causeCount: causality.causes.length,
+      edgeCount: causality.edges.length,
+      causes: causality.causes,
+      edges: causality.edges,
     });
   }
 

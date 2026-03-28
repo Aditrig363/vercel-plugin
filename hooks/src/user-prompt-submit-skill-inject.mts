@@ -1546,6 +1546,8 @@ export function run(): string {
         };
       }),
       verification: null,
+      causes: [],
+      edges: [],
     };
     appendRoutingDecisionTrace(promptTrace);
 

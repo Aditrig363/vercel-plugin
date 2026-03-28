@@ -50,6 +50,11 @@ import {
   appendRoutingDecisionTrace,
   createDecisionId
 } from "./routing-decision-trace.mjs";
+import {
+  createDecisionCausality,
+  addCause,
+  addEdge
+} from "./routing-decision-causality.mjs";
 import { recallVerifiedCompanions } from "./companion-recall.mjs";
 var MAX_SKILLS = 3;
 var DEFAULT_INJECTION_BUDGET_BYTES = 18e3;
@@ -944,6 +949,23 @@ function run() {
   if (!matchResult) return "{}";
   if (log.active) timing.match = Math.round(log.now() - tMatch);
   const { matchedEntries, matchReasons, matched } = matchResult;
+  const causality = createDecisionCausality();
+  for (const [skill, reason] of Object.entries(matchReasons)) {
+    addCause(causality, {
+      code: "pattern-match",
+      stage: "match",
+      skill,
+      synthetic: false,
+      scoreDelta: 0,
+      message: `Matched ${reason.matchType} pattern`,
+      detail: {
+        matchType: reason.matchType,
+        pattern: reason.pattern,
+        toolName,
+        toolTarget: toolName === "Bash" ? redactCommand(toolTarget) : toolTarget
+      }
+    });
+  }
   const tsxReview = checkTsxReviewTrigger(toolName, toolInput, injectedSkills, dedupOff, sessionId, log);
   const devServerVerify = checkDevServerVerify(toolName, toolInput, injectedSkills, dedupOff, sessionId, log);
   const vercelEnvHelp = checkVercelEnvHelp(toolName, toolInput, injectedSkills, dedupOff, log);
@@ -970,6 +992,33 @@ function run() {
     sessionId
   }, log);
   const { newEntries, rankedSkills, profilerBoosted, policyBoosted, rulebookBoosted } = dedupResult;
+  for (const boosted of policyBoosted) {
+    addCause(causality, {
+      code: "policy-boost",
+      stage: "rank",
+      skill: boosted.skill,
+      synthetic: false,
+      scoreDelta: boosted.boost,
+      message: boosted.reason ?? "Policy boost applied",
+      detail: { boost: boosted.boost, reason: boosted.reason ?? "" }
+    });
+  }
+  for (const boosted of rulebookBoosted) {
+    addCause(causality, {
+      code: "rulebook-boost",
+      stage: "rank",
+      skill: boosted.skill,
+      synthetic: false,
+      scoreDelta: boosted.ruleBoost,
+      message: boosted.ruleReason || "Rulebook boost applied",
+      detail: {
+        matchedRuleId: boosted.matchedRuleId,
+        ruleBoost: boosted.ruleBoost,
+        ruleReason: boosted.ruleReason,
+        rulebookPath: boosted.rulebookPath
+      }
+    });
+  }
   let tsxReviewInjected = false;
   if (tsxReview.triggered && !rankedSkills.includes(TSX_REVIEW_SKILL)) {
     const reviewTemplate = compiledSkills.find((e) => e.skill === TSX_REVIEW_SKILL);
@@ -1126,6 +1175,22 @@ function run() {
         rankedSkills.splice(insertIdx, 0, candidate.skill);
         matched.add(candidate.skill);
         policyRecallSynthetic.add(candidate.skill);
+        addCause(causality, {
+          code: "policy-recall",
+          stage: "rank",
+          skill: candidate.skill,
+          synthetic: true,
+          scoreDelta: 0,
+          message: `Recalled historically verified skill for ${candidate.scenario}`,
+          detail: {
+            scenario: candidate.scenario,
+            exposures: candidate.exposures,
+            wins: candidate.wins,
+            directiveWins: candidate.directiveWins,
+            successRate: candidate.successRate,
+            recallScore: candidate.recallScore
+          }
+        });
         log.debug("policy-recall-injected", {
           skill: candidate.skill,
           scenario: candidate.scenario,
@@ -1176,6 +1241,30 @@ function run() {
           trigger: "verified-companion",
           reasonCode: "scenario-companion-rulebook"
         };
+        addCause(causality, {
+          code: "verified-companion",
+          stage: "rank",
+          skill: recall.companionSkill,
+          synthetic: true,
+          scoreDelta: 0,
+          message: `Inserted learned companion after ${recall.candidateSkill}`,
+          detail: {
+            candidateSkill: recall.candidateSkill,
+            scenario: recall.scenario,
+            confidence: recall.confidence,
+            summaryOnly: alreadySeen
+          }
+        });
+        addEdge(causality, {
+          fromSkill: recall.candidateSkill,
+          toSkill: recall.companionSkill,
+          relation: "companion-of",
+          code: "verified-companion",
+          detail: {
+            scenario: recall.scenario,
+            confidence: recall.confidence
+          }
+        });
         log.debug("companion-recall-injected", {
           candidateSkill: recall.candidateSkill,
           companionSkill: recall.companionSkill,
@@ -1243,6 +1332,28 @@ function run() {
     platform
   });
   if (log.active) timing.skill_read = Math.round(log.now() - tSkillRead);
+  for (const skill of droppedByCap) {
+    addCause(causality, {
+      code: "dropped-cap",
+      stage: "inject",
+      skill,
+      synthetic: false,
+      scoreDelta: 0,
+      message: "Dropped because max skill cap was exceeded",
+      detail: { maxSkills: MAX_SKILLS }
+    });
+  }
+  for (const skill of droppedByBudget) {
+    addCause(causality, {
+      code: "dropped-budget",
+      stage: "inject",
+      skill,
+      synthetic: false,
+      scoreDelta: 0,
+      message: "Dropped because injection budget was exhausted",
+      detail: { budgetBytes: getInjectionBudget() }
+    });
+  }
   if (loaded.length > 0 && sessionId) {
     const plan = loadCachedPlanResult(sessionId, log);
     const story = plan ? selectActiveStory(plan) : null;
@@ -1595,7 +1706,9 @@ function run() {
         ...droppedByBudget.map((skill) => `budget_exhausted:${skill}`)
       ],
       ranked: traceRanked,
-      verification: verificationId ? { verificationId, observedBoundary: null, matchedSuggestedAction: null } : null
+      verification: verificationId ? { verificationId, observedBoundary: null, matchedSuggestedAction: null } : null,
+      causes: causality.causes,
+      edges: causality.edges
     });
     log.summary("routing.decision_trace_written", {
       decisionId,
@@ -1603,6 +1716,14 @@ function run() {
       toolName,
       matchedSkills: [...matched],
       injectedSkills: loaded
+    });
+    log.summary("routing.decision_causality", {
+      decisionId,
+      hook: "PreToolUse",
+      causeCount: causality.causes.length,
+      edgeCount: causality.edges.length,
+      causes: causality.causes,
+      edges: causality.edges
     });
   }
   return result;

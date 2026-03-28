@@ -11,6 +11,14 @@ import {
   type RoutingDecisionTrace,
   type DecisionHook,
 } from "../hooks/src/routing-decision-trace.mts";
+import {
+  createDecisionCausality,
+  addCause,
+  addEdge,
+  causesForSkill,
+  type RoutingDecisionCause,
+  type RoutingDecisionEdge,
+} from "../hooks/src/routing-decision-causality.mts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,6 +63,8 @@ function makeTrace(
       },
     ],
     verification: null,
+    causes: [],
+    edges: [],
     ...overrides,
   };
 }
@@ -704,6 +714,401 @@ describe("routing-decision-trace", () => {
         .update(unsafeSession)
         .digest("hex");
       expect(dir).toContain(hash);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Causality: causes and edges round-trip
+  // -------------------------------------------------------------------------
+
+  describe("causality round-trip", () => {
+    test("traces with causes and edges round-trip through JSONL", () => {
+      const causes: RoutingDecisionCause[] = [
+        {
+          code: "pattern-match",
+          stage: "match",
+          skill: "agent-browser-verify",
+          synthetic: false,
+          scoreDelta: 0,
+          message: "Matched bashPattern pattern",
+          detail: { matchType: "bashPattern", pattern: "dev server" },
+        },
+        {
+          code: "policy-recall",
+          stage: "rank",
+          skill: "agent-browser-verify",
+          synthetic: true,
+          scoreDelta: 0,
+          message: "Recalled historically verified skill",
+          detail: { scenario: "PreToolUse|bugfix|uiRender|Bash|/settings", wins: 4 },
+        },
+        {
+          code: "verified-companion",
+          stage: "rank",
+          skill: "verification",
+          synthetic: true,
+          scoreDelta: 0,
+          message: "Inserted learned companion after agent-browser-verify",
+          detail: { candidateSkill: "agent-browser-verify", confidence: 0.93 },
+        },
+      ];
+      const edges: RoutingDecisionEdge[] = [
+        {
+          fromSkill: "agent-browser-verify",
+          toSkill: "verification",
+          relation: "companion-of",
+          code: "verified-companion",
+          detail: { confidence: 0.93, scenario: "PreToolUse|bugfix|uiRender|Bash|/settings" },
+        },
+      ];
+      const trace = makeTrace({ causes, edges });
+      appendRoutingDecisionTrace(trace);
+
+      const [read] = readRoutingDecisionTrace(TEST_SESSION);
+      expect(read.causes).toEqual(causes);
+      expect(read.edges).toEqual(edges);
+    });
+
+    test("old v2 traces without causes/edges get empty arrays on read", () => {
+      // Simulate a v2 trace written before the causality feature
+      const rawTrace = {
+        version: 2,
+        decisionId: "pre-causality-0001",
+        sessionId: TEST_SESSION,
+        hook: "PreToolUse",
+        toolName: "Bash",
+        toolTarget: "npm run dev",
+        timestamp: "2026-03-27T08:00:00.000Z",
+        primaryStory: { id: null, kind: null, storyRoute: null, targetBoundary: null },
+        observedRoute: null,
+        policyScenario: null,
+        matchedSkills: [],
+        injectedSkills: [],
+        skippedReasons: [],
+        ranked: [],
+        verification: null,
+        // no causes or edges field
+      };
+
+      mkdirSync(traceDir(TEST_SESSION), { recursive: true });
+      appendFileSync(
+        tracePath(TEST_SESSION),
+        JSON.stringify(rawTrace) + "\n",
+        "utf8",
+      );
+
+      const [read] = readRoutingDecisionTrace(TEST_SESSION);
+      expect(read.causes).toEqual([]);
+      expect(read.edges).toEqual([]);
+    });
+
+    test("v1 traces get empty causes and edges on normalization", () => {
+      const v1Trace = {
+        version: 1,
+        decisionId: "v1-causality-test",
+        sessionId: TEST_SESSION,
+        hook: "PreToolUse",
+        toolName: "Bash",
+        toolTarget: "npm run dev",
+        timestamp: "2026-03-27T08:00:00.000Z",
+        primaryStory: { id: null, kind: null, route: null, targetBoundary: null },
+        policyScenario: null,
+        matchedSkills: [],
+        injectedSkills: [],
+        skippedReasons: [],
+        ranked: [],
+        verification: null,
+      };
+
+      mkdirSync(traceDir(TEST_SESSION), { recursive: true });
+      appendFileSync(
+        tracePath(TEST_SESSION),
+        JSON.stringify(v1Trace) + "\n",
+        "utf8",
+      );
+
+      const [read] = readRoutingDecisionTrace(TEST_SESSION);
+      expect(read.version).toBe(2);
+      expect(read.causes).toEqual([]);
+      expect(read.edges).toEqual([]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Causality helpers: deterministic sorting
+  // -------------------------------------------------------------------------
+
+  describe("routing-decision-causality", () => {
+    test("createDecisionCausality returns empty causes and edges", () => {
+      const store = createDecisionCausality();
+      expect(store.causes).toEqual([]);
+      expect(store.edges).toEqual([]);
+    });
+
+    test("addCause sorts detail keys deterministically", () => {
+      const store = createDecisionCausality();
+      addCause(store, {
+        code: "pattern-match",
+        stage: "match",
+        skill: "nextjs-basics",
+        synthetic: false,
+        scoreDelta: 0,
+        message: "Matched pathPattern",
+        detail: { zebra: 1, alpha: 2, middle: 3 },
+      });
+
+      const keys = Object.keys(store.causes[0].detail);
+      expect(keys).toEqual(["alpha", "middle", "zebra"]);
+    });
+
+    test("addCause sorts nested detail objects", () => {
+      const store = createDecisionCausality();
+      addCause(store, {
+        code: "policy-boost",
+        stage: "rank",
+        skill: "agent-browser-verify",
+        synthetic: false,
+        scoreDelta: 8,
+        message: "Policy boost",
+        detail: { z: { b: 1, a: 2 }, a: { d: 3, c: 4 } },
+      });
+
+      const detail = store.causes[0].detail;
+      expect(Object.keys(detail)).toEqual(["a", "z"]);
+      expect(Object.keys(detail.a as Record<string, unknown>)).toEqual(["c", "d"]);
+      expect(Object.keys(detail.z as Record<string, unknown>)).toEqual(["a", "b"]);
+    });
+
+    test("causes are sorted by (skill, stage, code, message) regardless of insertion order", () => {
+      const store = createDecisionCausality();
+
+      // Insert in reverse alphabetical order
+      addCause(store, {
+        code: "verified-companion",
+        stage: "rank",
+        skill: "verification",
+        synthetic: true,
+        scoreDelta: 0,
+        message: "Companion",
+        detail: {},
+      });
+      addCause(store, {
+        code: "pattern-match",
+        stage: "match",
+        skill: "agent-browser-verify",
+        synthetic: false,
+        scoreDelta: 0,
+        message: "Pattern match",
+        detail: {},
+      });
+      addCause(store, {
+        code: "policy-boost",
+        stage: "rank",
+        skill: "agent-browser-verify",
+        synthetic: false,
+        scoreDelta: 8,
+        message: "Policy boost",
+        detail: {},
+      });
+
+      // Sorted by skill first, then stage, code, message
+      expect(store.causes[0].skill).toBe("agent-browser-verify");
+      expect(store.causes[0].code).toBe("pattern-match");
+      expect(store.causes[1].skill).toBe("agent-browser-verify");
+      expect(store.causes[1].code).toBe("policy-boost");
+      expect(store.causes[2].skill).toBe("verification");
+    });
+
+    test("edges are sorted by (fromSkill, toSkill, relation, code) regardless of insertion order", () => {
+      const store = createDecisionCausality();
+
+      addEdge(store, {
+        fromSkill: "nextjs-basics",
+        toSkill: "verification",
+        relation: "companion-of",
+        code: "verified-companion",
+        detail: {},
+      });
+      addEdge(store, {
+        fromSkill: "agent-browser-verify",
+        toSkill: "verification",
+        relation: "companion-of",
+        code: "verified-companion",
+        detail: {},
+      });
+
+      expect(store.edges[0].fromSkill).toBe("agent-browser-verify");
+      expect(store.edges[1].fromSkill).toBe("nextjs-basics");
+    });
+
+    test("addEdge sorts detail keys deterministically", () => {
+      const store = createDecisionCausality();
+      addEdge(store, {
+        fromSkill: "a",
+        toSkill: "b",
+        relation: "companion-of",
+        code: "test",
+        detail: { scenario: "x", confidence: 0.9, alpha: true },
+      });
+
+      const keys = Object.keys(store.edges[0].detail);
+      expect(keys).toEqual(["alpha", "confidence", "scenario"]);
+    });
+
+    test("causesForSkill filters by skill name", () => {
+      const store = createDecisionCausality();
+      addCause(store, {
+        code: "pattern-match",
+        stage: "match",
+        skill: "agent-browser-verify",
+        synthetic: false,
+        scoreDelta: 0,
+        message: "Pattern",
+        detail: {},
+      });
+      addCause(store, {
+        code: "policy-boost",
+        stage: "rank",
+        skill: "agent-browser-verify",
+        synthetic: false,
+        scoreDelta: 8,
+        message: "Boost",
+        detail: {},
+      });
+      addCause(store, {
+        code: "verified-companion",
+        stage: "rank",
+        skill: "verification",
+        synthetic: true,
+        scoreDelta: 0,
+        message: "Companion",
+        detail: {},
+      });
+
+      const abvCauses = causesForSkill(store, "agent-browser-verify");
+      expect(abvCauses).toHaveLength(2);
+      expect(abvCauses.every((c) => c.skill === "agent-browser-verify")).toBe(true);
+
+      const verifCauses = causesForSkill(store, "verification");
+      expect(verifCauses).toHaveLength(1);
+      expect(verifCauses[0].code).toBe("verified-companion");
+
+      const noneCauses = causesForSkill(store, "nonexistent");
+      expect(noneCauses).toEqual([]);
+    });
+
+    test("deterministic serialization: same causes in different order produce identical JSON", () => {
+      const storeA = createDecisionCausality();
+      const storeB = createDecisionCausality();
+
+      const cause1: RoutingDecisionCause = {
+        code: "verified-companion",
+        stage: "rank",
+        skill: "verification",
+        synthetic: true,
+        scoreDelta: 0,
+        message: "Companion",
+        detail: { candidateSkill: "agent-browser-verify", confidence: 0.93 },
+      };
+      const cause2: RoutingDecisionCause = {
+        code: "pattern-match",
+        stage: "match",
+        skill: "agent-browser-verify",
+        synthetic: false,
+        scoreDelta: 0,
+        message: "Pattern match",
+        detail: { matchType: "bashPattern", pattern: "dev" },
+      };
+
+      // Insert in opposite orders
+      addCause(storeA, cause1);
+      addCause(storeA, cause2);
+
+      addCause(storeB, cause2);
+      addCause(storeB, cause1);
+
+      expect(JSON.stringify(storeA.causes)).toBe(JSON.stringify(storeB.causes));
+    });
+
+    test("deterministic serialization: same edges in different order produce identical JSON", () => {
+      const storeA = createDecisionCausality();
+      const storeB = createDecisionCausality();
+
+      const edge1: RoutingDecisionEdge = {
+        fromSkill: "nextjs-basics",
+        toSkill: "verification",
+        relation: "companion-of",
+        code: "verified-companion",
+        detail: { scenario: "test" },
+      };
+      const edge2: RoutingDecisionEdge = {
+        fromSkill: "agent-browser-verify",
+        toSkill: "verification",
+        relation: "companion-of",
+        code: "verified-companion",
+        detail: { scenario: "test" },
+      };
+
+      addEdge(storeA, edge1);
+      addEdge(storeA, edge2);
+
+      addEdge(storeB, edge2);
+      addEdge(storeB, edge1);
+
+      expect(JSON.stringify(storeA.edges)).toBe(JSON.stringify(storeB.edges));
+    });
+
+    test("causality persists through trace round-trip with deterministic ordering", () => {
+      const store = createDecisionCausality();
+
+      // Insert causes in reverse order
+      addCause(store, {
+        code: "dropped-cap",
+        stage: "inject",
+        skill: "react-best-practices",
+        synthetic: false,
+        scoreDelta: 0,
+        message: "Dropped because max skill cap was exceeded",
+        detail: { maxSkills: 3 },
+      });
+      addCause(store, {
+        code: "pattern-match",
+        stage: "match",
+        skill: "agent-browser-verify",
+        synthetic: false,
+        scoreDelta: 0,
+        message: "Matched bashPattern",
+        detail: { pattern: "dev", matchType: "bashPattern" },
+      });
+
+      addEdge(store, {
+        fromSkill: "agent-browser-verify",
+        toSkill: "verification",
+        relation: "companion-of",
+        code: "verified-companion",
+        detail: { confidence: 0.93 },
+      });
+
+      const trace = makeTrace({
+        causes: store.causes,
+        edges: store.edges,
+      });
+      appendRoutingDecisionTrace(trace);
+
+      const [read] = readRoutingDecisionTrace(TEST_SESSION);
+
+      // Verify deterministic order persists through serialization
+      expect(read.causes[0].skill).toBe("agent-browser-verify");
+      expect(read.causes[0].code).toBe("pattern-match");
+      expect(read.causes[1].skill).toBe("react-best-practices");
+      expect(read.causes[1].code).toBe("dropped-cap");
+
+      expect(read.edges).toHaveLength(1);
+      expect(read.edges[0].fromSkill).toBe("agent-browser-verify");
+      expect(read.edges[0].toSkill).toBe("verification");
+
+      // Detail keys are sorted
+      expect(Object.keys(read.causes[0].detail)).toEqual(["matchType", "pattern"]);
     });
   });
 });

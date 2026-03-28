@@ -14,7 +14,14 @@ function safeSessionSegment(sessionId) {
   return createHash("sha256").update(sessionId).digest("hex");
 }
 function normalizeTrace(raw) {
-  if (raw.version === 2) return raw;
+  if (raw.version === 2) {
+    const trace = raw;
+    return {
+      ...trace,
+      causes: trace.causes ?? [],
+      edges: trace.edges ?? []
+    };
+  }
   const v1 = raw;
   return {
     ...v1,
@@ -25,8 +32,10 @@ function normalizeTrace(raw) {
       storyRoute: v1.primaryStory.route,
       targetBoundary: v1.primaryStory.targetBoundary
     },
-    observedRoute: v1.primaryStory.route
+    observedRoute: v1.primaryStory.route,
     // best-effort: v1 conflated the two
+    causes: [],
+    edges: []
   };
 }
 function traceDir(sessionId) {
