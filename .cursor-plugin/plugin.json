@@ -1,7 +1,7 @@
 {
   "name": "vercel",
   "version": "0.30.0",
-  "description": "Comprehensive Vercel ecosystem plugin — skills for every major product, specialized agents, and Vercel conventions. Turns any AI agent into a Vercel expert.",
+  "description": "Build and deploy web apps and agents",
   "author": {
     "name": "Vercel Labs",
     "email": "devtools@vercel.com"
