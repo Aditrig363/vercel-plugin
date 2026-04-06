@@ -68,7 +68,6 @@ function isPromptTelemetryEnabled(env = process.env) {
     return false;
   }
 }
-var isTelemetryEnabled = isBaseTelemetryEnabled;
 async function trackBaseEvent(sessionId, key, value) {
   if (!isBaseTelemetryEnabled()) return;
   const event = {
@@ -116,7 +115,6 @@ export {
   getTelemetryOverride,
   isBaseTelemetryEnabled,
   isPromptTelemetryEnabled,
-  isTelemetryEnabled,
   trackBaseEvent,
   trackBaseEvents,
   trackEvent,

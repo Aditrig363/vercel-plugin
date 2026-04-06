@@ -115,11 +115,6 @@ export function isPromptTelemetryEnabled(env: NodeJS.ProcessEnv = process.env): 
   }
 }
 
-/**
- * @deprecated Use isPromptTelemetryEnabled() or isBaseTelemetryEnabled().
- */
-export const isTelemetryEnabled = isBaseTelemetryEnabled;
-
 // ---------------------------------------------------------------------------
 // Always-on base telemetry (session, tool, skill injection events)
 // ---------------------------------------------------------------------------
