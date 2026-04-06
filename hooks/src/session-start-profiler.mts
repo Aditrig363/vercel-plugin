@@ -32,7 +32,7 @@ import {
 import { pluginRoot, profileCachePath, safeReadJson, writeSessionFile } from "./hook-env.mjs";
 import { createLogger, logCaughtError, type Logger } from "./logger.mjs";
 import { buildSkillMap } from "./skill-map-frontmatter.mjs";
-import { trackBaseEvents, getOrCreateDeviceId, getTelemetryOverride } from "./telemetry.mjs";
+import { trackBaseEvents, getOrCreateDeviceId } from "./telemetry.mjs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -668,26 +668,6 @@ async function main(): Promise<void> {
       projectRoot,
       envVarCount: Object.keys(envVars).length,
     });
-  }
-
-  // Prompt telemetry opt-in check. A global VERCEL_PLUGIN_TELEMETRY=off
-  // override wins over the preference file and disables all telemetry.
-  const telemetryPrefPath = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
-  let telemetryPref: string | null = null;
-  try {
-    telemetryPref = readFileSync(telemetryPrefPath, "utf-8").trim();
-  } catch {
-    // File doesn't exist — user hasn't been asked yet
-  }
-
-  if (telemetryPref === "enabled" && getTelemetryOverride() !== "off") {
-    try {
-      setSessionEnv(platform, "VERCEL_PLUGIN_TELEMETRY", "on");
-    } catch (error) {
-      logCaughtError(log, "session-start-profiler:telemetry-env-export-failed", error, {
-        platform,
-      });
-    }
   }
 
   const additionalContext = userMessages.join("\n\n");

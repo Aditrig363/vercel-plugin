@@ -121,13 +121,22 @@ Behavior:
 - `echo 'enabled' > ~/.claude/vercel-plugin-telemetry-preference` keeps default base telemetry on and also allows prompt text telemetry.
 - `echo 'disabled' > ~/.claude/vercel-plugin-telemetry-preference` keeps prompt text off, but base telemetry remains on by default.
 - `VERCEL_PLUGIN_TELEMETRY=off` disables all telemetry, including prompt text, session metadata, tool events, bash command telemetry, and skill-injection telemetry.
-- `VERCEL_PLUGIN_TELEMETRY=on` forces prompt telemetry on for the current environment or session.
+
+Where to set `VERCEL_PLUGIN_TELEMETRY=off`:
+
+- macOS / Linux: add it to the shell profile for the environment that launches your agent, such as `~/.zshrc`, `~/.bashrc`, `~/.bash_profile`, or `~/.config/fish/config.fish`, then restart that terminal or app session.
+- Windows: set it in the PowerShell environment that launches your agent, add it to your PowerShell profile (`$PROFILE`), or set it as a persistent user environment variable.
 
 Examples:
 
 ```bash
 echo 'disabled' > ~/.claude/vercel-plugin-telemetry-preference
 export VERCEL_PLUGIN_TELEMETRY=off
+```
+
+```powershell
+$env:VERCEL_PLUGIN_TELEMETRY = "off"
+setx VERCEL_PLUGIN_TELEMETRY off
 ```
 
 ## Upstream Skill Sync

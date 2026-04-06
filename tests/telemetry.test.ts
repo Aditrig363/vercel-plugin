@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const TELEMETRY_MODULE = join(ROOT, "hooks", "telemetry.mjs");
+const USER_PROMPT_HOOK = join(ROOT, "hooks", "user-prompt-submit-telemetry.mjs");
 const NODE_BIN = Bun.which("node") || "node";
 
 let tempHome: string;
@@ -67,6 +68,38 @@ async function runTelemetryProbe(options: {
   return JSON.parse(stdout.trim()) as { baseEnabled: boolean; promptEnabled: boolean; calls: number };
 }
 
+async function runPromptHook(env: Record<string, string | undefined>): Promise<{ code: number; stdout: string; stderr: string }> {
+  const mergedEnv: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+  };
+
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete mergedEnv[key];
+      continue;
+    }
+    mergedEnv[key] = value;
+  }
+
+  const proc = Bun.spawn([NODE_BIN, USER_PROMPT_HOOK], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: mergedEnv,
+  });
+
+  proc.stdin.write(JSON.stringify({
+    session_id: "telemetry-session",
+    prompt: "show me the telemetry behavior",
+  }));
+  proc.stdin.end();
+
+  const code = await proc.exited;
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  return { code, stdout, stderr };
+}
+
 beforeEach(() => {
   tempHome = mkdtempSync(join(tmpdir(), "telemetry-home-"));
 });
@@ -90,10 +123,15 @@ describe("telemetry controls", () => {
     expect(result.calls).toBe(1);
   });
 
-  test("VERCEL_PLUGIN_TELEMETRY=on enables prompt telemetry without a preference file", async () => {
-    const result = await runTelemetryProbe({ telemetryEnv: "on" });
-    expect(result.baseEnabled).toBe(true);
-    expect(result.promptEnabled).toBe(true);
-    expect(result.calls).toBe(2);
+  test("prompt hook does not ask for telemetry when VERCEL_PLUGIN_TELEMETRY=off", async () => {
+    const prefPath = join(tempHome, ".claude", "vercel-plugin-telemetry-preference");
+    const result = await runPromptHook({
+      HOME: tempHome,
+      VERCEL_PLUGIN_TELEMETRY: "off",
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("{}");
+    expect(existsSync(prefPath)).toBe(false);
   });
 });

@@ -7,7 +7,6 @@ import {
   readdirSync,
   writeFileSync
 } from "fs";
-import { homedir } from "os";
 import { delimiter, join, resolve } from "path";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
@@ -19,7 +18,7 @@ import {
 import { pluginRoot, profileCachePath, safeReadJson, writeSessionFile } from "./hook-env.mjs";
 import { createLogger, logCaughtError } from "./logger.mjs";
 import { buildSkillMap } from "./skill-map-frontmatter.mjs";
-import { trackBaseEvents, getOrCreateDeviceId, getTelemetryOverride } from "./telemetry.mjs";
+import { trackBaseEvents, getOrCreateDeviceId } from "./telemetry.mjs";
 var FILE_MARKERS = [
   { file: "next.config.js", skills: ["nextjs", "turbopack"] },
   { file: "next.config.mjs", skills: ["nextjs", "turbopack"] },
@@ -443,21 +442,6 @@ async function main() {
       projectRoot,
       envVarCount: Object.keys(envVars).length
     });
-  }
-  const telemetryPrefPath = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
-  let telemetryPref = null;
-  try {
-    telemetryPref = readFileSync(telemetryPrefPath, "utf-8").trim();
-  } catch {
-  }
-  if (telemetryPref === "enabled" && getTelemetryOverride() !== "off") {
-    try {
-      setSessionEnv(platform, "VERCEL_PLUGIN_TELEMETRY", "on");
-    } catch (error) {
-      logCaughtError(log, "session-start-profiler:telemetry-env-export-failed", error, {
-        platform
-      });
-    }
   }
   const additionalContext = userMessages.join("\n\n");
   if (platform === "claude-code" && additionalContext) {

@@ -84,9 +84,9 @@ export function getOrCreateDeviceId(): string {
  * Prompt-level telemetry (opt-in): requires explicit user consent.
  * Gates collection of prompt:text — actual user prompt content.
  */
-export function getTelemetryOverride(env: NodeJS.ProcessEnv = process.env): "on" | "off" | null {
+export function getTelemetryOverride(env: NodeJS.ProcessEnv = process.env): "off" | null {
   const value = env.VERCEL_PLUGIN_TELEMETRY?.trim().toLowerCase();
-  if (value === "on" || value === "off") return value;
+  if (value === "off") return value;
   return null;
 }
 
@@ -99,14 +99,12 @@ export function isBaseTelemetryEnabled(env: NodeJS.ProcessEnv = process.env): bo
 }
 
 /**
- * Prompt-level telemetry (opt-in): requires explicit user consent unless
- * VERCEL_PLUGIN_TELEMETRY=on forces it on for the current environment.
+ * Prompt-level telemetry (opt-in): requires explicit user consent.
  * VERCEL_PLUGIN_TELEMETRY=off disables it entirely.
  */
 export function isPromptTelemetryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const override = getTelemetryOverride(env);
   if (override === "off") return false;
-  if (override === "on") return true;
 
   try {
     const prefPath = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");

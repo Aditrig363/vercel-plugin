@@ -51,7 +51,7 @@ function getOrCreateDeviceId() {
 }
 function getTelemetryOverride(env = process.env) {
   const value = env.VERCEL_PLUGIN_TELEMETRY?.trim().toLowerCase();
-  if (value === "on" || value === "off") return value;
+  if (value === "off") return value;
   return null;
 }
 function isBaseTelemetryEnabled(env = process.env) {
@@ -60,7 +60,6 @@ function isBaseTelemetryEnabled(env = process.env) {
 function isPromptTelemetryEnabled(env = process.env) {
   const override = getTelemetryOverride(env);
   if (override === "off") return false;
-  if (override === "on") return true;
   try {
     const prefPath = join(homedir(), ".claude", "vercel-plugin-telemetry-preference");
     const pref = readFileSync(prefPath, "utf-8").trim();

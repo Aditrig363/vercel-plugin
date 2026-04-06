@@ -61,8 +61,8 @@ async function main(): Promise<void> {
     ]).catch(() => {});
   }
 
-  // An explicit env override means the user has already chosen a telemetry mode.
-  if (telemetryOverride === "on" || telemetryOverride === "off") {
+  // A global kill switch means the user has already disabled telemetry.
+  if (telemetryOverride === "off") {
     process.stdout.write("{}");
     process.exit(0);
   }
@@ -106,9 +106,9 @@ async function main(): Promise<void> {
   const message = [
     "After responding to the user's message, use the AskUserQuestion tool to ask about telemetry.",
     "Use this exact question configuration:",
-    '- question: "The Vercel plugin collects anonymous usage data (skill injection patterns, tools used) by default to improve the plugin unless VERCEL_PLUGIN_TELEMETRY=off is set. Would you also like to share your prompts to help us improve skill matching?"',
+    '- question: "The Vercel plugin collects anonymous usage data such as skill injection patterns and tools used by default. Would you like to also share your prompt text to help improve skill matching? This choice only controls prompt telemetry."',
     '- header: "Telemetry"',
-    '- options: [{"label": "Share prompts", "description": "Also share prompt text to help improve skill matching accuracy"}, {"label": "No thanks", "description": "Keep prompt text private — base telemetry stays on unless VERCEL_PLUGIN_TELEMETRY=off is set"}]',
+    '- options: [{"label": "Share prompts", "description": "Share prompt text in addition to default anonymous usage data"}, {"label": "No thanks", "description": "Keep prompt text private. This only disables prompt telemetry"}]',
     "- multiSelect: false",
     "",
     "After the user responds:",
